@@ -1,0 +1,182 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildAll } from './build.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, '..');
+const distDir = path.join(projectRoot, 'dist');
+const pagesDir = path.join(projectRoot, 'docs');
+
+function ensureDir(target) {
+  fs.mkdirSync(target, { recursive: true });
+}
+
+function writeFile(target, content) {
+  fs.writeFileSync(target, content, 'utf8');
+  console.log(`Wrote ${path.relative(projectRoot, target)}`);
+}
+
+function copyFile(from, to) {
+  fs.copyFileSync(from, to);
+  console.log(`Copied ${path.relative(projectRoot, from)} -> ${path.relative(projectRoot, to)}`);
+}
+
+function buildIndexHtml() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scratch 3D Extension Kit</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f7fb;
+        --panel: #ffffff;
+        --text: #10243d;
+        --muted: #4b617d;
+        --accent: #0b84ff;
+        --accent-2: #0a3a73;
+        --border: #d9e4ef;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(circle at top right, rgba(11, 132, 255, 0.12), transparent 28%),
+          linear-gradient(180deg, #fbfdff 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 48px 20px 72px;
+      }
+
+      .hero {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        padding: 32px;
+        box-shadow: 0 22px 50px rgba(16, 36, 61, 0.08);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(2rem, 5vw, 3.2rem);
+        line-height: 1.05;
+      }
+
+      p {
+        line-height: 1.65;
+        color: var(--muted);
+      }
+
+      .code {
+        display: block;
+        margin: 22px 0;
+        padding: 16px 18px;
+        background: #0f172a;
+        color: #d8e4f2;
+        border-radius: 16px;
+        overflow-x: auto;
+        font-family: Consolas, "SFMono-Regular", monospace;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 24px;
+      }
+
+      .button {
+        display: inline-block;
+        padding: 12px 16px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+
+      .button-primary {
+        background: var(--accent);
+        color: white;
+      }
+
+      .button-secondary {
+        border: 1px solid var(--border);
+        color: var(--accent-2);
+        background: white;
+      }
+
+      .section {
+        margin-top: 28px;
+        background: rgba(255, 255, 255, 0.74);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 22px 24px;
+      }
+
+      ul {
+        padding-left: 18px;
+        color: var(--muted);
+      }
+
+      strong {
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <h1>Scratch 3D Extension Kit</h1>
+        <p>This GitHub Pages site hosts the public Gandi test bundle for the shared 3D extension scaffold.</p>
+        <span class="code">./gandi-normal-remote.js</span>
+        <div class="actions">
+          <a class="button button-primary" href="./gandi-normal-remote.js">Open JS bundle</a>
+          <a class="button button-secondary" href="https://www.ccw.site/gandi">Open Gandi</a>
+        </div>
+      </section>
+
+      <section class="section">
+        <p><strong>For Gandi custom extension testing:</strong> copy the full URL ending in <code>gandi-normal-remote.js</code> into the custom-extension input, or append it to the <code>?gext=</code> parameter.</p>
+        <p><strong>For TurboWarp:</strong> keep using the local dev server and <code>http://localhost:8000/turbowarp-unsandboxed.js</code>. TurboWarp unsandboxed public URLs are intentionally restricted.</p>
+      </section>
+
+      <section class="section">
+        <p><strong>Published files</strong></p>
+        <ul>
+          <li><code>gandi-normal-remote.js</code>: public bundle for Gandi normal remote testing</li>
+          <li><code>index.html</code>: quick launch page for this GitHub Pages site</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>`;
+}
+
+export function buildPagesSite() {
+  buildAll();
+  ensureDir(pagesDir);
+
+  copyFile(
+    path.join(distDir, 'gandi-normal-remote.js'),
+    path.join(pagesDir, 'gandi-normal-remote.js')
+  );
+  writeFile(path.join(pagesDir, 'index.html'), buildIndexHtml());
+  writeFile(path.join(pagesDir, '.nojekyll'), '');
+}
+
+if (process.argv[1] === __filename) {
+  buildPagesSite();
+}
