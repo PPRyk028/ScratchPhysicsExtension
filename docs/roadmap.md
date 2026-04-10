@@ -1,76 +1,83 @@
-# Engine Roadmap
+# Physics Roadmap
 
-## Phase 0: Compatibility probe
+## Phase 0: Host compatibility probe
 
-Goal: prove that a shared extension surface can survive on both hosts.
+Goal: prove that one extension surface can load on both hosts.
 
-- keep blocks simple
-- verify registration models
-- verify state mutation
-- avoid renderer-heavy code until both hosts are stable
+- verify TurboWarp unsandboxed loading
+- verify Gandi normal remote loading
+- verify shared block registration and state updates
 
-## Phase 1: Visual prototype
+## Phase 1: Physics core skeleton
 
-Goal: render one primitive with one camera.
+Goal: replace the temporary scene-only core with a real physics world.
 
-- line-frame cube only
-- one scene
-- one camera
-- one render path
-- no physics yet
+- `PhysicsWorld`
+- shape and body registries
+- fixed-step timing
+- debug primitive output contract
 
-## Phase 2: Rendering foundation
+## Phase 2: Convex rigid-body MVP
 
-Goal: establish a renderer contract that both hosts can implement.
+Goal: establish the rigid-body foundation.
 
-- draw-command schema
-- projection and clipping
-- mesh buffers
-- materials/colors
-- lifecycle hooks for resize/reset/dispose
+- boxes, spheres, capsules, convex hulls
+- broadphase
+- GJK/EPA-based narrowphase
+- gravity and integration
+- simple debug wireframes
 
-## Phase 3: Scene system
+## Phase 3: Stable rigid contact
 
-Goal: support larger projects without rewriting the public API.
+Goal: make rigid bodies rest, stack, and slide reliably.
 
-- transforms
-- parent/child hierarchy
-- cameras
-- lights or fake lighting
-- mesh asset loading
+- persistent manifold
+- warm starting
+- Sequential Impulses / PGS
+- friction and restitution
+- sleeping
 
-## Phase 4: Physics prototype
+## Phase 4: Joints and queries
 
-Goal: decide what "physics engine" means in this ecosystem before promising full modern physics.
+Goal: support useful gameplay structures and inspection tools.
 
-- define fixed timestep
-- define collision scope: AABB only, SAT, or rigid body
-- define required determinism level
-- define performance budget on Scratch-like runtimes
+- hinge, ball-socket, fixed, distance joints
+- raycasts
+- overlap tests
+- early CCD path
 
-## Phase 5: Physics engine implementation
+## Phase 5: Cloth MVP
 
-Goal: add only the physics level that the host environments can actually sustain.
+Goal: add deformables without derailing the rigid-body architecture.
 
-- broad phase
-- narrow phase
-- contact resolution
-- gravity and constraints
-- scratch-facing block API for forces, velocity, collision queries
+- XPBD cloth
+- stretch, shear, bend, tether constraints
+- collision against rigid convex bodies
+- cloth debug visualization
 
-## Phase 6: Performance and tooling
+## Phase 6: Soft-body MVP
 
-Goal: keep projects usable for end users.
+Goal: introduce volumetric deformables.
 
-- object pooling
-- frame diagnostics
-- debug overlay
-- asset import helpers
+- tetrahedral soft bodies
+- edge and volume constraints
+- rigid/deformable collision
+- soft-body diagnostics
+
+## Phase 7: Coupling, performance, and tooling
+
+Goal: make the project maintainable and scalable.
+
+- stronger rigid/deformable coupling
+- profiling
+- replay and diagnostics
+- serialization helpers
 - compatibility regression tests
 
 ## Non-goals for early phases
 
-- full Unity-like editor
-- arbitrary shader pipeline
-- complete modern rigid-body stack from day one
-- promising cross-host feature parity before the compatibility probe is complete
+- dynamic non-convex rigid bodies
+- fluid simulation
+- GPU-first physics
+- photorealistic rendering
+- full editor tooling before the core solver is stable

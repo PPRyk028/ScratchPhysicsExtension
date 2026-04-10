@@ -1,0 +1,130 @@
+import { cloneQuat, createIdentityQuat } from '../math/quat.js';
+import { cloneVec3, createVec3 } from '../math/vec3.js';
+
+function toFiniteNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function createDebugColor(color, fallback) {
+  const source = color ?? fallback;
+  return {
+    r: toFiniteNumber(source?.r, fallback.r),
+    g: toFiniteNumber(source?.g, fallback.g),
+    b: toFiniteNumber(source?.b, fallback.b),
+    a: toFiniteNumber(source?.a, fallback.a)
+  };
+}
+
+function cloneSource(source) {
+  if (!source) {
+    return null;
+  }
+
+  return { ...source };
+}
+
+function cloneDebugPrimitive(primitive) {
+  if (primitive.type === DEBUG_PRIMITIVE_TYPES.POINT) {
+    return createDebugPoint(primitive);
+  }
+
+  if (primitive.type === DEBUG_PRIMITIVE_TYPES.LINE) {
+    return createDebugLine(primitive);
+  }
+
+  if (primitive.type === DEBUG_PRIMITIVE_TYPES.WIRE_BOX) {
+    return createDebugWireBox(primitive);
+  }
+
+  return {
+    ...primitive,
+    source: cloneSource(primitive.source ?? null)
+  };
+}
+
+export const DEBUG_FRAME_SCHEMA_VERSION = 'physics-debug-primitives@1';
+
+export const DEBUG_PRIMITIVE_TYPES = Object.freeze({
+  POINT: 'point',
+  LINE: 'line',
+  WIRE_BOX: 'wireBox'
+});
+
+export const DEFAULT_DEBUG_COLORS = Object.freeze({
+  rigidBodyWireframe: Object.freeze({ r: 64, g: 180, b: 255, a: 1 }),
+  rigidBodyCenter: Object.freeze({ r: 255, g: 196, b: 61, a: 1 }),
+  sleepingRigidBodyWireframe: Object.freeze({ r: 145, g: 160, b: 174, a: 1 }),
+  staticColliderWireframe: Object.freeze({ r: 107, g: 222, b: 157, a: 1 }),
+  broadphaseAabb: Object.freeze({ r: 250, g: 128, b: 114, a: 0.9 }),
+  contactPoint: Object.freeze({ r: 255, g: 72, b: 72, a: 1 }),
+  contactNormal: Object.freeze({ r: 255, g: 150, b: 54, a: 1 })
+});
+
+export function countDebugPrimitivesByType(primitives) {
+  const counts = {};
+
+  for (const primitive of primitives) {
+    counts[primitive.type] = (counts[primitive.type] ?? 0) + 1;
+  }
+
+  return counts;
+}
+
+export function createDebugPoint(options = {}) {
+  return {
+    type: DEBUG_PRIMITIVE_TYPES.POINT,
+    id: String(options.id ?? '').trim() || 'debug-point',
+    category: String(options.category ?? '').trim() || 'point',
+    position: cloneVec3(options.position ?? createVec3()),
+    color: createDebugColor(options.color, DEFAULT_DEBUG_COLORS.rigidBodyCenter),
+    size: toFiniteNumber(options.size, 4),
+    source: cloneSource(options.source ?? null)
+  };
+}
+
+export function createDebugLine(options = {}) {
+  return {
+    type: DEBUG_PRIMITIVE_TYPES.LINE,
+    id: String(options.id ?? '').trim() || 'debug-line',
+    category: String(options.category ?? '').trim() || 'line',
+    start: cloneVec3(options.start ?? createVec3()),
+    end: cloneVec3(options.end ?? createVec3()),
+    color: createDebugColor(options.color, DEFAULT_DEBUG_COLORS.rigidBodyWireframe),
+    source: cloneSource(options.source ?? null)
+  };
+}
+
+export function createDebugWireBox(options = {}) {
+  return {
+    type: DEBUG_PRIMITIVE_TYPES.WIRE_BOX,
+    id: String(options.id ?? '').trim() || 'debug-wire-box',
+    category: String(options.category ?? '').trim() || 'wire-box',
+    center: cloneVec3(options.center ?? createVec3()),
+    halfExtents: cloneVec3(options.halfExtents ?? createVec3(0.5, 0.5, 0.5)),
+    rotation: cloneQuat(options.rotation ?? createIdentityQuat()),
+    color: createDebugColor(options.color, DEFAULT_DEBUG_COLORS.rigidBodyWireframe),
+    source: cloneSource(options.source ?? null)
+  };
+}
+
+export function createDebugFrame(options = {}) {
+  const primitives = Array.isArray(options.primitives)
+    ? options.primitives.map((primitive) => cloneDebugPrimitive(primitive))
+    : [];
+
+  return {
+    schemaVersion: DEBUG_FRAME_SCHEMA_VERSION,
+    frameNumber: toFiniteNumber(options.frameNumber, 0),
+    simulationTick: toFiniteNumber(options.simulationTick, 0),
+    camera: {
+      position: cloneVec3(options.camera?.position ?? createVec3())
+    },
+    primitives,
+    stats: {
+      primitiveCount: primitives.length,
+      byType: countDebugPrimitivesByType(primitives),
+      ...options.stats
+    }
+  };
+}

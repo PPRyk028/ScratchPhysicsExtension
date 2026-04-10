@@ -1,0 +1,655 @@
+import { computeShapeWorldAabb, createAabbFromCenterHalfExtents, testAabbOverlap, testPointInAabb } from '../collision/aabb.js';
+import { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } from '../collision/broadphase.js';
+import { cloneContactPair, runNarrowphase } from '../collision/narrowphase.js';
+import { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } from '../debug/debug-primitives.js';
+import { cloneQuat, createIdentityQuat } from '../math/quat.js';
+import { addScaledVec3, addVec3, cloneVec3, createVec3 } from '../math/vec3.js';
+import { BodyRegistry } from './body-registry.js';
+import { ColliderRegistry } from './collider-registry.js';
+import { MaterialRegistry } from './material-registry.js';
+import { ShapeRegistry } from './shape-registry.js';
+
+const DEFAULT_MATERIAL_ID = 'material-default';
+
+function toPositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function toNonNegativeNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function cloneCamera(camera) {
+  return {
+    position: cloneVec3(camera.position)
+  };
+}
+
+function createQueryResult(type, options = {}) {
+  return {
+    type,
+    bodies: options.bodies ?? [],
+    colliders: options.colliders ?? [],
+    count: {
+      bodies: options.bodies?.length ?? 0,
+      colliders: options.colliders?.length ?? 0
+    },
+    input: options.input ?? {}
+  };
+}
+
+function createEmptyCollisionState() {
+  return {
+    broadphaseProxies: [],
+    broadphasePairs: [],
+    contactPairs: [],
+    summary: {
+      proxyCount: 0,
+      pairCount: 0,
+      contactCount: 0,
+      unsupportedPairCount: 0,
+      pairKinds: {},
+      algorithms: {}
+    }
+  };
+}
+
+function cloneCollisionSummary(summary) {
+  return {
+    proxyCount: summary.proxyCount,
+    pairCount: summary.pairCount,
+    contactCount: summary.contactCount,
+    unsupportedPairCount: summary.unsupportedPairCount,
+    pairKinds: { ...summary.pairKinds },
+    algorithms: { ...summary.algorithms }
+  };
+}
+
+function cloneCollisionState(collisionState) {
+  return {
+    broadphaseProxies: collisionState.broadphaseProxies.map((proxy) => cloneBroadphaseProxy(proxy)),
+    broadphasePairs: collisionState.broadphasePairs.map((pair) => cloneBroadphasePair(pair)),
+    contactPairs: collisionState.contactPairs.map((contactPair) => cloneContactPair(contactPair)),
+    summary: cloneCollisionSummary(collisionState.summary)
+  };
+}
+
+function countByPairKind(pairs) {
+  return pairs.reduce((counts, pair) => {
+    counts[pair.pairKind] = (counts[pair.pairKind] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+export class PhysicsWorld {
+  constructor(options = {}) {
+    this.fixedDeltaTime = toPositiveNumber(options.fixedDeltaTime, 1 / 60);
+    this.maxSubsteps = Math.max(1, Math.floor(toPositiveNumber(options.maxSubsteps, 4)));
+    this.gravity = cloneVec3(options.gravity ?? createVec3(0, -9.81, 0));
+    this.shapeRegistry = new ShapeRegistry();
+    this.bodyRegistry = new BodyRegistry();
+    this.colliderRegistry = new ColliderRegistry();
+    this.materialRegistry = new MaterialRegistry();
+    this.resetRuntimeState();
+    this.bootstrapDefaultMaterials();
+  }
+
+  bootstrapDefaultMaterials() {
+    this.materialRegistry.createMaterial({
+      id: DEFAULT_MATERIAL_ID,
+      friction: 0.5,
+      restitution: 0,
+      density: 1
+    });
+  }
+
+  resetRuntimeState() {
+    this.debugCamera = {
+      position: createVec3(0, 0, 400)
+    };
+    this.accumulatorSeconds = 0;
+    this.simulationTick = 0;
+    this.renderFrameCount = 0;
+    this.lastStepStats = {
+      requestedDeltaSeconds: 0,
+      performedSubsteps: 0,
+      simulationTick: 0,
+      remainingAccumulatorSeconds: 0
+    };
+    this.collisionStateDirty = true;
+    this.collisionState = createEmptyCollisionState();
+  }
+
+  reset() {
+    this.shapeRegistry.clear();
+    this.bodyRegistry.clear();
+    this.colliderRegistry.clear();
+    this.materialRegistry.clear();
+    this.bootstrapDefaultMaterials();
+    this.resetRuntimeState();
+  }
+
+  setDebugCameraPosition(position) {
+    this.debugCamera.position = cloneVec3(position);
+  }
+
+  setGravity(gravity) {
+    this.gravity = cloneVec3(gravity);
+  }
+
+  markCollisionStateDirty() {
+    this.collisionStateDirty = true;
+  }
+
+  createMaterial(options = {}) {
+    return this.materialRegistry.createMaterial(options);
+  }
+
+  resolveMaterialId(materialId) {
+    const resolvedId = String(materialId ?? '').trim();
+    if (resolvedId && this.materialRegistry.has(resolvedId)) {
+      return resolvedId;
+    }
+
+    return DEFAULT_MATERIAL_ID;
+  }
+
+  createBoxShape(options = {}) {
+    const shape = this.shapeRegistry.createBoxShape(options);
+    this.markCollisionStateDirty();
+    return shape;
+  }
+
+  createRigidBody(options = {}) {
+    const body = this.bodyRegistry.createRigidBody(options);
+    this.markCollisionStateDirty();
+    return body;
+  }
+
+  createCollider(options = {}) {
+    const collider = this.colliderRegistry.createCollider({
+      ...options,
+      materialId: this.resolveMaterialId(options.materialId)
+    });
+
+    if (collider.bodyId) {
+      this.bodyRegistry.attachCollider(collider.bodyId, collider.id, collider.shapeId);
+    }
+
+    this.markCollisionStateDirty();
+    return collider;
+  }
+
+  createBoxBody(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const size = toPositiveNumber(options.size, 1);
+    const shape = this.createBoxShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      halfExtents: createVec3(size / 2, size / 2, size / 2),
+      userData: options.shapeUserData ?? null
+    });
+    const body = this.createRigidBody({
+      id: resolvedId,
+      motionType: options.motionType ?? 'dynamic',
+      position: options.position ?? createVec3(),
+      linearVelocity: options.linearVelocity ?? createVec3(),
+      angularVelocity: options.angularVelocity ?? createVec3(),
+      mass: options.mass ?? 1,
+      userData: options.bodyUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: body.id,
+      materialId: options.materialId,
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      body: this.getBody(body.id),
+      collider
+    };
+  }
+
+  createStaticBoxCollider(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const size = toPositiveNumber(options.size, 1);
+    const shape = this.createBoxShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      halfExtents: createVec3(size / 2, size / 2, size / 2),
+      userData: options.shapeUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: null,
+      materialId: options.materialId,
+      localPose: {
+        position: options.position ?? createVec3(),
+        rotation: options.rotation ?? createIdentityQuat()
+      },
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      collider
+    };
+  }
+
+  getBody(id) {
+    return this.bodyRegistry.get(id);
+  }
+
+  getShape(id) {
+    return this.shapeRegistry.get(id);
+  }
+
+  getCollider(id) {
+    return this.colliderRegistry.get(id);
+  }
+
+  getMaterial(id) {
+    return this.materialRegistry.get(id);
+  }
+
+  getEffectiveMaterialForCollider(colliderId) {
+    const collider = this.getCollider(colliderId);
+    if (!collider) {
+      return null;
+    }
+
+    return this.getMaterial(collider.materialId) ?? this.getMaterial(DEFAULT_MATERIAL_ID);
+  }
+
+  getBodyColliders(bodyId) {
+    const body = this.getBody(bodyId);
+    if (!body) {
+      return [];
+    }
+
+    return body.colliderIds
+      .map((colliderId) => this.getCollider(colliderId))
+      .filter(Boolean);
+  }
+
+  getWorldSummary() {
+    const collisionState = this.getCollisionState();
+
+    return {
+      bodyCount: this.bodyRegistry.count(),
+      shapeCount: this.shapeRegistry.count(),
+      colliderCount: this.colliderRegistry.count(),
+      materialCount: this.materialRegistry.count(),
+      broadphaseProxyCount: collisionState.summary.proxyCount,
+      broadphasePairCount: collisionState.summary.pairCount,
+      contactPairCount: collisionState.summary.contactCount,
+      simulationTick: this.simulationTick,
+      renderFrameCount: this.renderFrameCount,
+      fixedDeltaTime: this.fixedDeltaTime,
+      gravity: cloneVec3(this.gravity)
+    };
+  }
+
+  step(deltaSeconds = this.fixedDeltaTime) {
+    const requestedDeltaSeconds = toNonNegativeNumber(deltaSeconds, this.fixedDeltaTime);
+    if (requestedDeltaSeconds === 0) {
+      return {
+        ...this.lastStepStats
+      };
+    }
+
+    this.accumulatorSeconds += requestedDeltaSeconds;
+    let performedSubsteps = 0;
+
+    while (this.accumulatorSeconds + 1e-12 >= this.fixedDeltaTime && performedSubsteps < this.maxSubsteps) {
+      this.integrateRigidBodies(this.fixedDeltaTime);
+      this.accumulatorSeconds -= this.fixedDeltaTime;
+      this.simulationTick += 1;
+      performedSubsteps += 1;
+    }
+
+    if (performedSubsteps === this.maxSubsteps && this.accumulatorSeconds > this.fixedDeltaTime) {
+      this.accumulatorSeconds = this.fixedDeltaTime;
+    }
+
+    this.lastStepStats = {
+      requestedDeltaSeconds,
+      performedSubsteps,
+      simulationTick: this.simulationTick,
+      remainingAccumulatorSeconds: this.accumulatorSeconds
+    };
+
+    return {
+      ...this.lastStepStats
+    };
+  }
+
+  integrateRigidBodies(deltaTime) {
+    let movedAnyDynamicBody = false;
+
+    this.bodyRegistry.forEachMutable((body) => {
+      if (!body.enabled || body.sleeping || body.motionType !== 'dynamic') {
+        return;
+      }
+
+      body.linearVelocity = addScaledVec3(body.linearVelocity, this.gravity, deltaTime);
+      body.position = addScaledVec3(body.position, body.linearVelocity, deltaTime);
+      movedAnyDynamicBody = true;
+    });
+
+    if (movedAnyDynamicBody) {
+      this.markCollisionStateDirty();
+    }
+  }
+
+  getColliderWorldPose(colliderId) {
+    const collider = this.colliderRegistry.get(colliderId);
+    if (!collider) {
+      return null;
+    }
+
+    if (!collider.bodyId) {
+      return {
+        position: cloneVec3(collider.localPose.position),
+        rotation: cloneQuat(collider.localPose.rotation)
+      };
+    }
+
+    const body = this.bodyRegistry.get(collider.bodyId);
+    if (!body) {
+      return {
+        position: cloneVec3(collider.localPose.position),
+        rotation: cloneQuat(collider.localPose.rotation)
+      };
+    }
+
+    return {
+      position: addVec3(body.position, collider.localPose.position),
+      rotation: cloneQuat(body.rotation ?? createIdentityQuat())
+    };
+  }
+
+  buildBroadphaseProxies() {
+    const broadphaseProxies = [];
+
+    this.colliderRegistry.forEachMutable((mutableCollider) => {
+      if (!mutableCollider.enabled || !mutableCollider.shapeId) {
+        return;
+      }
+
+      const shape = this.shapeRegistry.get(mutableCollider.shapeId);
+      const worldPose = this.getColliderWorldPose(mutableCollider.id);
+      if (!shape || !worldPose) {
+        return;
+      }
+
+      const aabb = computeShapeWorldAabb(shape, worldPose);
+      if (!aabb) {
+        return;
+      }
+
+      const body = mutableCollider.bodyId ? this.bodyRegistry.get(mutableCollider.bodyId) : null;
+      broadphaseProxies.push(createBroadphaseProxy({
+        colliderId: mutableCollider.id,
+        bodyId: mutableCollider.bodyId,
+        shapeId: shape.id,
+        materialId: mutableCollider.materialId,
+        shapeType: shape.type,
+        motionType: body?.motionType ?? 'static',
+        isSensor: mutableCollider.isSensor,
+        aabb
+      }));
+    });
+
+    return broadphaseProxies;
+  }
+
+  rebuildCollisionState() {
+    const broadphaseProxies = this.buildBroadphaseProxies();
+    const broadphasePairs = buildBroadphasePairs(broadphaseProxies);
+    const narrowphase = runNarrowphase(broadphasePairs);
+
+    this.collisionState = {
+      broadphaseProxies,
+      broadphasePairs,
+      contactPairs: narrowphase.contactPairs,
+      summary: {
+        proxyCount: broadphaseProxies.length,
+        pairCount: broadphasePairs.length,
+        contactCount: narrowphase.contactPairs.length,
+        unsupportedPairCount: narrowphase.summary.unsupportedPairCount,
+        pairKinds: countByPairKind(broadphasePairs),
+        algorithms: { ...narrowphase.summary.algorithms }
+      }
+    };
+    this.collisionStateDirty = false;
+  }
+
+  ensureCollisionState() {
+    if (this.collisionStateDirty) {
+      this.rebuildCollisionState();
+    }
+
+    return this.collisionState;
+  }
+
+  getCollisionState() {
+    return cloneCollisionState(this.ensureCollisionState());
+  }
+
+  queryPoint(point) {
+    const resolvedPoint = cloneVec3(point);
+    const collisionState = this.ensureCollisionState();
+    const colliders = [];
+    const bodies = [];
+    const seenBodyIds = new Set();
+
+    for (const proxy of collisionState.broadphaseProxies) {
+      if (!testPointInAabb(resolvedPoint, proxy.aabb)) {
+        continue;
+      }
+
+      const collider = this.colliderRegistry.get(proxy.colliderId);
+      if (!collider) {
+        continue;
+      }
+
+      colliders.push(collider);
+      if (proxy.bodyId && !seenBodyIds.has(proxy.bodyId)) {
+        const body = this.bodyRegistry.get(proxy.bodyId);
+        if (body) {
+          seenBodyIds.add(proxy.bodyId);
+          bodies.push(body);
+        }
+      }
+    }
+
+    return createQueryResult('point', {
+      bodies,
+      colliders,
+      input: {
+        point: resolvedPoint
+      }
+    });
+  }
+
+  queryAabb(options = {}) {
+    const center = cloneVec3(options.center ?? createVec3());
+    const halfExtents = cloneVec3(options.halfExtents ?? createVec3(0.5, 0.5, 0.5));
+    const queryBounds = createAabbFromCenterHalfExtents(center, halfExtents);
+    const collisionState = this.ensureCollisionState();
+    const colliders = [];
+    const bodies = [];
+    const seenBodyIds = new Set();
+
+    for (const proxy of collisionState.broadphaseProxies) {
+      if (!testAabbOverlap(queryBounds, proxy.aabb)) {
+        continue;
+      }
+
+      const collider = this.colliderRegistry.get(proxy.colliderId);
+      if (!collider) {
+        continue;
+      }
+
+      colliders.push(collider);
+      if (proxy.bodyId && !seenBodyIds.has(proxy.bodyId)) {
+        const body = this.bodyRegistry.get(proxy.bodyId);
+        if (body) {
+          seenBodyIds.add(proxy.bodyId);
+          bodies.push(body);
+        }
+      }
+    }
+
+    return createQueryResult('aabb', {
+      bodies,
+      colliders,
+      input: {
+        center,
+        halfExtents
+      }
+    });
+  }
+
+  buildDebugFrame() {
+    const collisionState = this.ensureCollisionState();
+    this.renderFrameCount += 1;
+    const primitives = [];
+
+    for (const proxy of collisionState.broadphaseProxies) {
+      const collider = this.getCollider(proxy.colliderId);
+      const shape = this.getShape(proxy.shapeId);
+      const pose = this.getColliderWorldPose(proxy.colliderId);
+      if (!collider || !shape || !pose) {
+        continue;
+      }
+
+      const body = proxy.bodyId ? this.bodyRegistry.get(proxy.bodyId) : null;
+      const source = {
+        bodyId: proxy.bodyId,
+        colliderId: proxy.colliderId,
+        shapeId: shape.id,
+        materialId: collider.materialId
+      };
+      const wireHalfExtents = shape.type === 'box'
+        ? shape.geometry.halfExtents
+        : proxy.aabb.halfExtents;
+
+      primitives.push(
+        createDebugWireBox({
+          id: `${proxy.colliderId}:wire-box`,
+          category: body ? 'rigid-body' : 'static-collider',
+          center: pose.position,
+          halfExtents: wireHalfExtents,
+          rotation: pose.rotation,
+          color: body
+            ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
+            : DEFAULT_DEBUG_COLORS.staticColliderWireframe,
+          source
+        })
+      );
+
+      primitives.push(
+        createDebugPoint({
+          id: `${proxy.colliderId}:center-of-mass`,
+          category: body ? 'center-of-mass' : 'collider-origin',
+          position: body?.position ?? pose.position,
+          color: DEFAULT_DEBUG_COLORS.rigidBodyCenter,
+          size: 4,
+          source
+        })
+      );
+
+      primitives.push(
+        createDebugWireBox({
+          id: `${proxy.colliderId}:aabb`,
+          category: 'broadphase-aabb',
+          center: proxy.aabb.center,
+          halfExtents: proxy.aabb.halfExtents,
+          color: DEFAULT_DEBUG_COLORS.broadphaseAabb,
+          source
+        })
+      );
+    }
+
+    for (const contactPair of collisionState.contactPairs) {
+      for (const contact of contactPair.contacts) {
+        const source = {
+          pairKey: contactPair.pairKey,
+          colliderAId: contactPair.colliderAId,
+          colliderBId: contactPair.colliderBId
+        };
+
+        primitives.push(
+          createDebugPoint({
+            id: `${contact.id}:point`,
+            category: 'contact-point',
+            position: contact.position,
+            color: DEFAULT_DEBUG_COLORS.contactPoint,
+            size: 5,
+            source
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${contact.id}:normal`,
+            category: 'contact-normal',
+            start: contact.position,
+            end: addScaledVec3(contact.position, contact.normal, Math.max(10, contact.penetration * 20)),
+            color: DEFAULT_DEBUG_COLORS.contactNormal,
+            source
+          })
+        );
+      }
+    }
+
+    return createDebugFrame({
+      frameNumber: this.renderFrameCount,
+      simulationTick: this.simulationTick,
+      camera: cloneCamera(this.debugCamera),
+      primitives,
+      stats: {
+        bodyCount: this.bodyRegistry.count(),
+        shapeCount: this.shapeRegistry.count(),
+        colliderCount: this.colliderRegistry.count(),
+        materialCount: this.materialRegistry.count(),
+        broadphaseProxyCount: collisionState.summary.proxyCount,
+        broadphasePairCount: collisionState.summary.pairCount,
+        contactPairCount: collisionState.summary.contactCount,
+        fixedDeltaTime: this.fixedDeltaTime,
+        performedSubsteps: this.lastStepStats.performedSubsteps
+      }
+    });
+  }
+
+  getSnapshot() {
+    const collisionState = this.getCollisionState();
+
+    return {
+      debugCamera: cloneCamera(this.debugCamera),
+      bodyCount: this.bodyRegistry.count(),
+      shapeCount: this.shapeRegistry.count(),
+      colliderCount: this.colliderRegistry.count(),
+      materialCount: this.materialRegistry.count(),
+      bodies: this.bodyRegistry.list(),
+      shapes: this.shapeRegistry.list(),
+      colliders: this.colliderRegistry.list(),
+      materials: this.materialRegistry.list(),
+      collision: collisionState,
+      simulationTick: this.simulationTick,
+      renderFrameCount: this.renderFrameCount,
+      fixedDeltaTime: this.fixedDeltaTime,
+      gravity: cloneVec3(this.gravity),
+      accumulatorSeconds: this.accumulatorSeconds,
+      lastStepStats: {
+        ...this.lastStepStats
+      }
+    };
+  }
+}

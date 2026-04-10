@@ -12,6 +12,31 @@ const projectRoot = path.resolve(__dirname, '..');
 const distDir = path.join(projectRoot, 'dist');
 let built = false;
 
+const REQUIRED_OPCODES = [
+  'resetWorld',
+  'setGravity',
+  'createMaterial',
+  'setCameraPosition',
+  'createBoxRigidBody',
+  'createStaticBoxCollider',
+  'stepWorld',
+  'renderDebugFrame',
+  'worldSummary',
+  'rigidBodySummary',
+  'colliderSummary',
+  'materialSummary',
+  'queryPointBodies',
+  'queryPointColliders',
+  'queryAabbBodies',
+  'queryAabbColliders',
+  'debugFrameSummary',
+  'hostSummary',
+  'resetScene',
+  'addCube',
+  'sceneSummary',
+  'lastFrameSummary'
+];
+
 function ensureBuild() {
   if (built) {
     return;
@@ -79,11 +104,20 @@ function createGandiContext({ withRenderer = true } = {}) {
 }
 
 function getOpcodes(info) {
-  return info.blocks.map((block) => block.opcode);
+  return info.blocks
+    .filter((block) => typeof block === 'object' && block !== null && block.opcode)
+    .map((block) => block.opcode);
 }
 
 function normalizeRealmValue(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function assertHasRequiredOpcodes(info) {
+  const opcodes = new Set(normalizeRealmValue(getOpcodes(info)));
+  for (const opcode of REQUIRED_OPCODES) {
+    assert.equal(opcodes.has(opcode), true, `Missing opcode: ${opcode}`);
+  }
 }
 
 test('build emits both platform bundles', () => {
@@ -106,23 +140,23 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   const info = normalizeRealmValue(extension.getInfo());
 
   assert.equal(info.id, 'engine3d');
-  assert.deepEqual(normalizeRealmValue(getOpcodes(info)), [
-    'resetScene',
-    'setCameraPosition',
-    'addCube',
-    'renderDebugFrame',
-    'sceneSummary',
-    'lastFrameSummary',
-    'hostSummary'
-  ]);
+  assertHasRequiredOpcodes(info);
 
-  extension.resetScene();
+  extension.resetWorld();
+  extension.createMaterial({ ID: 'ice', FRICTION: 0.05, RESTITUTION: 0.2, DENSITY: 0.9 });
+  extension.setGravity({ X: 0, Y: -10, Z: 0 });
   extension.setCameraPosition({ X: 10, Y: 20, Z: 300 });
-  extension.addCube({ ID: 'probe', X: 5, Y: 6, Z: 7, SIZE: 42 });
+  extension.createStaticBoxCollider({ ID: 'floor', X: 0, Y: -10, Z: 0, SIZE: 100, MATERIAL: 'ice' });
+  extension.createBoxRigidBody({ ID: 'probe', X: 5, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
+  extension.stepWorld({ SECONDS: 1 / 60 });
   extension.renderDebugFrame();
 
-  assert.match(extension.sceneSummary(), /1 objects/);
-  assert.match(extension.lastFrameSummary(), /TurboWarp frame 1/);
+  assert.match(extension.worldSummary(), /1 bodies/);
+  assert.match(extension.colliderSummary({ ID: 'floor:collider' }), /body:static/);
+  assert.match(extension.materialSummary({ ID: 'ice' }), /friction:0.05/);
+  assert.match(extension.queryPointBodies({ X: 5, Y: 6, Z: 7 }), /1 bodies/);
+  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /2 colliders/);
+  assert.match(extension.debugFrameSummary(), /TurboWarp frame 1/);
   assert.match(extension.hostSummary(), /TurboWarp/);
   assert.match(extension.hostSummary(), /runtime:yes/);
   assert.match(extension.hostSummary(), /renderer:yes/);
@@ -163,12 +197,15 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   const info = normalizeRealmValue(extension.getInfo());
 
   assert.equal(info.id, 'engine3d');
-  extension.resetScene();
-  extension.addCube({ ID: 'remote-probe', X: 0, Y: 0, Z: 0, SIZE: 10 });
+  assertHasRequiredOpcodes(info);
+  extension.resetWorld();
+  extension.createStaticBoxCollider({ ID: 'remote-floor', X: 0, Y: -5, Z: 0, SIZE: 10, MATERIAL: 'material-default' });
+  extension.createBoxRigidBody({ ID: 'remote-probe', X: 0, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
   extension.renderDebugFrame();
 
-  assert.match(extension.sceneSummary(), /1 objects/);
-  assert.match(extension.lastFrameSummary(), /Gandi Remote frame 1/);
+  assert.match(extension.worldSummary(), /1 bodies/);
+  assert.match(extension.queryPointColliders({ X: 0, Y: 0, Z: 0 }), /2 colliders/);
+  assert.match(extension.debugFrameSummary(), /Gandi Remote frame 1/);
   assert.match(extension.hostSummary(), /Gandi Remote/);
   assert.match(extension.hostSummary(), /sandbox:yes/);
 });
@@ -183,23 +220,22 @@ test('Gandi extension instance runs shared blocks against the same core contract
   const info = normalizeRealmValue(extension.getInfo());
 
   assert.equal(info.id, 'engine3d');
-  assert.deepEqual(normalizeRealmValue(getOpcodes(info)), [
-    'resetScene',
-    'setCameraPosition',
-    'addCube',
-    'renderDebugFrame',
-    'sceneSummary',
-    'lastFrameSummary',
-    'hostSummary'
-  ]);
+  assertHasRequiredOpcodes(info);
 
-  extension.resetScene();
+  extension.resetWorld();
+  extension.createMaterial({ ID: 'rubber', FRICTION: 1, RESTITUTION: 0.8, DENSITY: 1.2 });
+  extension.setGravity({ X: 0, Y: -12, Z: 0 });
   extension.setCameraPosition({ X: -12, Y: 0, Z: 512 });
-  extension.addCube({ ID: 'gandi-probe', X: 1, Y: 2, Z: 3, SIZE: 64 });
+  extension.createStaticBoxCollider({ ID: 'gandi-floor', X: 1, Y: -10, Z: 3, SIZE: 64, MATERIAL: 'rubber' });
+  extension.createBoxRigidBody({ ID: 'gandi-probe', X: 1, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
+  extension.stepWorld({ SECONDS: 1 / 30 });
   extension.renderDebugFrame();
 
-  assert.match(extension.sceneSummary(), /1 objects/);
-  assert.match(extension.lastFrameSummary(), /Gandi Approved frame 1/);
+  assert.match(extension.worldSummary(), /1 bodies/);
+  assert.match(extension.rigidBodySummary({ ID: 'gandi-probe' }), /gandi-probe/);
+  assert.match(extension.materialSummary({ ID: 'rubber' }), /restitution:0.8/);
+  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 40, HY: 40, HZ: 40 }), /2 colliders/);
+  assert.match(extension.debugFrameSummary(), /Gandi Approved frame 1/);
   assert.match(extension.hostSummary(), /Gandi Approved/);
   assert.match(extension.hostSummary(), /runtime:yes/);
   assert.match(extension.hostSummary(), /renderer:yes/);

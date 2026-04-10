@@ -1,6 +1,6 @@
-# Scratch 3D Extension Kit
+# Scratch Physics Extension Kit
 
-A long-term scaffold for building one shared 3D engine core with multiple host adapters:
+A long-term scaffold for building one shared 3D physics core with multiple host adapters:
 
 - `Gandi` normal remote extension entry
 - `Gandi` approved extension entry
@@ -8,11 +8,19 @@ A long-term scaffold for building one shared 3D engine core with multiple host a
 
 The project is dependency-free on purpose. You can build and serve it with plain Node.js while the engine API is still evolving.
 
+The project direction is now:
+
+- physics-first
+- debug-render-only
+- rigid convex bodies first
+- cloth and soft bodies later
+
 ## Structure
 
 ```text
 src/
-  core/                 Host-agnostic 3D engine state and math helpers
+  core/                 Temporary compatibility-probe core and math helpers
+  physics/              PhysicsWorld, registries, math, and debug primitives
   shared/               Shared extension metadata and base block implementation
   platform/
     gandi/              Gandi remote/approved entries and host bridge
@@ -22,6 +30,7 @@ scripts/
   dev-server.mjs        Local HTTP server for TurboWarp/Gandi testing
 docs/
   architecture.md       Maintenance notes and extension-boundary rules
+  physics-engine-design-v0.1.md
 dist/                   Generated bundles
 ```
 
@@ -68,23 +77,34 @@ The custom bundler in `scripts/build.mjs` is intentionally tiny. For now, keep s
 - keep import statements on one line
 - avoid external npm dependencies until you intentionally replace the bundler
 
-## Current block surface
+## Current world-layer block surface
 
-The scaffold intentionally keeps the first API small and stable:
+The scaffold now exposes the first physics-oriented world API:
 
-- `reset 3D scene`
-- `set camera position x: y: z:`
-- `add cube [ID] at x: y: z: size:`
+- `reset physics world`
+- `set gravity`
+- `create material`
+- `set debug camera position`
+- `create box rigid body`
+- `create static box collider`
+- `step physics world by ... seconds`
+- `physics world summary`
+- `rigid body ... summary`
+- `collider ... summary`
+- `material ... summary`
+- `bodies at point ...`
+- `colliders at point ...`
+- `bodies in box ...`
+- `colliders in box ...`
 - `render debug frame`
-- `scene summary`
-- `last frame summary`
-- `host summary`
+- `debug frame summary`
 
-These blocks already share one engine core across both adapters. The rendering layer is stubbed behind a host bridge so you can later add renderer integration without rewriting the block API.
+The older scene-style blocks are still present as hidden compatibility aliases so the host-loading tests remain stable while the API migrates.
 
 ## Recommended next steps
 
-1. Extend `src/core/engine3d.js` with camera rotation, materials, mesh loading, and draw-command generation.
-2. Add renderer-backed drawing inside `src/platform/turbowarp/host.js`.
-3. Port the same rendering contract into `src/platform/gandi/host.js`.
-4. Keep opcodes stable once projects start depending on them.
+1. Add broadphase-ready collider bookkeeping and pair generation.
+2. Start the convex rigid-body collision pipeline with narrowphase entry points.
+3. Build persistent manifolds and warm-start caches on top of the current contact pairs.
+4. Add Sequential Impulse solving, then layer joints and richer shape pairs on top of the rigid stack.
+5. Add cloth and soft-body systems only after the rigid pipeline is stable.

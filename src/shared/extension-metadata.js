@@ -10,72 +10,92 @@ export const GANDI_EXTENSION_METADATA = {
 
 export const GANDI_L10N = {
   en: {
-    'engine3d.meta.name': '3D Engine Kit',
-    'engine3d.meta.description': 'Shared 3D engine scaffold for Gandi and TurboWarp.'
+    'engine3d.meta.name': 'Physics Engine Kit',
+    'engine3d.meta.description': 'Shared 3D physics engine scaffold for Gandi and TurboWarp.'
   },
   'zh-cn': {
-    'engine3d.meta.name': '3D 引擎脚手架',
-    'engine3d.meta.description': '面向 Gandi 与 TurboWarp 的共享 3D 引擎扩展骨架。'
+    'engine3d.meta.name': 'Physics Engine Kit',
+    'engine3d.meta.description': 'Shared 3D physics engine scaffold for Gandi and TurboWarp.'
   }
 };
 
 export function createExtensionInfo() {
   return {
     id: EXTENSION_ID,
-    name: '3D Engine Kit',
+    name: 'Physics Engine Kit',
     color1: '#0B84FF',
     color2: '#0861C5',
     color3: '#0A3A73',
     blocks: [
       {
-        opcode: 'resetScene',
+        opcode: 'resetWorld',
         blockType: 'command',
-        text: 'reset 3D scene'
+        text: 'reset physics world'
+      },
+      {
+        opcode: 'setGravity',
+        blockType: 'command',
+        text: 'set gravity x:[X] y:[Y] z:[Z]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: -9.81 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'createMaterial',
+        blockType: 'command',
+        text: 'create material [ID] friction:[FRICTION] restitution:[RESTITUTION] density:[DENSITY]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-1' },
+          FRICTION: { type: 'number', defaultValue: 0.5 },
+          RESTITUTION: { type: 'number', defaultValue: 0 },
+          DENSITY: { type: 'number', defaultValue: 1 }
+        }
       },
       {
         opcode: 'setCameraPosition',
         blockType: 'command',
-        text: 'set camera position x:[X] y:[Y] z:[Z]',
+        text: 'set debug camera position x:[X] y:[Y] z:[Z]',
         arguments: {
-          X: {
-            type: 'number',
-            defaultValue: 0
-          },
-          Y: {
-            type: 'number',
-            defaultValue: 0
-          },
-          Z: {
-            type: 'number',
-            defaultValue: 400
-          }
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 400 }
         }
       },
       {
-        opcode: 'addCube',
+        opcode: 'createBoxRigidBody',
         blockType: 'command',
-        text: 'add cube [ID] at x:[X] y:[Y] z:[Z] size:[SIZE]',
+        text: 'create box rigid body [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] mass:[MASS] material:[MATERIAL]',
         arguments: {
-          ID: {
-            type: 'string',
-            defaultValue: 'cube-1'
-          },
-          X: {
-            type: 'number',
-            defaultValue: 0
-          },
-          Y: {
-            type: 'number',
-            defaultValue: 0
-          },
-          Z: {
-            type: 'number',
-            defaultValue: 0
-          },
-          SIZE: {
-            type: 'number',
-            defaultValue: 100
-          }
+          ID: { type: 'string', defaultValue: 'body-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 },
+          MASS: { type: 'number', defaultValue: 1 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createStaticBoxCollider',
+        blockType: 'command',
+        text: 'create static box collider [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'collider-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: -100 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'stepWorld',
+        blockType: 'command',
+        text: 'step physics world by [SECONDS] seconds',
+        arguments: {
+          SECONDS: { type: 'number', defaultValue: 0.016666666666666666 }
         }
       },
       {
@@ -84,21 +104,121 @@ export function createExtensionInfo() {
         text: 'render debug frame'
       },
       {
-        opcode: 'sceneSummary',
+        opcode: 'worldSummary',
         blockType: 'reporter',
-        text: 'scene summary'
+        text: 'physics world summary'
       },
       {
-        opcode: 'lastFrameSummary',
+        opcode: 'rigidBodySummary',
         blockType: 'reporter',
-        text: 'last frame summary'
+        text: 'rigid body [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'colliderSummary',
+        blockType: 'reporter',
+        text: 'collider [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'collider-1:collider' }
+        }
+      },
+      {
+        opcode: 'materialSummary',
+        blockType: 'reporter',
+        text: 'material [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'queryPointBodies',
+        blockType: 'reporter',
+        text: 'bodies at point x:[X] y:[Y] z:[Z]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'queryPointColliders',
+        blockType: 'reporter',
+        text: 'colliders at point x:[X] y:[Y] z:[Z]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'queryAabbBodies',
+        blockType: 'reporter',
+        text: 'bodies in box center x:[X] y:[Y] z:[Z] half x:[HX] y:[HY] z:[HZ]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          HX: { type: 'number', defaultValue: 50 },
+          HY: { type: 'number', defaultValue: 50 },
+          HZ: { type: 'number', defaultValue: 50 }
+        }
+      },
+      {
+        opcode: 'queryAabbColliders',
+        blockType: 'reporter',
+        text: 'colliders in box center x:[X] y:[Y] z:[Z] half x:[HX] y:[HY] z:[HZ]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          HX: { type: 'number', defaultValue: 50 },
+          HY: { type: 'number', defaultValue: 50 },
+          HZ: { type: 'number', defaultValue: 50 }
+        }
+      },
+      {
+        opcode: 'debugFrameSummary',
+        blockType: 'reporter',
+        text: 'debug frame summary'
       },
       {
         opcode: 'hostSummary',
         blockType: 'reporter',
         text: 'host summary'
+      },
+      {
+        opcode: 'resetScene',
+        blockType: 'command',
+        text: 'reset 3D scene',
+        hideFromPalette: true
+      },
+      {
+        opcode: 'addCube',
+        blockType: 'command',
+        text: 'add cube [ID] at x:[X] y:[Y] z:[Z] size:[SIZE]',
+        hideFromPalette: true,
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cube-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 }
+        }
+      },
+      {
+        opcode: 'sceneSummary',
+        blockType: 'reporter',
+        text: 'scene summary',
+        hideFromPalette: true
+      },
+      {
+        opcode: 'lastFrameSummary',
+        blockType: 'reporter',
+        text: 'last frame summary',
+        hideFromPalette: true
       }
     ]
   };
 }
-
