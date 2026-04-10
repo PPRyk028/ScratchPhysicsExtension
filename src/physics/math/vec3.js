@@ -62,3 +62,44 @@ export function maxVec3(left, right) {
     Math.max(toFiniteNumber(left?.z), toFiniteNumber(right?.z))
   );
 }
+
+export function dotVec3(left, right) {
+  return (
+    toFiniteNumber(left?.x) * toFiniteNumber(right?.x) +
+    toFiniteNumber(left?.y) * toFiniteNumber(right?.y) +
+    toFiniteNumber(left?.z) * toFiniteNumber(right?.z)
+  );
+}
+
+export function lengthSquaredVec3(vector) {
+  return dotVec3(vector, vector);
+}
+
+export function lengthVec3(vector) {
+  return Math.sqrt(lengthSquaredVec3(vector));
+}
+
+export function negateVec3(vector) {
+  return createVec3(
+    -toFiniteNumber(vector?.x),
+    -toFiniteNumber(vector?.y),
+    -toFiniteNumber(vector?.z)
+  );
+}
+
+export function normalizeVec3(vector, fallback = createVec3(1, 0, 0)) {
+  const length = lengthVec3(vector);
+  if (length <= 1e-12) {
+    return cloneVec3(fallback);
+  }
+
+  return scaleVec3(vector, 1 / length);
+}
+
+export function crossVec3(left, right) {
+  return createVec3(
+    toFiniteNumber(left?.y) * toFiniteNumber(right?.z) - toFiniteNumber(left?.z) * toFiniteNumber(right?.y),
+    toFiniteNumber(left?.z) * toFiniteNumber(right?.x) - toFiniteNumber(left?.x) * toFiniteNumber(right?.z),
+    toFiniteNumber(left?.x) * toFiniteNumber(right?.y) - toFiniteNumber(left?.y) * toFiniteNumber(right?.x)
+  );
+}

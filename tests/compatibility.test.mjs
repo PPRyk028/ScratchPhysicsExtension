@@ -148,13 +148,13 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.setCameraPosition({ X: 10, Y: 20, Z: 300 });
   extension.createStaticBoxCollider({ ID: 'floor', X: 0, Y: -10, Z: 0, SIZE: 100, MATERIAL: 'ice' });
   extension.createBoxRigidBody({ ID: 'probe', X: 5, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
+  assert.match(extension.queryPointBodies({ X: 5, Y: 6, Z: 7 }), /1 bodies/);
   extension.stepWorld({ SECONDS: 1 / 60 });
   extension.renderDebugFrame();
 
   assert.match(extension.worldSummary(), /1 bodies/);
   assert.match(extension.colliderSummary({ ID: 'floor:collider' }), /body:static/);
   assert.match(extension.materialSummary({ ID: 'ice' }), /friction:0.05/);
-  assert.match(extension.queryPointBodies({ X: 5, Y: 6, Z: 7 }), /1 bodies/);
   assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /2 colliders/);
   assert.match(extension.debugFrameSummary(), /TurboWarp frame 1/);
   assert.match(extension.hostSummary(), /TurboWarp/);

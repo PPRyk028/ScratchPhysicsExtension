@@ -122,13 +122,211 @@ test('PhysicsWorld generates broadphase pairs and box-box narrowphase contact pa
   assert.equal(collisionState.summary.proxyCount, 2);
   assert.equal(collisionState.summary.pairCount, 1);
   assert.equal(collisionState.summary.contactCount, 1);
+  assert.equal(collisionState.summary.manifoldCount, 1);
   assert.equal(collisionState.summary.pairKinds['dynamic-static'], 1);
-  assert.equal(collisionState.summary.algorithms['box-box-aabb-v1'], 1);
+  assert.equal(collisionState.summary.algorithms['box-box-aabb-v2'], 1);
   assert.equal(collisionState.broadphasePairs[0].pairKind, 'dynamic-static');
-  assert.equal(collisionState.contactPairs[0].contactCount, 1);
-  assert.equal(collisionState.contactPairs[0].contacts[0].featureId, 'axis:y');
+  assert.equal(collisionState.contactPairs[0].contactCount, 4);
+  assert.equal(collisionState.manifolds[0].contactCount, 4);
+  assert.equal(collisionState.manifolds[0].contacts[0].accumulatedNormalImpulse, 0);
+  assert.equal(collisionState.contactPairs[0].contacts[0].featureId.startsWith('axis:y:corner:'), true);
   assert.equal(collisionState.contactPairs[0].normal.y, 1);
   assert.equal(collisionState.contactPairs[0].penetration, 2);
+});
+
+test('PhysicsWorld sphere restitution produces a bounce against a floor box', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 10
+  });
+  world.createMaterial({
+    id: 'bouncy',
+    friction: 0,
+    restitution: 0.8
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2,
+    materialId: 'bouncy'
+  });
+  world.createSphereBody({
+    id: 'ball',
+    position: { x: 0, y: 3, z: 0 },
+    radius: 0.5,
+    mass: 1,
+    materialId: 'bouncy'
+  });
+
+  let observedBounce = false;
+  for (let stepIndex = 0; stepIndex < 240; stepIndex += 1) {
+    world.step(1 / 120);
+    if (world.getBody('ball').linearVelocity.y > 0.5) {
+      observedBounce = true;
+      break;
+    }
+  }
+
+  const collisionState = world.getCollisionState();
+
+  assert.equal(observedBounce, true);
+  assert.equal(collisionState.summary.algorithms['sphere-box-v1'], 1);
+});
+
+test('PhysicsWorld friction reduces tangential velocity on a resting box', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12
+  });
+  world.createMaterial({
+    id: 'grippy',
+    friction: 1.2,
+    restitution: 0
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2,
+    materialId: 'grippy'
+  });
+  world.createBoxBody({
+    id: 'slider',
+    position: { x: 0, y: 1, z: 0 },
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 4, y: 0, z: 0 },
+    materialId: 'grippy'
+  });
+
+  let maxTangentSolved = 0;
+  for (let stepIndex = 0; stepIndex < 24; stepIndex += 1) {
+    world.step(1 / 120);
+    maxTangentSolved = Math.max(maxTangentSolved, world.getSnapshot().lastSolverStats.solvedTangentContactCount);
+  }
+
+  const slider = world.getBody('slider');
+
+  assert.ok(Math.abs(slider.linearVelocity.x) < 4, `expected friction to reduce x velocity, got ${slider.linearVelocity.x}`);
+  assert.ok(maxTangentSolved > 0);
+});
+
+test('PhysicsWorld capsule-sphere narrowphase reports dedicated contacts', () => {
+  const world = new PhysicsWorld();
+  world.createCapsuleBody({
+    id: 'capsule',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    radius: 0.5,
+    halfHeight: 1
+  });
+  world.createSphereBody({
+    id: 'sphere',
+    position: { x: 0.8, y: 0, z: 0 },
+    radius: 0.5,
+    mass: 1
+  });
+
+  const collisionState = world.getCollisionState();
+
+  assert.equal(collisionState.summary.algorithms['capsule-sphere-v1'], 1);
+  assert.equal(collisionState.contactPairs[0].contactCount, 1);
+});
+
+test('PhysicsWorld convex hulls use the support-mapped fallback narrowphase', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+  world.createConvexHullBody({
+    id: 'hull',
+    position: { x: 0, y: 0.3, z: 0 },
+    vertices: [
+      { x: -0.6, y: -0.4, z: -0.6 },
+      { x: 0.6, y: -0.4, z: -0.6 },
+      { x: 0.6, y: -0.4, z: 0.6 },
+      { x: -0.6, y: -0.4, z: 0.6 },
+      { x: 0, y: 0.8, z: 0 }
+    ],
+    mass: 1
+  });
+
+  const collisionState = world.getCollisionState();
+
+  assert.equal(collisionState.summary.algorithms['support-mapped-aabb-v1'], 1);
+  assert.equal(collisionState.contactPairs[0].contactCount, 1);
+});
+
+test('PhysicsWorld manifold cache and normal solver keep a falling box resting on a floor', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 60,
+    solverIterations: 10
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'rest-box',
+    position: { x: 0, y: 4, z: 0 },
+    size: 2,
+    mass: 1
+  });
+
+  for (let stepIndex = 0; stepIndex < 180; stepIndex += 1) {
+    world.step(1 / 60);
+  }
+
+  const box = world.getBody('rest-box');
+  const collisionState = world.getCollisionState();
+  const restManifold = collisionState.manifolds.find((manifold) => manifold.pairKey === 'floor:collider|rest-box:collider');
+
+  assert.ok(restManifold);
+  assert.equal(collisionState.summary.manifoldCount, 1);
+  assert.ok(restManifold.contacts[0].accumulatedNormalImpulse > 0);
+  assert.ok(restManifold.contacts[0].accumulatedTangentImpulseA === 0);
+  assert.ok(Math.abs(box.position.y - 1) < 0.1, `expected resting height near 1, got ${box.position.y}`);
+  assert.ok(Math.abs(box.linearVelocity.y) < 0.2, `expected resting velocity near 0, got ${box.linearVelocity.y}`);
+});
+
+test('PhysicsWorld normal solver supports a simple two-box stack', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'bottom-box',
+    position: { x: 0, y: 1.2, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'top-box',
+    position: { x: 0, y: 3.4, z: 0 },
+    size: 2,
+    mass: 1
+  });
+
+  for (let stepIndex = 0; stepIndex < 360; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  const bottomBox = world.getBody('bottom-box');
+  const topBox = world.getBody('top-box');
+  const collisionState = world.getCollisionState();
+
+  assert.ok(bottomBox.position.y > 0.8 && bottomBox.position.y < 1.2, `unexpected bottom box height ${bottomBox.position.y}`);
+  assert.ok(topBox.position.y > 2.75 && topBox.position.y < 3.25, `unexpected top box height ${topBox.position.y}`);
+  assert.ok(topBox.position.y > bottomBox.position.y + 1.7, 'top box should remain above bottom box');
+  assert.ok(collisionState.summary.manifoldCount >= 2);
+  assert.ok(collisionState.summary.contactCount >= 2);
 });
 
 test('PhysicsWorld point and AABB queries return overlapping bodies and colliders', () => {
@@ -186,6 +384,7 @@ test('PhysicsWorld exposes collider world poses, body collider lookup, and world
   assert.equal(summary.broadphaseProxyCount, 1);
   assert.equal(summary.broadphasePairCount, 0);
   assert.equal(summary.contactPairCount, 0);
+  assert.equal(summary.manifoldCount, 0);
   assert.equal(summary.gravity.y, -3);
 });
 
@@ -231,6 +430,7 @@ test('PhysicsWorld broadphase filters static-static pairs and same-body collider
   assert.equal(collisionState.summary.proxyCount, 4);
   assert.equal(collisionState.summary.pairCount, 0);
   assert.equal(collisionState.summary.contactCount, 0);
+  assert.equal(collisionState.summary.manifoldCount, 0);
 });
 
 test('PhysicsWorld reset clears registries and restores the default material', () => {

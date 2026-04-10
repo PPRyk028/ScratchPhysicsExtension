@@ -663,7 +663,7 @@ The next implementation phase should continue the rigid collision stack, not ret
 
 Immediate coding tasks:
 
-- replace transient contact pairs with persistent manifolds and warm-start data
-- add the first Sequential Impulse contact solve pass for rigid bodies
-- extend narrowphase beyond box-box AABB overlap toward real convex support-mapped shapes
+- replace the current face-based manifold path with feature-based persistent manifolds
+- add angular velocity, inertia tensors, and rotational contact response
+- replace the current support-mapped AABB fallback with true convex GJK/EPA-style narrowphase
 - add raycast and sweep query entry points that can share the same collider bookkeeping

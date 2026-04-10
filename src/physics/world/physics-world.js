@@ -2,8 +2,10 @@ import { computeShapeWorldAabb, createAabbFromCenterHalfExtents, testAabbOverlap
 import { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } from '../collision/broadphase.js';
 import { cloneContactPair, runNarrowphase } from '../collision/narrowphase.js';
 import { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } from '../debug/debug-primitives.js';
+import { cloneManifold, ManifoldCache } from '../manifold/manifold-cache.js';
 import { cloneQuat, createIdentityQuat } from '../math/quat.js';
 import { addScaledVec3, addVec3, cloneVec3, createVec3 } from '../math/vec3.js';
+import { solveNormalContactConstraints } from '../rigid/normal-contact-solver.js';
 import { BodyRegistry } from './body-registry.js';
 import { ColliderRegistry } from './collider-registry.js';
 import { MaterialRegistry } from './material-registry.js';
@@ -40,15 +42,50 @@ function createQueryResult(type, options = {}) {
   };
 }
 
-function createEmptyCollisionState() {
+function createEmptySolverStats(iterations = 0) {
+  return {
+    iterations,
+    manifoldCount: 0,
+    warmStartedContactCount: 0,
+    solvedContactCount: 0,
+    solvedTangentContactCount: 0,
+    restitutionContactCount: 0,
+    skippedContactCount: 0,
+    impulsesApplied: 0,
+    frictionImpulsesApplied: 0,
+    positionCorrections: 0,
+    maxPenetration: 0
+  };
+}
+
+function cloneSolverStats(solverStats) {
+  return {
+    iterations: solverStats.iterations,
+    manifoldCount: solverStats.manifoldCount,
+    warmStartedContactCount: solverStats.warmStartedContactCount,
+    solvedContactCount: solverStats.solvedContactCount,
+    solvedTangentContactCount: solverStats.solvedTangentContactCount,
+    restitutionContactCount: solverStats.restitutionContactCount,
+    skippedContactCount: solverStats.skippedContactCount,
+    impulsesApplied: solverStats.impulsesApplied,
+    frictionImpulsesApplied: solverStats.frictionImpulsesApplied,
+    positionCorrections: solverStats.positionCorrections,
+    maxPenetration: solverStats.maxPenetration
+  };
+}
+
+function createEmptyCollisionState(iterations = 0) {
   return {
     broadphaseProxies: [],
     broadphasePairs: [],
     contactPairs: [],
+    manifolds: [],
+    solverStats: createEmptySolverStats(iterations),
     summary: {
       proxyCount: 0,
       pairCount: 0,
       contactCount: 0,
+      manifoldCount: 0,
       unsupportedPairCount: 0,
       pairKinds: {},
       algorithms: {}
@@ -61,6 +98,7 @@ function cloneCollisionSummary(summary) {
     proxyCount: summary.proxyCount,
     pairCount: summary.pairCount,
     contactCount: summary.contactCount,
+    manifoldCount: summary.manifoldCount,
     unsupportedPairCount: summary.unsupportedPairCount,
     pairKinds: { ...summary.pairKinds },
     algorithms: { ...summary.algorithms }
@@ -72,6 +110,8 @@ function cloneCollisionState(collisionState) {
     broadphaseProxies: collisionState.broadphaseProxies.map((proxy) => cloneBroadphaseProxy(proxy)),
     broadphasePairs: collisionState.broadphasePairs.map((pair) => cloneBroadphasePair(pair)),
     contactPairs: collisionState.contactPairs.map((contactPair) => cloneContactPair(contactPair)),
+    manifolds: collisionState.manifolds.map((manifold) => cloneManifold(manifold)),
+    solverStats: cloneSolverStats(collisionState.solverStats),
     summary: cloneCollisionSummary(collisionState.summary)
   };
 }
@@ -83,15 +123,47 @@ function countByPairKind(pairs) {
   }, {});
 }
 
+function mergeSolverStats(target, source) {
+  target.iterations = Math.max(target.iterations, source.iterations);
+  target.manifoldCount = Math.max(target.manifoldCount, source.manifoldCount);
+  target.warmStartedContactCount += source.warmStartedContactCount;
+  target.solvedContactCount += source.solvedContactCount;
+  target.solvedTangentContactCount += source.solvedTangentContactCount;
+  target.restitutionContactCount += source.restitutionContactCount;
+  target.skippedContactCount += source.skippedContactCount;
+  target.impulsesApplied += source.impulsesApplied;
+  target.frictionImpulsesApplied += source.frictionImpulsesApplied;
+  target.positionCorrections += source.positionCorrections;
+  target.maxPenetration = Math.max(target.maxPenetration, source.maxPenetration);
+}
+
+function combineMaterialProperties(materialA, materialB) {
+  const frictionA = Number(materialA?.friction ?? 0.5);
+  const frictionB = Number(materialB?.friction ?? 0.5);
+  const restitutionA = Number(materialA?.restitution ?? 0);
+  const restitutionB = Number(materialB?.restitution ?? 0);
+
+  return {
+    friction: Math.sqrt(Math.max(0, frictionA) * Math.max(0, frictionB)),
+    restitution: Math.max(0, restitutionA, restitutionB),
+    restitutionThreshold: 1
+  };
+}
+
 export class PhysicsWorld {
   constructor(options = {}) {
     this.fixedDeltaTime = toPositiveNumber(options.fixedDeltaTime, 1 / 60);
     this.maxSubsteps = Math.max(1, Math.floor(toPositiveNumber(options.maxSubsteps, 4)));
     this.gravity = cloneVec3(options.gravity ?? createVec3(0, -9.81, 0));
+    this.solverIterations = Math.max(1, Math.floor(toPositiveNumber(options.solverIterations, 8)));
+    this.solverBaumgarte = toNonNegativeNumber(options.solverBaumgarte, 0.2);
+    this.allowedPenetration = toNonNegativeNumber(options.allowedPenetration, 0.01);
+    this.positionCorrectionPercent = toNonNegativeNumber(options.positionCorrectionPercent, 0.8);
     this.shapeRegistry = new ShapeRegistry();
     this.bodyRegistry = new BodyRegistry();
     this.colliderRegistry = new ColliderRegistry();
     this.materialRegistry = new MaterialRegistry();
+    this.manifoldCache = new ManifoldCache();
     this.resetRuntimeState();
     this.bootstrapDefaultMaterials();
   }
@@ -118,8 +190,10 @@ export class PhysicsWorld {
       simulationTick: 0,
       remainingAccumulatorSeconds: 0
     };
+    this.lastSolverStats = createEmptySolverStats(this.solverIterations);
     this.collisionStateDirty = true;
-    this.collisionState = createEmptyCollisionState();
+    this.collisionState = createEmptyCollisionState(this.solverIterations);
+    this.manifoldCache.clear();
   }
 
   reset() {
@@ -162,6 +236,24 @@ export class PhysicsWorld {
     return shape;
   }
 
+  createSphereShape(options = {}) {
+    const shape = this.shapeRegistry.createSphereShape(options);
+    this.markCollisionStateDirty();
+    return shape;
+  }
+
+  createCapsuleShape(options = {}) {
+    const shape = this.shapeRegistry.createCapsuleShape(options);
+    this.markCollisionStateDirty();
+    return shape;
+  }
+
+  createConvexHullShape(options = {}) {
+    const shape = this.shapeRegistry.createConvexHullShape(options);
+    this.markCollisionStateDirty();
+    return shape;
+  }
+
   createRigidBody(options = {}) {
     const body = this.bodyRegistry.createRigidBody(options);
     this.markCollisionStateDirty();
@@ -188,6 +280,101 @@ export class PhysicsWorld {
     const shape = this.createBoxShape({
       id: resolvedId ? `${resolvedId}:shape` : null,
       halfExtents: createVec3(size / 2, size / 2, size / 2),
+      userData: options.shapeUserData ?? null
+    });
+    const body = this.createRigidBody({
+      id: resolvedId,
+      motionType: options.motionType ?? 'dynamic',
+      position: options.position ?? createVec3(),
+      linearVelocity: options.linearVelocity ?? createVec3(),
+      angularVelocity: options.angularVelocity ?? createVec3(),
+      mass: options.mass ?? 1,
+      userData: options.bodyUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: body.id,
+      materialId: options.materialId,
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      body: this.getBody(body.id),
+      collider
+    };
+  }
+
+  createSphereBody(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const radius = toPositiveNumber(options.radius, 0.5);
+    const shape = this.createSphereShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      radius,
+      userData: options.shapeUserData ?? null
+    });
+    const body = this.createRigidBody({
+      id: resolvedId,
+      motionType: options.motionType ?? 'dynamic',
+      position: options.position ?? createVec3(),
+      linearVelocity: options.linearVelocity ?? createVec3(),
+      angularVelocity: options.angularVelocity ?? createVec3(),
+      mass: options.mass ?? 1,
+      userData: options.bodyUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: body.id,
+      materialId: options.materialId,
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      body: this.getBody(body.id),
+      collider
+    };
+  }
+
+  createCapsuleBody(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const shape = this.createCapsuleShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      radius: options.radius,
+      halfHeight: options.halfHeight,
+      userData: options.shapeUserData ?? null
+    });
+    const body = this.createRigidBody({
+      id: resolvedId,
+      motionType: options.motionType ?? 'dynamic',
+      position: options.position ?? createVec3(),
+      linearVelocity: options.linearVelocity ?? createVec3(),
+      angularVelocity: options.angularVelocity ?? createVec3(),
+      mass: options.mass ?? 1,
+      userData: options.bodyUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: body.id,
+      materialId: options.materialId,
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      body: this.getBody(body.id),
+      collider
+    };
+  }
+
+  createConvexHullBody(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const shape = this.createConvexHullShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      vertices: options.vertices ?? [],
       userData: options.shapeUserData ?? null
     });
     const body = this.createRigidBody({
@@ -287,6 +474,7 @@ export class PhysicsWorld {
       broadphaseProxyCount: collisionState.summary.proxyCount,
       broadphasePairCount: collisionState.summary.pairCount,
       contactPairCount: collisionState.summary.contactCount,
+      manifoldCount: collisionState.summary.manifoldCount,
       simulationTick: this.simulationTick,
       renderFrameCount: this.renderFrameCount,
       fixedDeltaTime: this.fixedDeltaTime,
@@ -304,9 +492,12 @@ export class PhysicsWorld {
 
     this.accumulatorSeconds += requestedDeltaSeconds;
     let performedSubsteps = 0;
+    const aggregatedSolverStats = createEmptySolverStats(this.solverIterations);
 
     while (this.accumulatorSeconds + 1e-12 >= this.fixedDeltaTime && performedSubsteps < this.maxSubsteps) {
       this.integrateRigidBodies(this.fixedDeltaTime);
+      const solverStats = this.solveRigidContacts(this.fixedDeltaTime, this.simulationTick + 1);
+      mergeSolverStats(aggregatedSolverStats, solverStats);
       this.accumulatorSeconds -= this.fixedDeltaTime;
       this.simulationTick += 1;
       performedSubsteps += 1;
@@ -314,6 +505,11 @@ export class PhysicsWorld {
 
     if (performedSubsteps === this.maxSubsteps && this.accumulatorSeconds > this.fixedDeltaTime) {
       this.accumulatorSeconds = this.fixedDeltaTime;
+    }
+
+    this.lastSolverStats = aggregatedSolverStats;
+    if (!this.collisionStateDirty) {
+      this.collisionState.solverStats = cloneSolverStats(this.lastSolverStats);
     }
 
     this.lastStepStats = {
@@ -344,6 +540,27 @@ export class PhysicsWorld {
     if (movedAnyDynamicBody) {
       this.markCollisionStateDirty();
     }
+  }
+
+  solveRigidContacts(deltaTime, simulationTick) {
+    const initialResults = this.buildCollisionResults();
+    const manifolds = this.manifoldCache.syncFromContactPairs(initialResults.contactPairs, simulationTick);
+    const solverStats = solveNormalContactConstraints({
+      bodyRegistry: this.bodyRegistry,
+      manifolds,
+      deltaTime,
+      iterations: this.solverIterations,
+      baumgarte: this.solverBaumgarte,
+      allowedPenetration: this.allowedPenetration,
+      positionCorrectionPercent: this.positionCorrectionPercent
+    });
+
+    this.lastSolverStats = solverStats;
+    const finalResults = this.buildCollisionResults();
+    const finalManifolds = this.manifoldCache.syncFromContactPairs(finalResults.contactPairs, simulationTick);
+    this.commitCollisionState(finalResults, finalManifolds, solverStats);
+    this.collisionStateDirty = false;
+    return cloneSolverStats(solverStats);
   }
 
   getColliderWorldPose(colliderId) {
@@ -408,30 +625,62 @@ export class PhysicsWorld {
     return broadphaseProxies;
   }
 
-  rebuildCollisionState() {
+  buildCollisionResults() {
     const broadphaseProxies = this.buildBroadphaseProxies();
     const broadphasePairs = buildBroadphasePairs(broadphaseProxies);
-    const narrowphase = runNarrowphase(broadphasePairs);
+    const narrowphase = runNarrowphase(broadphasePairs, {
+      getShape: (shapeId) => this.getShape(shapeId),
+      getPose: (colliderId) => this.getColliderWorldPose(colliderId)
+    });
+    const contactPairs = narrowphase.contactPairs.map((contactPair) => {
+      const materialA = this.getEffectiveMaterialForCollider(contactPair.colliderAId);
+      const materialB = this.getEffectiveMaterialForCollider(contactPair.colliderBId);
+      const materialProperties = combineMaterialProperties(materialA, materialB);
 
-    this.collisionState = {
+      return cloneContactPair({
+        ...contactPair,
+        ...materialProperties
+      });
+    });
+
+    return {
       broadphaseProxies,
       broadphasePairs,
-      contactPairs: narrowphase.contactPairs,
+      contactPairs,
+      unsupportedPairCount: narrowphase.summary.unsupportedPairCount,
+      algorithms: contactPairs.reduce((counts, contactPair) => {
+        counts[contactPair.algorithm] = (counts[contactPair.algorithm] ?? 0) + 1;
+        return counts;
+      }, {}),
+      pairKinds: countByPairKind(broadphasePairs)
+    };
+  }
+
+  commitCollisionState(results, manifolds, solverStats) {
+    this.collisionState = {
+      broadphaseProxies: results.broadphaseProxies,
+      broadphasePairs: results.broadphasePairs,
+      contactPairs: results.contactPairs,
+      manifolds: Array.isArray(manifolds) ? manifolds.map((manifold) => cloneManifold(manifold)) : [],
+      solverStats: cloneSolverStats(solverStats ?? this.lastSolverStats),
       summary: {
-        proxyCount: broadphaseProxies.length,
-        pairCount: broadphasePairs.length,
-        contactCount: narrowphase.contactPairs.length,
-        unsupportedPairCount: narrowphase.summary.unsupportedPairCount,
-        pairKinds: countByPairKind(broadphasePairs),
-        algorithms: { ...narrowphase.summary.algorithms }
+        proxyCount: results.broadphaseProxies.length,
+        pairCount: results.broadphasePairs.length,
+        contactCount: results.contactPairs.length,
+        manifoldCount: Array.isArray(manifolds) ? manifolds.length : 0,
+        unsupportedPairCount: results.unsupportedPairCount,
+        pairKinds: { ...results.pairKinds },
+        algorithms: { ...results.algorithms }
       }
     };
-    this.collisionStateDirty = false;
   }
 
   ensureCollisionState() {
     if (this.collisionStateDirty) {
-      this.rebuildCollisionState();
+      const results = this.buildCollisionResults();
+      const manifolds = this.manifoldCache.syncFromContactPairs(results.contactPairs, this.simulationTick);
+      this.commitCollisionState(results, manifolds, this.lastSolverStats);
+      this.collisionStateDirty = false;
     }
 
     return this.collisionState;
@@ -577,12 +826,13 @@ export class PhysicsWorld {
       );
     }
 
-    for (const contactPair of collisionState.contactPairs) {
-      for (const contact of contactPair.contacts) {
+    for (const manifold of collisionState.manifolds) {
+      for (const contact of manifold.contacts) {
         const source = {
-          pairKey: contactPair.pairKey,
-          colliderAId: contactPair.colliderAId,
-          colliderBId: contactPair.colliderBId
+          pairKey: manifold.pairKey,
+          colliderAId: manifold.colliderAId,
+          colliderBId: manifold.colliderBId,
+          accumulatedNormalImpulse: contact.accumulatedNormalImpulse
         };
 
         primitives.push(
@@ -601,7 +851,7 @@ export class PhysicsWorld {
             id: `${contact.id}:normal`,
             category: 'contact-normal',
             start: contact.position,
-            end: addScaledVec3(contact.position, contact.normal, Math.max(10, contact.penetration * 20)),
+            end: addScaledVec3(contact.position, manifold.normal, Math.max(10, contact.penetration * 20)),
             color: DEFAULT_DEBUG_COLORS.contactNormal,
             source
           })
@@ -622,6 +872,12 @@ export class PhysicsWorld {
         broadphaseProxyCount: collisionState.summary.proxyCount,
         broadphasePairCount: collisionState.summary.pairCount,
         contactPairCount: collisionState.summary.contactCount,
+        manifoldCount: collisionState.summary.manifoldCount,
+        solverIterations: collisionState.solverStats.iterations,
+        solvedContactCount: collisionState.solverStats.solvedContactCount,
+        solvedTangentContactCount: collisionState.solverStats.solvedTangentContactCount,
+        restitutionContactCount: collisionState.solverStats.restitutionContactCount,
+        warmStartedContactCount: collisionState.solverStats.warmStartedContactCount,
         fixedDeltaTime: this.fixedDeltaTime,
         performedSubsteps: this.lastStepStats.performedSubsteps
       }
@@ -649,7 +905,8 @@ export class PhysicsWorld {
       accumulatorSeconds: this.accumulatorSeconds,
       lastStepStats: {
         ...this.lastStepStats
-      }
+      },
+      lastSolverStats: cloneSolverStats(this.lastSolverStats)
     };
   }
 }

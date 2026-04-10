@@ -1,5 +1,7 @@
-import { cloneVec3, createVec3 } from '../math/vec3.js';
+import { cloneVec3, createVec3, lengthVec3, negateVec3, normalizeVec3, subtractVec3 } from '../math/vec3.js';
+import { getAabbOverlap } from './aabb.js';
 import { collideBoxPair } from './box-box.js';
+import { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter, getSupportMappedPenetration } from './support.js';
 
 function cloneContact(contact) {
   return {
@@ -10,6 +12,251 @@ function cloneContact(contact) {
     separation: contact.separation,
     featureId: contact.featureId
   };
+}
+
+function chooseDefaultNormal(pair) {
+  const overlap = getAabbOverlap(pair?.aabbA, pair?.aabbB);
+  if (!overlap) {
+    return {
+      normal: createVec3(0, 1, 0),
+      penetration: 0,
+      axis: 'y'
+    };
+  }
+
+  const axes = ['x', 'y', 'z'];
+  let axis = axes[0];
+  let bestOverlap = overlap[axis];
+  let bestDelta = Math.abs(pair.aabbB.center[axis] - pair.aabbA.center[axis]);
+
+  for (let index = 1; index < axes.length; index += 1) {
+    const candidateAxis = axes[index];
+    const candidateOverlap = overlap[candidateAxis];
+    const candidateDelta = Math.abs(pair.aabbB.center[candidateAxis] - pair.aabbA.center[candidateAxis]);
+
+    if (candidateOverlap < bestOverlap - 1e-8) {
+      axis = candidateAxis;
+      bestOverlap = candidateOverlap;
+      bestDelta = candidateDelta;
+      continue;
+    }
+
+    if (Math.abs(candidateOverlap - bestOverlap) <= 1e-8 && candidateDelta > bestDelta + 1e-8) {
+      axis = candidateAxis;
+      bestOverlap = candidateOverlap;
+      bestDelta = candidateDelta;
+    }
+  }
+
+  const delta = pair.aabbB.center[axis] - pair.aabbA.center[axis];
+  const sign = delta >= 0 ? 1 : -1;
+  return {
+    normal: axis === 'x'
+      ? createVec3(sign, 0, 0)
+      : axis === 'y'
+        ? createVec3(0, sign, 0)
+        : createVec3(0, 0, sign),
+    penetration: overlap[axis],
+    axis
+  };
+}
+
+function createContactPairCore(pair, options = {}) {
+  const contacts = Array.isArray(options.contacts) ? options.contacts : [];
+  return createContactPair({
+    id: `${pair.pairKey}:contact-pair`,
+    pairKey: pair.pairKey,
+    algorithm: options.algorithm,
+    status: options.status ?? 'touching',
+    pairKind: pair.pairKind,
+    colliderAId: pair.colliderAId,
+    colliderBId: pair.colliderBId,
+    bodyAId: pair.bodyAId,
+    bodyBId: pair.bodyBId,
+    shapeAType: pair.shapeAType,
+    shapeBType: pair.shapeBType,
+    normal: options.normal,
+    penetration: options.penetration,
+    contactCount: contacts.length,
+    contacts
+  });
+}
+
+function createSingleContactPair(pair, options = {}) {
+  const normal = cloneVec3(options.normal ?? createVec3(0, 1, 0));
+  const penetration = Number(options.penetration ?? 0);
+  const contactPosition = cloneVec3(options.position ?? createVec3());
+
+  return createContactPairCore(pair, {
+    algorithm: options.algorithm,
+    normal,
+    penetration,
+    contacts: [
+      {
+        id: `${pair.pairKey}:contact-0`,
+        position: contactPosition,
+        normal,
+        penetration,
+        separation: -penetration,
+        featureId: options.featureId ?? 'contact:0'
+      }
+    ]
+  });
+}
+
+function isSupportMappedShape(shapeType) {
+  return shapeType === 'box' || shapeType === 'sphere' || shapeType === 'capsule' || shapeType === 'convex-hull';
+}
+
+function collideSphereSpherePair(pair, shapeA, poseA, shapeB, poseB) {
+  const centerA = getShapeWorldCenter(shapeA, poseA);
+  const centerB = getShapeWorldCenter(shapeB, poseB);
+  const delta = subtractVec3(centerB, centerA);
+  const distance = lengthVec3(delta);
+  const radiusSum = shapeA.geometry.radius + shapeB.geometry.radius;
+  if (distance > radiusSum + 1e-8) {
+    return null;
+  }
+
+  const fallback = chooseDefaultNormal(pair);
+  const normal = normalizeVec3(delta, fallback.normal);
+  const penetration = Math.max(radiusSum - distance, fallback.penetration);
+  const supportA = getShapeSupportPoint(shapeA, poseA, normal);
+  const supportB = getShapeSupportPoint(shapeB, poseB, negateVec3(normal));
+  const contactPosition = createVec3(
+    (supportA.x + supportB.x) / 2,
+    (supportA.y + supportB.y) / 2,
+    (supportA.z + supportB.z) / 2
+  );
+
+  return createSingleContactPair(pair, {
+    algorithm: 'sphere-sphere-v1',
+    normal,
+    penetration,
+    position: contactPosition,
+    featureId: 'sphere-sphere'
+  });
+}
+
+function collideSphereBoxPair(pair, sphereShape, spherePose, boxShape, boxPose, sphereIsA) {
+  const sphereCenter = getShapeWorldCenter(sphereShape, spherePose);
+  const boxAabb = sphereIsA ? pair.aabbB : pair.aabbA;
+  const closestPoint = clampPointToAabb(sphereCenter, boxAabb);
+  const outward = subtractVec3(sphereCenter, closestPoint);
+  const distance = lengthVec3(outward);
+  const fallback = chooseDefaultNormal(pair);
+  const normalFromBoxToSphere = distance > 1e-8 ? normalizeVec3(outward, fallback.normal) : fallback.normal;
+  const normal = sphereIsA ? negateVec3(normalFromBoxToSphere) : normalFromBoxToSphere;
+  const penetration = Math.max(sphereShape.geometry.radius - distance, fallback.penetration);
+  const sphereSurface = getShapeSupportPoint(sphereShape, spherePose, sphereIsA ? normal : negateVec3(normal));
+  const contactPosition = createVec3(
+    (closestPoint.x + sphereSurface.x) / 2,
+    (closestPoint.y + sphereSurface.y) / 2,
+    (closestPoint.z + sphereSurface.z) / 2
+  );
+
+  if (distance > sphereShape.geometry.radius + 1e-8 && fallback.penetration <= 0) {
+    return null;
+  }
+
+  return createSingleContactPair(pair, {
+    algorithm: 'sphere-box-v1',
+    normal,
+    penetration,
+    position: contactPosition,
+    featureId: sphereIsA ? 'sphere-box:a' : 'sphere-box:b'
+  });
+}
+
+function collideCapsuleSpherePair(pair, capsuleShape, capsulePose, sphereShape, spherePose, capsuleIsA) {
+  const sphereCenter = getShapeWorldCenter(sphereShape, spherePose);
+  const capsuleSegment = getCapsuleSegmentEndpoints(capsuleShape, capsulePose);
+  const closestPoint = getClosestPointOnSegment(sphereCenter, capsuleSegment.start, capsuleSegment.end);
+  const delta = subtractVec3(sphereCenter, closestPoint);
+  const distance = lengthVec3(delta);
+  const radiusSum = capsuleShape.geometry.radius + sphereShape.geometry.radius;
+  if (distance > radiusSum + 1e-8) {
+    return null;
+  }
+
+  const fallback = chooseDefaultNormal(pair);
+  const normalFromCapsuleToSphere = normalizeVec3(delta, fallback.normal);
+  const normal = capsuleIsA ? normalFromCapsuleToSphere : negateVec3(normalFromCapsuleToSphere);
+  const penetration = Math.max(radiusSum - distance, fallback.penetration);
+  const capsuleSurface = getShapeSupportPoint(capsuleShape, capsulePose, capsuleIsA ? normal : negateVec3(normal));
+  const sphereSurface = getShapeSupportPoint(sphereShape, spherePose, capsuleIsA ? negateVec3(normal) : normal);
+  const contactPosition = createVec3(
+    (capsuleSurface.x + sphereSurface.x) / 2,
+    (capsuleSurface.y + sphereSurface.y) / 2,
+    (capsuleSurface.z + sphereSurface.z) / 2
+  );
+
+  return createSingleContactPair(pair, {
+    algorithm: 'capsule-sphere-v1',
+    normal,
+    penetration,
+    position: contactPosition,
+    featureId: capsuleIsA ? 'capsule-sphere:a' : 'capsule-sphere:b'
+  });
+}
+
+function collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB) {
+  if (!isSupportMappedShape(shapeA.type) || !isSupportMappedShape(shapeB.type)) {
+    return null;
+  }
+
+  const fallback = chooseDefaultNormal(pair);
+  const support = getSupportMappedPenetration(shapeA, poseA, shapeB, poseB, fallback.normal);
+  const penetration = Math.max(fallback.penetration, support.penetration);
+  if (penetration <= 0) {
+    return null;
+  }
+
+  const contactPosition = createVec3(
+    (support.supportA.x + support.supportB.x) / 2,
+    (support.supportA.y + support.supportB.y) / 2,
+    (support.supportA.z + support.supportB.z) / 2
+  );
+
+  return createSingleContactPair(pair, {
+    algorithm: 'support-mapped-aabb-v1',
+    normal: fallback.normal,
+    penetration,
+    position: contactPosition,
+    featureId: `support:${fallback.axis}`
+  });
+}
+
+function collidePair(pair, shapeA, poseA, shapeB, poseB) {
+  if (!shapeA || !shapeB || !poseA || !poseB) {
+    return null;
+  }
+
+  if (shapeA.type === 'box' && shapeB.type === 'box') {
+    return collideBoxPair(pair);
+  }
+
+  if (shapeA.type === 'sphere' && shapeB.type === 'sphere') {
+    return collideSphereSpherePair(pair, shapeA, poseA, shapeB, poseB);
+  }
+
+  if (shapeA.type === 'sphere' && shapeB.type === 'box') {
+    return collideSphereBoxPair(pair, shapeA, poseA, shapeB, poseB, true);
+  }
+
+  if (shapeA.type === 'box' && shapeB.type === 'sphere') {
+    return collideSphereBoxPair(pair, shapeB, poseB, shapeA, poseA, false);
+  }
+
+  if (shapeA.type === 'capsule' && shapeB.type === 'sphere') {
+    return collideCapsuleSpherePair(pair, shapeA, poseA, shapeB, poseB, true);
+  }
+
+  if (shapeA.type === 'sphere' && shapeB.type === 'capsule') {
+    return collideCapsuleSpherePair(pair, shapeB, poseB, shapeA, poseA, false);
+  }
+
+  return collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB);
 }
 
 export function createContactPair(options = {}) {
@@ -25,6 +272,9 @@ export function createContactPair(options = {}) {
     bodyBId: String(options.bodyBId ?? '').trim() || null,
     shapeAType: String(options.shapeAType ?? '').trim() || 'unknown',
     shapeBType: String(options.shapeBType ?? '').trim() || 'unknown',
+    friction: Number(options.friction ?? 0.5),
+    restitution: Number(options.restitution ?? 0),
+    restitutionThreshold: Number(options.restitutionThreshold ?? 1),
     normal: cloneVec3(options.normal ?? createVec3()),
     penetration: Number(options.penetration ?? 0),
     contactCount: Number(options.contactCount ?? (Array.isArray(options.contacts) ? options.contacts.length : 0)),
@@ -36,19 +286,21 @@ export function cloneContactPair(contactPair) {
   return createContactPair(contactPair);
 }
 
-export function runNarrowphase(pairs) {
+export function runNarrowphase(pairs, options = {}) {
   const contactPairs = [];
   const unsupportedPairs = [];
+  const getShape = typeof options.getShape === 'function' ? options.getShape : () => null;
+  const getPose = typeof options.getPose === 'function' ? options.getPose : () => null;
 
   for (const pair of Array.isArray(pairs) ? pairs : []) {
-    let contactPair = null;
-
-    if (pair.shapeAType === 'box' && pair.shapeBType === 'box') {
-      contactPair = collideBoxPair(pair);
-    }
+    const shapeA = getShape(pair.shapeAId);
+    const shapeB = getShape(pair.shapeBId);
+    const poseA = getPose(pair.colliderAId);
+    const poseB = getPose(pair.colliderBId);
+    const contactPair = collidePair(pair, shapeA, poseA, shapeB, poseB);
 
     if (contactPair) {
-      contactPairs.push(createContactPair(contactPair));
+      contactPairs.push(contactPair);
       continue;
     }
 
