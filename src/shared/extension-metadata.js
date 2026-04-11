@@ -66,7 +66,7 @@ export function createExtensionInfo() {
       {
         opcode: 'setCameraTarget',
         blockType: 'command',
-        text: 'set debug camera target x:[X] y:[Y] z:[Z]',
+        text: 'set debug camera target pitch:[X] yaw:[Y] roll:[Z]',
         arguments: {
           X: { type: 'number', defaultValue: 0 },
           Y: { type: 'number', defaultValue: 0 },

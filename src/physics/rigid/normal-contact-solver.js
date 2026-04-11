@@ -1,4 +1,4 @@
-import { createIdentityQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } from '../math/quat.js';
+import { createIdentityQuat, createQuatFromAxisAngle, inverseRotateVec3ByQuat, multiplyQuat, normalizeQuat, rotateVec3ByQuat } from '../math/quat.js';
 import { addScaledVec3, addVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, normalizeVec3, scaleVec3, subtractVec3 } from '../math/vec3.js';
 import { createTangentBasis } from '../collision/support.js';
 
@@ -84,13 +84,32 @@ function applyImpulse(bodyA, bodyB, contactPosition, impulse) {
   }
 }
 
-function applyPositionCorrection(bodyA, bodyB, direction, correctionMagnitude) {
+function applyAngularPositionCorrection(body, angularCorrection) {
+  const angularMagnitudeSquared = lengthSquaredVec3(angularCorrection);
+  if (!body || angularMagnitudeSquared <= 1e-12) {
+    return;
+  }
+
+  const angularMagnitude = Math.sqrt(angularMagnitudeSquared);
+  const angularAxis = scaleVec3(angularCorrection, 1 / angularMagnitude);
+  const rotationDelta = createQuatFromAxisAngle(angularAxis, angularMagnitude);
+  body.rotation = normalizeQuat(multiplyQuat(rotationDelta, body.rotation ?? createIdentityQuat()));
+}
+
+function applyPositionCorrection(bodyA, bodyB, contactPosition, direction, correctionMagnitude) {
+  const correctionImpulse = scaleVec3(direction, correctionMagnitude);
+
   if (bodyA) {
-    bodyA.position = addScaledVec3(bodyA.position, direction, -correctionMagnitude * bodyA.inverseMass);
+    const offsetA = getContactOffset(bodyA, contactPosition);
+    const correctionA = scaleVec3(correctionImpulse, -1);
+    bodyA.position = addScaledVec3(bodyA.position, correctionA, bodyA.inverseMass);
+    applyAngularPositionCorrection(bodyA, applyInverseInertiaWorld(bodyA, crossVec3(offsetA, correctionA)));
   }
 
   if (bodyB) {
-    bodyB.position = addScaledVec3(bodyB.position, direction, correctionMagnitude * bodyB.inverseMass);
+    const offsetB = getContactOffset(bodyB, contactPosition);
+    bodyB.position = addScaledVec3(bodyB.position, correctionImpulse, bodyB.inverseMass);
+    applyAngularPositionCorrection(bodyB, applyInverseInertiaWorld(bodyB, crossVec3(offsetB, correctionImpulse)));
   }
 }
 
@@ -246,18 +265,18 @@ export function solveNormalContactConstraints(options = {}) {
     const bodyB = getDynamicBody(bodyRegistry, manifold.bodyBId);
 
     for (const contact of manifold.contacts) {
-      const linearInverseMassSum = (bodyA?.inverseMass ?? 0) + (bodyB?.inverseMass ?? 0);
-      if (linearInverseMassSum <= 1e-8) {
+      const correctionDirection = lengthSquaredVec3(manifold.normal) > 0 ? normalizeVec3(manifold.normal, createVec3(0, 1, 0)) : createVec3(0, 1, 0);
+      const effectiveMass = computeEffectiveMass(bodyA, bodyB, contact.position, correctionDirection);
+      if (effectiveMass <= 1e-8) {
         continue;
       }
 
-      const correctionMagnitude = Math.max(contact.penetration - allowedPenetration, 0) * positionCorrectionPercent / linearInverseMassSum;
+      const correctionMagnitude = Math.max(contact.penetration - allowedPenetration, 0) * positionCorrectionPercent / effectiveMass;
       if (correctionMagnitude <= 1e-8) {
         continue;
       }
 
-      const correctionDirection = lengthSquaredVec3(manifold.normal) > 0 ? normalizeVec3(manifold.normal, createVec3(0, 1, 0)) : createVec3(0, 1, 0);
-      applyPositionCorrection(bodyA, bodyB, correctionDirection, correctionMagnitude);
+      applyPositionCorrection(bodyA, bodyB, contact.position, correctionDirection, correctionMagnitude);
       stats.positionCorrections += 1;
     }
   }

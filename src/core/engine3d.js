@@ -55,7 +55,7 @@ function parseConvexHullVertices(verticesText) {
 }
 
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} -> ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -90,7 +90,7 @@ export class Engine3D {
 
   setCameraTarget(x, y, z) {
     this.world.setDebugCameraTarget(createVec3(x, y, z));
-    this.hostBridge.log(`Camera target set to ${x}, ${y}, ${z}`);
+    this.hostBridge.log(`Camera angles set to pitch ${x}, yaw ${y}, roll ${z}`);
   }
 
   setGravity(x, y, z) {

@@ -148,7 +148,7 @@ test('PhysicsWorld draws convex hull debug geometry as per-face line segments', 
   assert.ok(frame.primitives.every((primitive) => primitive.id !== 'debug-hull:collider:wire-box'));
 });
 
-test('PhysicsWorld debug camera preserves independent target state', () => {
+test('PhysicsWorld debug camera preserves independent angle state', () => {
   const world = new PhysicsWorld();
   world.setDebugCameraPosition({ x: 120, y: 60, z: 320 });
   world.setDebugCameraTarget({ x: 10, y: 20, z: 30 });
@@ -369,6 +369,51 @@ test('PhysicsWorld convex hulls use multi-point GJK/EPA manifold generation', ()
   assert.equal(collisionState.summary.algorithms['gjk-epa-manifold-v1'], 1);
   assert.ok(collisionState.contactPairs[0].contactCount >= 3, `expected multi-point hull contact, got ${collisionState.contactPairs[0].contactCount}`);
   assert.ok(featureIds.size >= 3, `expected distinct hull feature ids, got ${Array.from(featureIds).join(', ')}`);
+});
+
+test('PhysicsWorld unsupported box on a static convex ledge tips and keeps contacts inside the support region', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 14
+  });
+  world.createStaticConvexHullCollider({
+    id: 'ledge',
+    position: { x: 0, y: 0, z: 0 },
+    vertices: [
+      { x: -40, y: -10, z: -40 },
+      { x: 0, y: -10, z: -40 },
+      { x: 0, y: -10, z: 40 },
+      { x: -40, y: -10, z: 40 },
+      { x: -40, y: 10, z: -40 },
+      { x: 0, y: 10, z: -40 },
+      { x: 0, y: 10, z: 40 },
+      { x: -40, y: 10, z: 40 }
+    ]
+  });
+  world.createBoxBody({
+    id: 'box',
+    position: { x: 10, y: 30, z: 0 },
+    size: 40,
+    mass: 1
+  });
+
+  let firstContactPair = null;
+  let maxTilt = 0;
+  for (let stepIndex = 0; stepIndex < 480; stepIndex += 1) {
+    world.step(1 / 120);
+    const body = world.getBody('box');
+    maxTilt = Math.max(maxTilt, Math.abs(body.rotation.x), Math.abs(body.rotation.z));
+    const contactPair = world.getCollisionState().contactPairs.find((pair) => pair.pairKey === 'box:collider|ledge:collider' || pair.pairKey === 'ledge:collider|box:collider');
+    if (contactPair && !firstContactPair) {
+      firstContactPair = contactPair;
+    }
+  }
+
+  assert.ok(firstContactPair, 'expected the box to contact the ledge');
+  for (const contact of firstContactPair.contacts) {
+    assert.ok(contact.position.x >= -10.1 && contact.position.x <= 0.1, `expected clipped contact x to stay on the ledge support region, got ${contact.position.x}`);
+  }
+  assert.ok(maxTilt > 0.2, `expected unsupported box to tip, got max tilt ${maxTilt}`);
 });
 
 test('PhysicsWorld capsule-box pairs use the GJK/EPA manifold path', () => {

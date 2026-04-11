@@ -1,4 +1,4 @@
-import { rotateVec3ByQuat } from '../../physics/math/quat.js';
+import { createIdentityQuat, createQuatFromAxisAngle, multiplyQuat, normalizeQuat, rotateVec3ByQuat } from '../../physics/math/quat.js';
 import { addVec3, createVec3, crossVec3, dotVec3, normalizeVec3, subtractVec3 } from '../../physics/math/vec3.js';
 
 function rgba(color) {
@@ -28,11 +28,23 @@ function ensureCanvasSize(canvas) {
   }
 }
 
-function buildViewBasis(cameraPosition, cameraTarget) {
-  const target = cameraTarget ?? createVec3(0, 0, 0);
-  const forward = normalizeVec3(subtractVec3(target, cameraPosition), createVec3(0, 0, -1));
-  const worldUp = Math.abs(forward.y) > 0.98 ? createVec3(0, 0, 1) : createVec3(0, 1, 0);
-  const right = normalizeVec3(crossVec3(forward, worldUp), createVec3(1, 0, 0));
+function degreesToRadians(value) {
+  return (Number(value ?? 0) * Math.PI) / 180;
+}
+
+function buildCameraRotation(cameraAngles) {
+  const angles = cameraAngles ?? createVec3();
+  let rotation = createIdentityQuat();
+  rotation = multiplyQuat(createQuatFromAxisAngle(createVec3(0, 1, 0), degreesToRadians(angles.y)), rotation);
+  rotation = multiplyQuat(createQuatFromAxisAngle(createVec3(1, 0, 0), degreesToRadians(angles.x)), rotation);
+  rotation = multiplyQuat(createQuatFromAxisAngle(createVec3(0, 0, 1), degreesToRadians(angles.z)), rotation);
+  return normalizeQuat(rotation);
+}
+
+function buildViewBasis(cameraAngles) {
+  const rotation = buildCameraRotation(cameraAngles);
+  const forward = normalizeVec3(rotateVec3ByQuat(rotation, createVec3(0, 0, -1)), createVec3(0, 0, -1));
+  const right = normalizeVec3(rotateVec3ByQuat(rotation, createVec3(1, 0, 0)), createVec3(1, 0, 0));
   const up = normalizeVec3(crossVec3(right, forward), createVec3(0, 1, 0));
   return { forward, right, up };
 }
@@ -205,8 +217,8 @@ export function createDebugOverlay(displayName) {
     clearCanvas(context2d, width, height);
 
     const cameraPosition = frame?.debugFrame?.camera?.position ?? createVec3(0, 0, 400);
-    const cameraTarget = frame?.debugFrame?.camera?.target ?? createVec3(0, 0, 0);
-    const basis = buildViewBasis(cameraPosition, cameraTarget);
+    const cameraAngles = frame?.debugFrame?.camera?.target ?? createVec3(0, 0, 0);
+    const basis = buildViewBasis(cameraAngles);
     const primitives = Array.isArray(frame?.debugFrame?.primitives) ? frame.debugFrame.primitives : [];
 
     for (const primitive of primitives) {

@@ -22,6 +22,17 @@ function cloneEdges(edges) {
     : [];
 }
 
+function cloneFaces(faces) {
+  return Array.isArray(faces)
+    ? faces.map((face) => ({
+      normal: cloneVec3(face.normal),
+      planeOffset: Number(face.planeOffset ?? 0),
+      boundaryIndices: Array.isArray(face.boundaryIndices) ? face.boundaryIndices.slice() : [],
+      edges: cloneEdges(face.edges)
+    }))
+    : [];
+}
+
 function createPlaneKey(normal, offset) {
   let sign = 1;
   if (
@@ -44,17 +55,14 @@ function choosePlaneBasis(normal) {
   return { tangentA, tangentB };
 }
 
-function computeFaceBoundary(indices, vertices, normal) {
+function computeFaceLoop(indices, vertices, normal) {
   const uniqueIndices = Array.from(new Set(indices));
   if (uniqueIndices.length < 2) {
     return [];
   }
 
   if (uniqueIndices.length === 2) {
-    return [{
-      startIndex: Math.min(uniqueIndices[0], uniqueIndices[1]),
-      endIndex: Math.max(uniqueIndices[0], uniqueIndices[1])
-    }];
+    return uniqueIndices.slice();
   }
 
   const centroid = uniqueIndices.reduce((sum, index) => ({
@@ -80,10 +88,26 @@ function computeFaceBoundary(indices, vertices, normal) {
     })
     .sort((left, right) => left.angle - right.angle);
 
+  return ordered.map((entry) => entry.index);
+}
+
+function computeFaceBoundary(indices, vertices, normal) {
+  const loop = computeFaceLoop(indices, vertices, normal);
+  if (loop.length < 2) {
+    return [];
+  }
+
+  if (loop.length === 2) {
+    return [{
+      startIndex: Math.min(loop[0], loop[1]),
+      endIndex: Math.max(loop[0], loop[1])
+    }];
+  }
+
   const edges = [];
-  for (let index = 0; index < ordered.length; index += 1) {
-    const startIndex = ordered[index].index;
-    const endIndex = ordered[(index + 1) % ordered.length].index;
+  for (let index = 0; index < loop.length; index += 1) {
+    const startIndex = loop[index];
+    const endIndex = loop[(index + 1) % loop.length];
     if (startIndex === endIndex) {
       continue;
     }
@@ -97,13 +121,19 @@ function computeFaceBoundary(indices, vertices, normal) {
   return edges;
 }
 
-function computeConvexHullDebugEdges(vertices) {
+function computeConvexHullFaces(vertices) {
   if (!Array.isArray(vertices) || vertices.length < 2) {
     return [];
   }
 
   if (vertices.length === 2) {
-    return [{ startIndex: 0, endIndex: 1 }];
+    const edge = { startIndex: 0, endIndex: 1 };
+    return [{
+      normal: createVec3(1, 0, 0),
+      planeOffset: dotVec3(createVec3(1, 0, 0), vertices[0]),
+      boundaryIndices: [0, 1],
+      edges: [edge]
+    }];
   }
 
   const faces = new Map();
@@ -161,16 +191,34 @@ function computeConvexHullDebugEdges(vertices) {
 
         faces.set(key, {
           normal,
+          planeOffset: offset,
           indices: coplanarIndices.slice()
         });
       }
     }
   }
 
+  return Array.from(faces.values(), (face) => ({
+    normal: cloneVec3(face.normal),
+    planeOffset: Number(face.planeOffset ?? 0),
+    boundaryIndices: computeFaceLoop(face.indices, vertices, face.normal),
+    edges: computeFaceBoundary(face.indices, vertices, face.normal)
+  })).filter((face) => face.boundaryIndices.length >= 2);
+}
+
+function computeConvexHullDebugEdges(vertices, faces) {
+  if (!Array.isArray(vertices) || vertices.length < 2) {
+    return [];
+  }
+
+  if (vertices.length === 2) {
+    return [{ startIndex: 0, endIndex: 1 }];
+  }
+
   const edgeKeys = new Set();
   const edges = [];
-  for (const face of faces.values()) {
-    for (const edge of computeFaceBoundary(face.indices, vertices, face.normal)) {
+  for (const face of Array.isArray(faces) ? faces : []) {
+    for (const edge of face.edges ?? []) {
       const key = `${edge.startIndex}|${edge.endIndex}`;
       if (edgeKeys.has(key)) {
         continue;
@@ -214,6 +262,7 @@ function cloneGeometry(shape) {
   if (shape.type === 'convex-hull') {
     return {
       vertices: cloneVertices(shape.geometry.vertices),
+      faces: cloneFaces(shape.geometry.faces),
       debugEdges: cloneEdges(shape.geometry.debugEdges)
     };
   }
@@ -275,12 +324,14 @@ export class ShapeRegistry extends BaseRegistry {
 
   createConvexHullShape(options = {}) {
     const vertices = cloneVertices(options.vertices);
+    const faces = computeConvexHullFaces(vertices);
     return this.store({
       id: this.allocateId(options.id),
       type: 'convex-hull',
       geometry: {
         vertices,
-        debugEdges: computeConvexHullDebugEdges(vertices)
+        faces,
+        debugEdges: computeConvexHullDebugEdges(vertices, faces)
       },
       localPose: createLocalPose(options.localPose),
       userData: options.userData ?? null

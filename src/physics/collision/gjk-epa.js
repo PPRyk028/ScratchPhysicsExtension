@@ -1,9 +1,10 @@
 import { addScaledVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } from '../math/vec3.js';
-import { createTangentBasis, getShapeSupportFeature, getShapeWorldCenter } from './support.js';
+import { createTangentBasis, getShapeSupportFeature, getShapeSupportPolygon, getShapeWorldCenter } from './support.js';
 
 const GJK_MAX_ITERATIONS = 24;
 const EPA_MAX_ITERATIONS = 32;
 const EPA_TOLERANCE = 1e-4;
+const MANIFOLD_CLIP_EPSILON = 1e-5;
 
 function createSupportVertex(shapeA, poseA, shapeB, poseB, direction) {
   const supportFeatureA = getShapeSupportFeature(shapeA, poseA, direction);
@@ -386,9 +387,294 @@ function selectManifoldCandidates(candidates, normal, maxContacts = 4) {
   return selected.slice(0, maxContacts);
 }
 
+function projectSupportPolygon(points, basis) {
+  return points.map((point, index) => ({
+    index,
+    u: dotVec3(point.worldPoint, basis.tangentA),
+    v: dotVec3(point.worldPoint, basis.tangentB),
+    featureId: point.featureId ?? `feature:${index}`
+  }));
+}
+
+function polygonSignedArea(polygon) {
+  if (!Array.isArray(polygon) || polygon.length < 3) {
+    return 0;
+  }
+
+  let area = 0;
+  for (let index = 0; index < polygon.length; index += 1) {
+    const current = polygon[index];
+    const next = polygon[(index + 1) % polygon.length];
+    area += current.u * next.v - next.u * current.v;
+  }
+
+  return area / 2;
+}
+
+function orderProjectedPolygon(polygon) {
+  if (!Array.isArray(polygon) || polygon.length <= 2) {
+    return Array.isArray(polygon) ? polygon.slice() : [];
+  }
+
+  const centroid = polygon.reduce((sum, point) => ({
+    u: sum.u + point.u,
+    v: sum.v + point.v
+  }), { u: 0, v: 0 });
+  centroid.u /= polygon.length;
+  centroid.v /= polygon.length;
+
+  const ordered = polygon
+    .slice()
+    .sort((left, right) => {
+      const leftAngle = Math.atan2(left.v - centroid.v, left.u - centroid.u);
+      const rightAngle = Math.atan2(right.v - centroid.v, right.u - centroid.u);
+      return leftAngle - rightAngle;
+    });
+
+  if (polygonSignedArea(ordered) < 0) {
+    ordered.reverse();
+  }
+
+  return ordered;
+}
+
+function isPointInsideConvexPolygon(point, polygon) {
+  if (!Array.isArray(polygon) || polygon.length === 0) {
+    return false;
+  }
+
+  if (polygon.length === 1) {
+    return Math.abs(point.u - polygon[0].u) <= MANIFOLD_CLIP_EPSILON &&
+      Math.abs(point.v - polygon[0].v) <= MANIFOLD_CLIP_EPSILON;
+  }
+
+  if (polygon.length === 2) {
+    const edge = { u: polygon[1].u - polygon[0].u, v: polygon[1].v - polygon[0].v };
+    const fromStart = { u: point.u - polygon[0].u, v: point.v - polygon[0].v };
+    const cross = edge.u * fromStart.v - edge.v * fromStart.u;
+    if (Math.abs(cross) > MANIFOLD_CLIP_EPSILON) {
+      return false;
+    }
+
+    const dot = fromStart.u * edge.u + fromStart.v * edge.v;
+    const edgeLengthSquared = edge.u * edge.u + edge.v * edge.v;
+    return dot >= -MANIFOLD_CLIP_EPSILON && dot <= edgeLengthSquared + MANIFOLD_CLIP_EPSILON;
+  }
+
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index];
+    const end = polygon[(index + 1) % polygon.length];
+    const edgeU = end.u - start.u;
+    const edgeV = end.v - start.v;
+    const pointU = point.u - start.u;
+    const pointV = point.v - start.v;
+    const cross = edgeU * pointV - edgeV * pointU;
+    if (cross < -MANIFOLD_CLIP_EPSILON) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function intersectProjectedSegments(startA, endA, startB, endB) {
+  const r = { u: endA.u - startA.u, v: endA.v - startA.v };
+  const s = { u: endB.u - startB.u, v: endB.v - startB.v };
+  const denominator = r.u * s.v - r.v * s.u;
+  const delta = { u: startB.u - startA.u, v: startB.v - startA.v };
+
+  if (Math.abs(denominator) <= MANIFOLD_CLIP_EPSILON) {
+    return null;
+  }
+
+  const t = (delta.u * s.v - delta.v * s.u) / denominator;
+  const u = (delta.u * r.v - delta.v * r.u) / denominator;
+  if (t < -MANIFOLD_CLIP_EPSILON || t > 1 + MANIFOLD_CLIP_EPSILON || u < -MANIFOLD_CLIP_EPSILON || u > 1 + MANIFOLD_CLIP_EPSILON) {
+    return null;
+  }
+
+  return {
+    u: startA.u + r.u * t,
+    v: startA.v + r.v * t
+  };
+}
+
+function dedupeProjectedPoints(points) {
+  const uniquePoints = [];
+  const seen = new Set();
+
+  for (const point of points) {
+    const key = `${point.u.toFixed(5)}|${point.v.toFixed(5)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniquePoints.push(point);
+  }
+
+  return uniquePoints;
+}
+
+function isPointOnProjectedSegment(point, start, end) {
+  const edgeU = end.u - start.u;
+  const edgeV = end.v - start.v;
+  const pointU = point.u - start.u;
+  const pointV = point.v - start.v;
+  const cross = edgeU * pointV - edgeV * pointU;
+  if (Math.abs(cross) > MANIFOLD_CLIP_EPSILON) {
+    return false;
+  }
+
+  const dot = pointU * edgeU + pointV * edgeV;
+  const edgeLengthSquared = edgeU * edgeU + edgeV * edgeV;
+  return dot >= -MANIFOLD_CLIP_EPSILON && dot <= edgeLengthSquared + MANIFOLD_CLIP_EPSILON;
+}
+
+function sortFeatureIds(featureIds) {
+  return featureIds
+    .map((featureId) => String(featureId ?? '').trim())
+    .filter(Boolean)
+    .sort();
+}
+
+function describeProjectedFeatureAtPoint(point, polygon) {
+  if (!Array.isArray(polygon) || polygon.length === 0) {
+    return 'feature:empty';
+  }
+
+  for (const vertex of polygon) {
+    if (Math.abs(point.u - vertex.u) <= MANIFOLD_CLIP_EPSILON && Math.abs(point.v - vertex.v) <= MANIFOLD_CLIP_EPSILON) {
+      return `vertex:${vertex.featureId ?? 'unknown'}`;
+    }
+  }
+
+  const matchedEdges = [];
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index];
+    const end = polygon[(index + 1) % polygon.length];
+    if (!isPointOnProjectedSegment(point, start, end)) {
+      continue;
+    }
+
+    const edgeFeatureId = sortFeatureIds([start.featureId, end.featureId]).join('&');
+    if (edgeFeatureId) {
+      matchedEdges.push(`edge:${edgeFeatureId}`);
+    }
+  }
+
+  if (matchedEdges.length > 0) {
+    return matchedEdges.sort().join('+');
+  }
+
+  const faceFeatureId = sortFeatureIds(polygon.map((vertex) => vertex.featureId)).join('&');
+  return faceFeatureId ? `face:${faceFeatureId}` : 'feature:face';
+}
+
+function intersectSupportPolygons(referencePolygon, incidentPolygon) {
+  const reference = orderProjectedPolygon(referencePolygon);
+  const incident = orderProjectedPolygon(incidentPolygon);
+  if (reference.length === 0 || incident.length === 0) {
+    return [];
+  }
+
+  const points = [];
+
+  for (const point of reference) {
+    if (isPointInsideConvexPolygon(point, incident)) {
+      points.push({ u: point.u, v: point.v });
+    }
+  }
+
+  for (const point of incident) {
+    if (isPointInsideConvexPolygon(point, reference)) {
+      points.push({ u: point.u, v: point.v });
+    }
+  }
+
+  if (reference.length >= 2 && incident.length >= 2) {
+    for (let refIndex = 0; refIndex < reference.length; refIndex += 1) {
+      const refStart = reference[refIndex];
+      const refEnd = reference[(refIndex + 1) % reference.length];
+
+      for (let incidentIndex = 0; incidentIndex < incident.length; incidentIndex += 1) {
+        const incidentStart = incident[incidentIndex];
+        const incidentEnd = incident[(incidentIndex + 1) % incident.length];
+        const intersection = intersectProjectedSegments(refStart, refEnd, incidentStart, incidentEnd);
+        if (intersection) {
+          points.push(intersection);
+        }
+      }
+    }
+  }
+
+  return orderProjectedPolygon(dedupeProjectedPoints(points));
+}
+
+function buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
+  const basis = createTangentBasis(normal);
+  const supportA = getShapeSupportPolygon(shapeA, poseA, normal);
+  const supportB = getShapeSupportPolygon(shapeB, poseB, negateVec3(normal));
+  if ((supportA.points?.length ?? 0) === 0 || (supportB.points?.length ?? 0) === 0) {
+    return [];
+  }
+
+  const referencePolygon = projectSupportPolygon(supportA.points, basis);
+  const incidentPolygon = projectSupportPolygon(supportB.points, basis);
+  const clippedPolygon = intersectSupportPolygons(referencePolygon, incidentPolygon);
+  if (clippedPolygon.length === 0) {
+    return [];
+  }
+
+  const referenceOffset = Number(supportA.planeOffset ?? 0);
+  const incidentOffset = -Number(supportB.planeOffset ?? 0);
+  const separation = incidentOffset - referenceOffset;
+  const penetration = Math.max(0, referenceOffset - incidentOffset);
+
+  return clippedPolygon.map((point, index) => {
+    const referencePoint = addScaledVec3(
+      addScaledVec3(createVec3(), basis.tangentA, point.u),
+      basis.tangentB,
+      point.v
+    );
+    referencePoint.x += normal.x * referenceOffset;
+    referencePoint.y += normal.y * referenceOffset;
+    referencePoint.z += normal.z * referenceOffset;
+
+    const incidentPoint = addScaledVec3(
+      addScaledVec3(createVec3(), basis.tangentA, point.u),
+      basis.tangentB,
+      point.v
+    );
+    incidentPoint.x += normal.x * incidentOffset;
+    incidentPoint.y += normal.y * incidentOffset;
+    incidentPoint.z += normal.z * incidentOffset;
+
+    const referenceFeature = describeProjectedFeatureAtPoint(point, referencePolygon);
+    const incidentFeature = describeProjectedFeatureAtPoint(point, incidentPolygon);
+
+    return {
+      featureId: `${referenceFeature}|${incidentFeature}`,
+      position: createVec3(
+        (referencePoint.x + incidentPoint.x) / 2,
+        (referencePoint.y + incidentPoint.y) / 2,
+        (referencePoint.z + incidentPoint.z) / 2
+      ),
+      penetration,
+      separation
+    };
+  });
+}
+
 export function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResult) {
   if (!epaResult || epaResult.penetration <= 0) {
     return [];
+  }
+
+  const clippedCandidates = buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, epaResult.normal)
+    .filter((candidate) => candidate.penetration > 0);
+  if (clippedCandidates.length > 0) {
+    return selectManifoldCandidates(clippedCandidates, epaResult.normal, 4);
   }
 
   const faceCandidates = collectFaceCandidates(epaResult.faceVertices ?? [], epaResult.normal);

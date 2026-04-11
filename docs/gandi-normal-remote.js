@@ -435,7 +435,7 @@ function parseConvexHullVertices(verticesText) {
 }
 
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} -> ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -469,7 +469,7 @@ class Engine3D {
 
   setCameraTarget(x, y, z) {
     this.world.setDebugCameraTarget(createVec3(x, y, z));
-    this.hostBridge.log(`Camera target set to ${x}, ${y}, ${z}`);
+    this.hostBridge.log(`Camera angles set to pitch ${x}, yaw ${y}, roll ${z}`);
   }
 
   setGravity(x, y, z) {
@@ -1508,6 +1508,10 @@ __exports.crossVec3 = crossVec3;
   7: function(__require, __exports) {
 const { cloneQuat, createIdentityQuat, inverseRotateVec3ByQuat, multiplyQuat, rotateVec3ByQuat } = __require(5);
 const { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, maxVec3, minVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
+const SUPPORT_POLYGON_EPSILON = 1e-5;
+const SUPPORT_FACE_ALIGNMENT_THRESHOLD = 0.965;
+const SUPPORT_FACE_PROJECTION_EPSILON = 1e-3;
+
 function clampNumber(value, minValue, maxValue) {
   return Math.max(minValue, Math.min(maxValue, value));
 }
@@ -1618,6 +1622,192 @@ function getShapeSupportFeature(shape, worldPose, direction) {
 function getShapeSupportPoint(shape, worldPose, direction) {
   return getShapeSupportFeature(shape, worldPose, direction).worldPoint;
 }
+
+function dedupeSupportPolygonPoints(points) {
+  const uniquePoints = [];
+  const seen = new Set();
+
+  for (const point of points) {
+    const key = `${point.worldPoint.x.toFixed(6)}|${point.worldPoint.y.toFixed(6)}|${point.worldPoint.z.toFixed(6)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniquePoints.push(point);
+  }
+
+  return uniquePoints;
+}
+
+function buildBoxSupportPolygon(shapeWorldPose, halfExtents, localDirection, direction) {
+  const axisWeights = [
+    Math.abs(localDirection.x),
+    Math.abs(localDirection.y),
+    Math.abs(localDirection.z)
+  ];
+  let dominantAxisIndex = 0;
+  if (axisWeights[1] > axisWeights[dominantAxisIndex]) {
+    dominantAxisIndex = 1;
+  }
+  if (axisWeights[2] > axisWeights[dominantAxisIndex]) {
+    dominantAxisIndex = 2;
+  }
+
+  const axisSigns = [
+    localDirection.x >= 0 ? 1 : -1,
+    localDirection.y >= 0 ? 1 : -1,
+    localDirection.z >= 0 ? 1 : -1
+  ];
+  const signs = [-1, 1];
+  const points = [];
+
+  for (const signA of signs) {
+    for (const signB of signs) {
+      const localPoint = createVec3(
+        dominantAxisIndex === 0 ? halfExtents.x * axisSigns[0] : halfExtents.x * signA,
+        dominantAxisIndex === 1 ? halfExtents.y * axisSigns[1] : halfExtents.y * (dominantAxisIndex === 0 ? signA : signB),
+        dominantAxisIndex === 2 ? halfExtents.z * axisSigns[2] : halfExtents.z * signB
+      );
+      const worldPoint = transformPointByPose(shapeWorldPose, localPoint);
+      points.push({
+        worldPoint,
+        localPoint,
+        featureId: `corner:${localPoint.x >= 0 ? '+' : '-'}${localPoint.y >= 0 ? '+' : '-'}${localPoint.z >= 0 ? '+' : '-'}`,
+        featureType: 'vertex'
+      });
+    }
+  }
+
+  const planeOffset = points.reduce((maxProjection, point) => Math.max(maxProjection, dotVec3(point.worldPoint, direction)), -Infinity);
+
+  return {
+    points: dedupeSupportPolygonPoints(points),
+    planeOffset
+  };
+}
+
+function buildConvexHullSupportVertexPolygon(shapeWorldPose, vertices, direction) {
+  const points = [];
+  let maxDot = -Infinity;
+
+  for (let index = 0; index < vertices.length; index += 1) {
+    const localPoint = vertices[index];
+    const worldPoint = transformPointByPose(shapeWorldPose, localPoint);
+    const projection = dotVec3(worldPoint, direction);
+
+    if (projection > maxDot + SUPPORT_POLYGON_EPSILON) {
+      maxDot = projection;
+      points.length = 0;
+    }
+
+    if (projection >= maxDot - SUPPORT_POLYGON_EPSILON) {
+      points.push({
+        worldPoint,
+        localPoint: cloneVec3(localPoint),
+        featureId: `vertex:${index}`,
+        featureType: 'vertex'
+      });
+    }
+  }
+
+  return {
+    points: dedupeSupportPolygonPoints(points),
+    planeOffset: maxDot
+  };
+}
+
+function buildConvexHullSupportPolygon(shapeWorldPose, geometry, direction) {
+  const vertices = Array.isArray(geometry?.vertices) ? geometry.vertices : [];
+  const fallback = buildConvexHullSupportVertexPolygon(shapeWorldPose, vertices, direction);
+  const faces = Array.isArray(geometry?.faces) ? geometry.faces : [];
+  if (faces.length === 0) {
+    return fallback;
+  }
+
+  const faceCandidates = [];
+  for (const face of faces) {
+    const boundaryIndices = Array.isArray(face.boundaryIndices) ? face.boundaryIndices : [];
+    if (boundaryIndices.length < 2) {
+      continue;
+    }
+
+    const points = boundaryIndices.map((index) => {
+      const localPoint = vertices[index];
+      return {
+        worldPoint: transformPointByPose(shapeWorldPose, localPoint),
+        localPoint: cloneVec3(localPoint),
+        featureId: `vertex:${index}`,
+        featureType: 'vertex'
+      };
+    });
+    const planeOffset = points.reduce((maxProjection, point) => Math.max(maxProjection, dotVec3(point.worldPoint, direction)), -Infinity);
+    const worldNormal = normalizeVec3(rotateVec3ByQuat(shapeWorldPose.rotation, face.normal ?? createVec3(0, 1, 0)), direction);
+    const alignment = dotVec3(worldNormal, direction);
+
+    faceCandidates.push({
+      points,
+      planeOffset,
+      alignment
+    });
+  }
+
+  const selectedFace = faceCandidates
+    .filter((candidate) =>
+      candidate.alignment >= SUPPORT_FACE_ALIGNMENT_THRESHOLD &&
+      candidate.planeOffset >= fallback.planeOffset - SUPPORT_FACE_PROJECTION_EPSILON
+    )
+    .sort((left, right) => {
+      if (right.alignment !== left.alignment) {
+        return right.alignment - left.alignment;
+      }
+
+      if (right.points.length !== left.points.length) {
+        return right.points.length - left.points.length;
+      }
+
+      return right.planeOffset - left.planeOffset;
+    })[0];
+
+  if (selectedFace) {
+    return {
+      points: dedupeSupportPolygonPoints(selectedFace.points),
+      planeOffset: selectedFace.planeOffset
+    };
+  }
+
+  return fallback;
+}
+function getShapeSupportPolygon(shape, worldPose, direction) {
+  const shapeWorldPose = getShapeWorldPose(shape, worldPose);
+  const resolvedDirection = normalizeVec3(direction, createVec3(1, 0, 0));
+  const localDirection = inverseRotateVec3ByQuat(shapeWorldPose.rotation, resolvedDirection);
+
+  if (shape?.type === 'box') {
+    const result = buildBoxSupportPolygon(shapeWorldPose, shape.geometry.halfExtents, localDirection, resolvedDirection);
+    return {
+      normal: resolvedDirection,
+      planeOffset: result.planeOffset,
+      points: result.points
+    };
+  }
+
+  if (shape?.type === 'convex-hull') {
+    const result = buildConvexHullSupportPolygon(shapeWorldPose, shape.geometry ?? {}, resolvedDirection);
+    return {
+      normal: resolvedDirection,
+      planeOffset: result.planeOffset,
+      points: result.points
+    };
+  }
+
+  const feature = getShapeSupportFeature(shape, worldPose, resolvedDirection);
+  return {
+    normal: resolvedDirection,
+    planeOffset: dotVec3(feature.worldPoint, resolvedDirection),
+    points: [feature]
+  };
+}
 function clampPointToAabb(point, aabb) {
   return createVec3(
     clampNumber(point.x, aabb.min.x, aabb.max.x),
@@ -1698,6 +1888,7 @@ __exports.transformPointByPose = transformPointByPose;
 __exports.getShapeWorldPose = getShapeWorldPose;
 __exports.getShapeSupportFeature = getShapeSupportFeature;
 __exports.getShapeSupportPoint = getShapeSupportPoint;
+__exports.getShapeSupportPolygon = getShapeSupportPolygon;
 __exports.clampPointToAabb = clampPointToAabb;
 __exports.getClosestPointOnSegment = getClosestPointOnSegment;
 __exports.getCapsuleSegmentEndpoints = getCapsuleSegmentEndpoints;
@@ -2051,10 +2242,11 @@ __exports.collideBoxPair = collideBoxPair;
 },
   10: function(__require, __exports) {
 const { addScaledVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
-const { createTangentBasis, getShapeSupportFeature, getShapeWorldCenter } = __require(7);
+const { createTangentBasis, getShapeSupportFeature, getShapeSupportPolygon, getShapeWorldCenter } = __require(7);
 const GJK_MAX_ITERATIONS = 24;
 const EPA_MAX_ITERATIONS = 32;
 const EPA_TOLERANCE = 1e-4;
+const MANIFOLD_CLIP_EPSILON = 1e-5;
 
 function createSupportVertex(shapeA, poseA, shapeB, poseB, direction) {
   const supportFeatureA = getShapeSupportFeature(shapeA, poseA, direction);
@@ -2436,9 +2628,294 @@ function selectManifoldCandidates(candidates, normal, maxContacts = 4) {
 
   return selected.slice(0, maxContacts);
 }
+
+function projectSupportPolygon(points, basis) {
+  return points.map((point, index) => ({
+    index,
+    u: dotVec3(point.worldPoint, basis.tangentA),
+    v: dotVec3(point.worldPoint, basis.tangentB),
+    featureId: point.featureId ?? `feature:${index}`
+  }));
+}
+
+function polygonSignedArea(polygon) {
+  if (!Array.isArray(polygon) || polygon.length < 3) {
+    return 0;
+  }
+
+  let area = 0;
+  for (let index = 0; index < polygon.length; index += 1) {
+    const current = polygon[index];
+    const next = polygon[(index + 1) % polygon.length];
+    area += current.u * next.v - next.u * current.v;
+  }
+
+  return area / 2;
+}
+
+function orderProjectedPolygon(polygon) {
+  if (!Array.isArray(polygon) || polygon.length <= 2) {
+    return Array.isArray(polygon) ? polygon.slice() : [];
+  }
+
+  const centroid = polygon.reduce((sum, point) => ({
+    u: sum.u + point.u,
+    v: sum.v + point.v
+  }), { u: 0, v: 0 });
+  centroid.u /= polygon.length;
+  centroid.v /= polygon.length;
+
+  const ordered = polygon
+    .slice()
+    .sort((left, right) => {
+      const leftAngle = Math.atan2(left.v - centroid.v, left.u - centroid.u);
+      const rightAngle = Math.atan2(right.v - centroid.v, right.u - centroid.u);
+      return leftAngle - rightAngle;
+    });
+
+  if (polygonSignedArea(ordered) < 0) {
+    ordered.reverse();
+  }
+
+  return ordered;
+}
+
+function isPointInsideConvexPolygon(point, polygon) {
+  if (!Array.isArray(polygon) || polygon.length === 0) {
+    return false;
+  }
+
+  if (polygon.length === 1) {
+    return Math.abs(point.u - polygon[0].u) <= MANIFOLD_CLIP_EPSILON &&
+      Math.abs(point.v - polygon[0].v) <= MANIFOLD_CLIP_EPSILON;
+  }
+
+  if (polygon.length === 2) {
+    const edge = { u: polygon[1].u - polygon[0].u, v: polygon[1].v - polygon[0].v };
+    const fromStart = { u: point.u - polygon[0].u, v: point.v - polygon[0].v };
+    const cross = edge.u * fromStart.v - edge.v * fromStart.u;
+    if (Math.abs(cross) > MANIFOLD_CLIP_EPSILON) {
+      return false;
+    }
+
+    const dot = fromStart.u * edge.u + fromStart.v * edge.v;
+    const edgeLengthSquared = edge.u * edge.u + edge.v * edge.v;
+    return dot >= -MANIFOLD_CLIP_EPSILON && dot <= edgeLengthSquared + MANIFOLD_CLIP_EPSILON;
+  }
+
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index];
+    const end = polygon[(index + 1) % polygon.length];
+    const edgeU = end.u - start.u;
+    const edgeV = end.v - start.v;
+    const pointU = point.u - start.u;
+    const pointV = point.v - start.v;
+    const cross = edgeU * pointV - edgeV * pointU;
+    if (cross < -MANIFOLD_CLIP_EPSILON) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function intersectProjectedSegments(startA, endA, startB, endB) {
+  const r = { u: endA.u - startA.u, v: endA.v - startA.v };
+  const s = { u: endB.u - startB.u, v: endB.v - startB.v };
+  const denominator = r.u * s.v - r.v * s.u;
+  const delta = { u: startB.u - startA.u, v: startB.v - startA.v };
+
+  if (Math.abs(denominator) <= MANIFOLD_CLIP_EPSILON) {
+    return null;
+  }
+
+  const t = (delta.u * s.v - delta.v * s.u) / denominator;
+  const u = (delta.u * r.v - delta.v * r.u) / denominator;
+  if (t < -MANIFOLD_CLIP_EPSILON || t > 1 + MANIFOLD_CLIP_EPSILON || u < -MANIFOLD_CLIP_EPSILON || u > 1 + MANIFOLD_CLIP_EPSILON) {
+    return null;
+  }
+
+  return {
+    u: startA.u + r.u * t,
+    v: startA.v + r.v * t
+  };
+}
+
+function dedupeProjectedPoints(points) {
+  const uniquePoints = [];
+  const seen = new Set();
+
+  for (const point of points) {
+    const key = `${point.u.toFixed(5)}|${point.v.toFixed(5)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniquePoints.push(point);
+  }
+
+  return uniquePoints;
+}
+
+function isPointOnProjectedSegment(point, start, end) {
+  const edgeU = end.u - start.u;
+  const edgeV = end.v - start.v;
+  const pointU = point.u - start.u;
+  const pointV = point.v - start.v;
+  const cross = edgeU * pointV - edgeV * pointU;
+  if (Math.abs(cross) > MANIFOLD_CLIP_EPSILON) {
+    return false;
+  }
+
+  const dot = pointU * edgeU + pointV * edgeV;
+  const edgeLengthSquared = edgeU * edgeU + edgeV * edgeV;
+  return dot >= -MANIFOLD_CLIP_EPSILON && dot <= edgeLengthSquared + MANIFOLD_CLIP_EPSILON;
+}
+
+function sortFeatureIds(featureIds) {
+  return featureIds
+    .map((featureId) => String(featureId ?? '').trim())
+    .filter(Boolean)
+    .sort();
+}
+
+function describeProjectedFeatureAtPoint(point, polygon) {
+  if (!Array.isArray(polygon) || polygon.length === 0) {
+    return 'feature:empty';
+  }
+
+  for (const vertex of polygon) {
+    if (Math.abs(point.u - vertex.u) <= MANIFOLD_CLIP_EPSILON && Math.abs(point.v - vertex.v) <= MANIFOLD_CLIP_EPSILON) {
+      return `vertex:${vertex.featureId ?? 'unknown'}`;
+    }
+  }
+
+  const matchedEdges = [];
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index];
+    const end = polygon[(index + 1) % polygon.length];
+    if (!isPointOnProjectedSegment(point, start, end)) {
+      continue;
+    }
+
+    const edgeFeatureId = sortFeatureIds([start.featureId, end.featureId]).join('&');
+    if (edgeFeatureId) {
+      matchedEdges.push(`edge:${edgeFeatureId}`);
+    }
+  }
+
+  if (matchedEdges.length > 0) {
+    return matchedEdges.sort().join('+');
+  }
+
+  const faceFeatureId = sortFeatureIds(polygon.map((vertex) => vertex.featureId)).join('&');
+  return faceFeatureId ? `face:${faceFeatureId}` : 'feature:face';
+}
+
+function intersectSupportPolygons(referencePolygon, incidentPolygon) {
+  const reference = orderProjectedPolygon(referencePolygon);
+  const incident = orderProjectedPolygon(incidentPolygon);
+  if (reference.length === 0 || incident.length === 0) {
+    return [];
+  }
+
+  const points = [];
+
+  for (const point of reference) {
+    if (isPointInsideConvexPolygon(point, incident)) {
+      points.push({ u: point.u, v: point.v });
+    }
+  }
+
+  for (const point of incident) {
+    if (isPointInsideConvexPolygon(point, reference)) {
+      points.push({ u: point.u, v: point.v });
+    }
+  }
+
+  if (reference.length >= 2 && incident.length >= 2) {
+    for (let refIndex = 0; refIndex < reference.length; refIndex += 1) {
+      const refStart = reference[refIndex];
+      const refEnd = reference[(refIndex + 1) % reference.length];
+
+      for (let incidentIndex = 0; incidentIndex < incident.length; incidentIndex += 1) {
+        const incidentStart = incident[incidentIndex];
+        const incidentEnd = incident[(incidentIndex + 1) % incident.length];
+        const intersection = intersectProjectedSegments(refStart, refEnd, incidentStart, incidentEnd);
+        if (intersection) {
+          points.push(intersection);
+        }
+      }
+    }
+  }
+
+  return orderProjectedPolygon(dedupeProjectedPoints(points));
+}
+
+function buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
+  const basis = createTangentBasis(normal);
+  const supportA = getShapeSupportPolygon(shapeA, poseA, normal);
+  const supportB = getShapeSupportPolygon(shapeB, poseB, negateVec3(normal));
+  if ((supportA.points?.length ?? 0) === 0 || (supportB.points?.length ?? 0) === 0) {
+    return [];
+  }
+
+  const referencePolygon = projectSupportPolygon(supportA.points, basis);
+  const incidentPolygon = projectSupportPolygon(supportB.points, basis);
+  const clippedPolygon = intersectSupportPolygons(referencePolygon, incidentPolygon);
+  if (clippedPolygon.length === 0) {
+    return [];
+  }
+
+  const referenceOffset = Number(supportA.planeOffset ?? 0);
+  const incidentOffset = -Number(supportB.planeOffset ?? 0);
+  const separation = incidentOffset - referenceOffset;
+  const penetration = Math.max(0, referenceOffset - incidentOffset);
+
+  return clippedPolygon.map((point, index) => {
+    const referencePoint = addScaledVec3(
+      addScaledVec3(createVec3(), basis.tangentA, point.u),
+      basis.tangentB,
+      point.v
+    );
+    referencePoint.x += normal.x * referenceOffset;
+    referencePoint.y += normal.y * referenceOffset;
+    referencePoint.z += normal.z * referenceOffset;
+
+    const incidentPoint = addScaledVec3(
+      addScaledVec3(createVec3(), basis.tangentA, point.u),
+      basis.tangentB,
+      point.v
+    );
+    incidentPoint.x += normal.x * incidentOffset;
+    incidentPoint.y += normal.y * incidentOffset;
+    incidentPoint.z += normal.z * incidentOffset;
+
+    const referenceFeature = describeProjectedFeatureAtPoint(point, referencePolygon);
+    const incidentFeature = describeProjectedFeatureAtPoint(point, incidentPolygon);
+
+    return {
+      featureId: `${referenceFeature}|${incidentFeature}`,
+      position: createVec3(
+        (referencePoint.x + incidentPoint.x) / 2,
+        (referencePoint.y + incidentPoint.y) / 2,
+        (referencePoint.z + incidentPoint.z) / 2
+      ),
+      penetration,
+      separation
+    };
+  });
+}
 function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResult) {
   if (!epaResult || epaResult.penetration <= 0) {
     return [];
+  }
+
+  const clippedCandidates = buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, epaResult.normal)
+    .filter((candidate) => candidate.penetration > 0);
+  if (clippedCandidates.length > 0) {
+    return selectManifoldCandidates(clippedCandidates, epaResult.normal, 4);
   }
 
   const faceCandidates = collectFaceCandidates(epaResult.faceVertices ?? [], epaResult.normal);
@@ -4423,7 +4900,7 @@ __exports.solveJointConstraints = solveJointConstraints;
 __exports.solveDistanceJointConstraints = solveDistanceJointConstraints;
 },
   16: function(__require, __exports) {
-const { createIdentityQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
+const { createIdentityQuat, createQuatFromAxisAngle, inverseRotateVec3ByQuat, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
 const { addScaledVec3, addVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
 const { createTangentBasis } = __require(7);
 function createEmptySolverStats(iterations) {
@@ -4508,13 +4985,32 @@ function applyImpulse(bodyA, bodyB, contactPosition, impulse) {
   }
 }
 
-function applyPositionCorrection(bodyA, bodyB, direction, correctionMagnitude) {
+function applyAngularPositionCorrection(body, angularCorrection) {
+  const angularMagnitudeSquared = lengthSquaredVec3(angularCorrection);
+  if (!body || angularMagnitudeSquared <= 1e-12) {
+    return;
+  }
+
+  const angularMagnitude = Math.sqrt(angularMagnitudeSquared);
+  const angularAxis = scaleVec3(angularCorrection, 1 / angularMagnitude);
+  const rotationDelta = createQuatFromAxisAngle(angularAxis, angularMagnitude);
+  body.rotation = normalizeQuat(multiplyQuat(rotationDelta, body.rotation ?? createIdentityQuat()));
+}
+
+function applyPositionCorrection(bodyA, bodyB, contactPosition, direction, correctionMagnitude) {
+  const correctionImpulse = scaleVec3(direction, correctionMagnitude);
+
   if (bodyA) {
-    bodyA.position = addScaledVec3(bodyA.position, direction, -correctionMagnitude * bodyA.inverseMass);
+    const offsetA = getContactOffset(bodyA, contactPosition);
+    const correctionA = scaleVec3(correctionImpulse, -1);
+    bodyA.position = addScaledVec3(bodyA.position, correctionA, bodyA.inverseMass);
+    applyAngularPositionCorrection(bodyA, applyInverseInertiaWorld(bodyA, crossVec3(offsetA, correctionA)));
   }
 
   if (bodyB) {
-    bodyB.position = addScaledVec3(bodyB.position, direction, correctionMagnitude * bodyB.inverseMass);
+    const offsetB = getContactOffset(bodyB, contactPosition);
+    bodyB.position = addScaledVec3(bodyB.position, correctionImpulse, bodyB.inverseMass);
+    applyAngularPositionCorrection(bodyB, applyInverseInertiaWorld(bodyB, crossVec3(offsetB, correctionImpulse)));
   }
 }
 
@@ -4669,18 +5165,18 @@ function solveNormalContactConstraints(options = {}) {
     const bodyB = getDynamicBody(bodyRegistry, manifold.bodyBId);
 
     for (const contact of manifold.contacts) {
-      const linearInverseMassSum = (bodyA?.inverseMass ?? 0) + (bodyB?.inverseMass ?? 0);
-      if (linearInverseMassSum <= 1e-8) {
+      const correctionDirection = lengthSquaredVec3(manifold.normal) > 0 ? normalizeVec3(manifold.normal, createVec3(0, 1, 0)) : createVec3(0, 1, 0);
+      const effectiveMass = computeEffectiveMass(bodyA, bodyB, contact.position, correctionDirection);
+      if (effectiveMass <= 1e-8) {
         continue;
       }
 
-      const correctionMagnitude = Math.max(contact.penetration - allowedPenetration, 0) * positionCorrectionPercent / linearInverseMassSum;
+      const correctionMagnitude = Math.max(contact.penetration - allowedPenetration, 0) * positionCorrectionPercent / effectiveMass;
       if (correctionMagnitude <= 1e-8) {
         continue;
       }
 
-      const correctionDirection = lengthSquaredVec3(manifold.normal) > 0 ? normalizeVec3(manifold.normal, createVec3(0, 1, 0)) : createVec3(0, 1, 0);
-      applyPositionCorrection(bodyA, bodyB, correctionDirection, correctionMagnitude);
+      applyPositionCorrection(bodyA, bodyB, contact.position, correctionDirection, correctionMagnitude);
       stats.positionCorrections += 1;
     }
   }
@@ -8312,6 +8808,17 @@ function cloneEdges(edges) {
     : [];
 }
 
+function cloneFaces(faces) {
+  return Array.isArray(faces)
+    ? faces.map((face) => ({
+      normal: cloneVec3(face.normal),
+      planeOffset: Number(face.planeOffset ?? 0),
+      boundaryIndices: Array.isArray(face.boundaryIndices) ? face.boundaryIndices.slice() : [],
+      edges: cloneEdges(face.edges)
+    }))
+    : [];
+}
+
 function createPlaneKey(normal, offset) {
   let sign = 1;
   if (
@@ -8334,17 +8841,14 @@ function choosePlaneBasis(normal) {
   return { tangentA, tangentB };
 }
 
-function computeFaceBoundary(indices, vertices, normal) {
+function computeFaceLoop(indices, vertices, normal) {
   const uniqueIndices = Array.from(new Set(indices));
   if (uniqueIndices.length < 2) {
     return [];
   }
 
   if (uniqueIndices.length === 2) {
-    return [{
-      startIndex: Math.min(uniqueIndices[0], uniqueIndices[1]),
-      endIndex: Math.max(uniqueIndices[0], uniqueIndices[1])
-    }];
+    return uniqueIndices.slice();
   }
 
   const centroid = uniqueIndices.reduce((sum, index) => ({
@@ -8370,10 +8874,26 @@ function computeFaceBoundary(indices, vertices, normal) {
     })
     .sort((left, right) => left.angle - right.angle);
 
+  return ordered.map((entry) => entry.index);
+}
+
+function computeFaceBoundary(indices, vertices, normal) {
+  const loop = computeFaceLoop(indices, vertices, normal);
+  if (loop.length < 2) {
+    return [];
+  }
+
+  if (loop.length === 2) {
+    return [{
+      startIndex: Math.min(loop[0], loop[1]),
+      endIndex: Math.max(loop[0], loop[1])
+    }];
+  }
+
   const edges = [];
-  for (let index = 0; index < ordered.length; index += 1) {
-    const startIndex = ordered[index].index;
-    const endIndex = ordered[(index + 1) % ordered.length].index;
+  for (let index = 0; index < loop.length; index += 1) {
+    const startIndex = loop[index];
+    const endIndex = loop[(index + 1) % loop.length];
     if (startIndex === endIndex) {
       continue;
     }
@@ -8387,13 +8907,19 @@ function computeFaceBoundary(indices, vertices, normal) {
   return edges;
 }
 
-function computeConvexHullDebugEdges(vertices) {
+function computeConvexHullFaces(vertices) {
   if (!Array.isArray(vertices) || vertices.length < 2) {
     return [];
   }
 
   if (vertices.length === 2) {
-    return [{ startIndex: 0, endIndex: 1 }];
+    const edge = { startIndex: 0, endIndex: 1 };
+    return [{
+      normal: createVec3(1, 0, 0),
+      planeOffset: dotVec3(createVec3(1, 0, 0), vertices[0]),
+      boundaryIndices: [0, 1],
+      edges: [edge]
+    }];
   }
 
   const faces = new Map();
@@ -8451,16 +8977,34 @@ function computeConvexHullDebugEdges(vertices) {
 
         faces.set(key, {
           normal,
+          planeOffset: offset,
           indices: coplanarIndices.slice()
         });
       }
     }
   }
 
+  return Array.from(faces.values(), (face) => ({
+    normal: cloneVec3(face.normal),
+    planeOffset: Number(face.planeOffset ?? 0),
+    boundaryIndices: computeFaceLoop(face.indices, vertices, face.normal),
+    edges: computeFaceBoundary(face.indices, vertices, face.normal)
+  })).filter((face) => face.boundaryIndices.length >= 2);
+}
+
+function computeConvexHullDebugEdges(vertices, faces) {
+  if (!Array.isArray(vertices) || vertices.length < 2) {
+    return [];
+  }
+
+  if (vertices.length === 2) {
+    return [{ startIndex: 0, endIndex: 1 }];
+  }
+
   const edgeKeys = new Set();
   const edges = [];
-  for (const face of faces.values()) {
-    for (const edge of computeFaceBoundary(face.indices, vertices, face.normal)) {
+  for (const face of Array.isArray(faces) ? faces : []) {
+    for (const edge of face.edges ?? []) {
       const key = `${edge.startIndex}|${edge.endIndex}`;
       if (edgeKeys.has(key)) {
         continue;
@@ -8504,6 +9048,7 @@ function cloneGeometry(shape) {
   if (shape.type === 'convex-hull') {
     return {
       vertices: cloneVertices(shape.geometry.vertices),
+      faces: cloneFaces(shape.geometry.faces),
       debugEdges: cloneEdges(shape.geometry.debugEdges)
     };
   }
@@ -8564,12 +9109,14 @@ class ShapeRegistry extends BaseRegistry {
 
   createConvexHullShape(options = {}) {
     const vertices = cloneVertices(options.vertices);
+    const faces = computeConvexHullFaces(vertices);
     return this.store({
       id: this.allocateId(options.id),
       type: 'convex-hull',
       geometry: {
         vertices,
-        debugEdges: computeConvexHullDebugEdges(vertices)
+        faces,
+        debugEdges: computeConvexHullDebugEdges(vertices, faces)
       },
       localPose: createLocalPose(options.localPose),
       userData: options.userData ?? null
@@ -8659,7 +9206,7 @@ function createExtensionInfo() {
       {
         opcode: 'setCameraTarget',
         blockType: 'command',
-        text: 'set debug camera target x:[X] y:[Y] z:[Z]',
+        text: 'set debug camera target pitch:[X] yaw:[Y] roll:[Z]',
         arguments: {
           X: { type: 'number', defaultValue: 0 },
           Y: { type: 'number', defaultValue: 0 },
@@ -9095,7 +9642,7 @@ __exports.createGandiApprovedHost = createGandiApprovedHost;
 __exports.createGandiRemoteHost = createGandiRemoteHost;
 },
   28: function(__require, __exports) {
-const { rotateVec3ByQuat } = __require(5);
+const { createIdentityQuat, createQuatFromAxisAngle, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
 const { addVec3, createVec3, crossVec3, dotVec3, normalizeVec3, subtractVec3 } = __require(6);
 function rgba(color) {
   const r = Math.max(0, Math.min(255, Math.round(Number(color?.r ?? 255))));
@@ -9124,11 +9671,23 @@ function ensureCanvasSize(canvas) {
   }
 }
 
-function buildViewBasis(cameraPosition, cameraTarget) {
-  const target = cameraTarget ?? createVec3(0, 0, 0);
-  const forward = normalizeVec3(subtractVec3(target, cameraPosition), createVec3(0, 0, -1));
-  const worldUp = Math.abs(forward.y) > 0.98 ? createVec3(0, 0, 1) : createVec3(0, 1, 0);
-  const right = normalizeVec3(crossVec3(forward, worldUp), createVec3(1, 0, 0));
+function degreesToRadians(value) {
+  return (Number(value ?? 0) * Math.PI) / 180;
+}
+
+function buildCameraRotation(cameraAngles) {
+  const angles = cameraAngles ?? createVec3();
+  let rotation = createIdentityQuat();
+  rotation = multiplyQuat(createQuatFromAxisAngle(createVec3(0, 1, 0), degreesToRadians(angles.y)), rotation);
+  rotation = multiplyQuat(createQuatFromAxisAngle(createVec3(1, 0, 0), degreesToRadians(angles.x)), rotation);
+  rotation = multiplyQuat(createQuatFromAxisAngle(createVec3(0, 0, 1), degreesToRadians(angles.z)), rotation);
+  return normalizeQuat(rotation);
+}
+
+function buildViewBasis(cameraAngles) {
+  const rotation = buildCameraRotation(cameraAngles);
+  const forward = normalizeVec3(rotateVec3ByQuat(rotation, createVec3(0, 0, -1)), createVec3(0, 0, -1));
+  const right = normalizeVec3(rotateVec3ByQuat(rotation, createVec3(1, 0, 0)), createVec3(1, 0, 0));
   const up = normalizeVec3(crossVec3(right, forward), createVec3(0, 1, 0));
   return { forward, right, up };
 }
@@ -9300,8 +9859,8 @@ function createDebugOverlay(displayName) {
     clearCanvas(context2d, width, height);
 
     const cameraPosition = frame?.debugFrame?.camera?.position ?? createVec3(0, 0, 400);
-    const cameraTarget = frame?.debugFrame?.camera?.target ?? createVec3(0, 0, 0);
-    const basis = buildViewBasis(cameraPosition, cameraTarget);
+    const cameraAngles = frame?.debugFrame?.camera?.target ?? createVec3(0, 0, 0);
+    const basis = buildViewBasis(cameraAngles);
     const primitives = Array.isArray(frame?.debugFrame?.primitives) ? frame.debugFrame.primitives : [];
 
     for (const primitive of primitives) {
