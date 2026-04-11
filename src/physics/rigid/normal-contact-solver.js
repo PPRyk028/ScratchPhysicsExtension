@@ -237,6 +237,7 @@ export function solveNormalContactConstraints(options = {}) {
     for (const manifold of manifolds) {
       const bodyA = getDynamicBody(bodyRegistry, manifold.bodyAId);
       const bodyB = getDynamicBody(bodyRegistry, manifold.bodyBId);
+      const frictionShare = 1 / Math.max(1, manifold.contacts.length);
 
       for (const contact of manifold.contacts) {
         solveNormalImpulse(
@@ -251,7 +252,7 @@ export function solveNormalContactConstraints(options = {}) {
         );
 
         const tangentBasis = createTangentBasis(manifold.normal);
-        const maxFrictionImpulse = manifold.friction * contact.accumulatedNormalImpulse;
+        const maxFrictionImpulse = manifold.friction * contact.accumulatedNormalImpulse * frictionShare;
         const inverseMassA = computeEffectiveMass(bodyA, bodyB, contact.position, tangentBasis.tangentA);
         const inverseMassB = computeEffectiveMass(bodyA, bodyB, contact.position, tangentBasis.tangentB);
         solveTangentImpulse(bodyA, bodyB, contact, tangentBasis.tangentA, inverseMassA, maxFrictionImpulse, 'accumulatedTangentImpulseA', stats);

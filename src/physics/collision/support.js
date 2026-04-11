@@ -2,8 +2,6 @@ import { cloneQuat, createIdentityQuat, inverseRotateVec3ByQuat, multiplyQuat, r
 import { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, maxVec3, minVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } from '../math/vec3.js';
 
 const SUPPORT_POLYGON_EPSILON = 1e-5;
-const SUPPORT_FACE_ALIGNMENT_THRESHOLD = 0.965;
-const SUPPORT_FACE_PROJECTION_EPSILON = 1e-3;
 
 function clampNumber(value, minValue, maxValue) {
   return Math.max(minValue, Math.min(maxValue, value));
@@ -139,152 +137,69 @@ function dedupeSupportPolygonPoints(points) {
   return uniquePoints;
 }
 
-function buildBoxSupportPolygon(shapeWorldPose, halfExtents, localDirection, direction) {
-  const axisWeights = [
-    Math.abs(localDirection.x),
-    Math.abs(localDirection.y),
-    Math.abs(localDirection.z)
-  ];
-  let dominantAxisIndex = 0;
-  if (axisWeights[1] > axisWeights[dominantAxisIndex]) {
-    dominantAxisIndex = 1;
-  }
-  if (axisWeights[2] > axisWeights[dominantAxisIndex]) {
-    dominantAxisIndex = 2;
-  }
+function buildExtremeVertexSupportPolygon(points, direction) {
+  const supportPoints = [];
+  let maxProjection = -Infinity;
 
-  const axisSigns = [
-    localDirection.x >= 0 ? 1 : -1,
-    localDirection.y >= 0 ? 1 : -1,
-    localDirection.z >= 0 ? 1 : -1
-  ];
-  const signs = [-1, 1];
-  const points = [];
+  for (const point of Array.isArray(points) ? points : []) {
+    const projection = dotVec3(point.worldPoint, direction);
+    if (projection > maxProjection + SUPPORT_POLYGON_EPSILON) {
+      maxProjection = projection;
+      supportPoints.length = 0;
+    }
 
-  for (const signA of signs) {
-    for (const signB of signs) {
-      const localPoint = createVec3(
-        dominantAxisIndex === 0 ? halfExtents.x * axisSigns[0] : halfExtents.x * signA,
-        dominantAxisIndex === 1 ? halfExtents.y * axisSigns[1] : halfExtents.y * (dominantAxisIndex === 0 ? signA : signB),
-        dominantAxisIndex === 2 ? halfExtents.z * axisSigns[2] : halfExtents.z * signB
-      );
-      const worldPoint = transformPointByPose(shapeWorldPose, localPoint);
-      points.push({
-        worldPoint,
-        localPoint,
-        featureId: `corner:${localPoint.x >= 0 ? '+' : '-'}${localPoint.y >= 0 ? '+' : '-'}${localPoint.z >= 0 ? '+' : '-'}`,
-        featureType: 'vertex'
-      });
+    if (projection >= maxProjection - SUPPORT_POLYGON_EPSILON) {
+      supportPoints.push(point);
     }
   }
 
-  const planeOffset = points.reduce((maxProjection, point) => Math.max(maxProjection, dotVec3(point.worldPoint, direction)), -Infinity);
-
   return {
-    points: dedupeSupportPolygonPoints(points),
-    planeOffset
+    points: dedupeSupportPolygonPoints(supportPoints),
+    planeOffset: maxProjection
   };
+}
+
+function buildBoxSupportPolygon(shapeWorldPose, halfExtents, direction) {
+  const localCorners = [
+    createVec3(-halfExtents.x, -halfExtents.y, -halfExtents.z),
+    createVec3(halfExtents.x, -halfExtents.y, -halfExtents.z),
+    createVec3(halfExtents.x, halfExtents.y, -halfExtents.z),
+    createVec3(-halfExtents.x, halfExtents.y, -halfExtents.z),
+    createVec3(-halfExtents.x, -halfExtents.y, halfExtents.z),
+    createVec3(halfExtents.x, -halfExtents.y, halfExtents.z),
+    createVec3(halfExtents.x, halfExtents.y, halfExtents.z),
+    createVec3(-halfExtents.x, halfExtents.y, halfExtents.z)
+  ];
+
+  const vertices = localCorners.map((localPoint, index) => ({
+    worldPoint: transformPointByPose(shapeWorldPose, localPoint),
+    localPoint,
+    featureId: `vertex:${index}`,
+    featureType: 'vertex'
+  }));
+
+  return buildExtremeVertexSupportPolygon(vertices, direction);
 }
 
 function buildConvexHullSupportVertexPolygon(shapeWorldPose, vertices, direction) {
-  const points = [];
-  let maxDot = -Infinity;
+  const points = Array.isArray(vertices)
+    ? vertices.map((localPoint, index) => ({
+      worldPoint: transformPointByPose(shapeWorldPose, localPoint),
+      localPoint: cloneVec3(localPoint),
+      featureId: `vertex:${index}`,
+      featureType: 'vertex'
+    }))
+    : [];
 
-  for (let index = 0; index < vertices.length; index += 1) {
-    const localPoint = vertices[index];
-    const worldPoint = transformPointByPose(shapeWorldPose, localPoint);
-    const projection = dotVec3(worldPoint, direction);
-
-    if (projection > maxDot + SUPPORT_POLYGON_EPSILON) {
-      maxDot = projection;
-      points.length = 0;
-    }
-
-    if (projection >= maxDot - SUPPORT_POLYGON_EPSILON) {
-      points.push({
-        worldPoint,
-        localPoint: cloneVec3(localPoint),
-        featureId: `vertex:${index}`,
-        featureType: 'vertex'
-      });
-    }
-  }
-
-  return {
-    points: dedupeSupportPolygonPoints(points),
-    planeOffset: maxDot
-  };
-}
-
-function buildConvexHullSupportPolygon(shapeWorldPose, geometry, direction) {
-  const vertices = Array.isArray(geometry?.vertices) ? geometry.vertices : [];
-  const fallback = buildConvexHullSupportVertexPolygon(shapeWorldPose, vertices, direction);
-  const faces = Array.isArray(geometry?.faces) ? geometry.faces : [];
-  if (faces.length === 0) {
-    return fallback;
-  }
-
-  const faceCandidates = [];
-  for (const face of faces) {
-    const boundaryIndices = Array.isArray(face.boundaryIndices) ? face.boundaryIndices : [];
-    if (boundaryIndices.length < 2) {
-      continue;
-    }
-
-    const points = boundaryIndices.map((index) => {
-      const localPoint = vertices[index];
-      return {
-        worldPoint: transformPointByPose(shapeWorldPose, localPoint),
-        localPoint: cloneVec3(localPoint),
-        featureId: `vertex:${index}`,
-        featureType: 'vertex'
-      };
-    });
-    const planeOffset = points.reduce((maxProjection, point) => Math.max(maxProjection, dotVec3(point.worldPoint, direction)), -Infinity);
-    const worldNormal = normalizeVec3(rotateVec3ByQuat(shapeWorldPose.rotation, face.normal ?? createVec3(0, 1, 0)), direction);
-    const alignment = dotVec3(worldNormal, direction);
-
-    faceCandidates.push({
-      points,
-      planeOffset,
-      alignment
-    });
-  }
-
-  const selectedFace = faceCandidates
-    .filter((candidate) =>
-      candidate.alignment >= SUPPORT_FACE_ALIGNMENT_THRESHOLD &&
-      candidate.planeOffset >= fallback.planeOffset - SUPPORT_FACE_PROJECTION_EPSILON
-    )
-    .sort((left, right) => {
-      if (right.alignment !== left.alignment) {
-        return right.alignment - left.alignment;
-      }
-
-      if (right.points.length !== left.points.length) {
-        return right.points.length - left.points.length;
-      }
-
-      return right.planeOffset - left.planeOffset;
-    })[0];
-
-  if (selectedFace) {
-    return {
-      points: dedupeSupportPolygonPoints(selectedFace.points),
-      planeOffset: selectedFace.planeOffset
-    };
-  }
-
-  return fallback;
+  return buildExtremeVertexSupportPolygon(points, direction);
 }
 
 export function getShapeSupportPolygon(shape, worldPose, direction) {
   const shapeWorldPose = getShapeWorldPose(shape, worldPose);
   const resolvedDirection = normalizeVec3(direction, createVec3(1, 0, 0));
-  const localDirection = inverseRotateVec3ByQuat(shapeWorldPose.rotation, resolvedDirection);
 
   if (shape?.type === 'box') {
-    const result = buildBoxSupportPolygon(shapeWorldPose, shape.geometry.halfExtents, localDirection, resolvedDirection);
+    const result = buildBoxSupportPolygon(shapeWorldPose, shape.geometry.halfExtents, resolvedDirection);
     return {
       normal: resolvedDirection,
       planeOffset: result.planeOffset,
@@ -293,7 +208,7 @@ export function getShapeSupportPolygon(shape, worldPose, direction) {
   }
 
   if (shape?.type === 'convex-hull') {
-    const result = buildConvexHullSupportPolygon(shapeWorldPose, shape.geometry ?? {}, resolvedDirection);
+    const result = buildConvexHullSupportVertexPolygon(shapeWorldPose, shape.geometry?.vertices ?? [], resolvedDirection);
     return {
       normal: resolvedDirection,
       planeOffset: result.planeOffset,

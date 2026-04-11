@@ -42,6 +42,10 @@ export class BaseRegistry {
     return Array.from(this.records.values(), (record) => this.cloneRecord(record));
   }
 
+  listMutable() {
+    return Array.from(this.records.values());
+  }
+
   remove(id) {
     return this.records.delete(id);
   }

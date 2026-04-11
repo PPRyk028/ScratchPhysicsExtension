@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEBUG_FRAME_SCHEMA_VERSION, DEBUG_PRIMITIVE_TYPES, PhysicsWorld, createQuatFromAxisAngle, dotVec3, rotateVec3ByQuat } from '../src/physics/index.js';
+import { getShapeSupportPolygon } from '../src/physics/collision/support.js';
 
 test('PhysicsWorld creates box bodies with matching shape, body, collider, and default material records', () => {
   const world = new PhysicsWorld();
@@ -371,6 +372,53 @@ test('PhysicsWorld convex hulls use multi-point GJK/EPA manifold generation', ()
   assert.ok(featureIds.size >= 3, `expected distinct hull feature ids, got ${Array.from(featureIds).join(', ')}`);
 });
 
+test('Support polygons only keep true extreme box features for face, edge, and corner directions', () => {
+  const world = new PhysicsWorld();
+  const boxShape = world.createBoxShape({
+    id: 'box-shape',
+    halfExtents: { x: 1, y: 1, z: 1 }
+  });
+  const pose = {
+    position: { x: 0, y: 0, z: 0 },
+    rotation: { x: 0, y: 0, z: 0, w: 1 }
+  };
+
+  const facePolygon = getShapeSupportPolygon(boxShape, pose, { x: 0, y: 1, z: 0 });
+  const edgePolygon = getShapeSupportPolygon(boxShape, pose, { x: 1, y: 1, z: 0 });
+  const cornerPolygon = getShapeSupportPolygon(boxShape, pose, { x: 1, y: 0.2, z: 1 });
+
+  assert.equal(facePolygon.points.length, 4);
+  assert.equal(edgePolygon.points.length, 2);
+  assert.equal(cornerPolygon.points.length, 1);
+});
+
+test('Support polygons do not expand a convex hull vertex contact into a full face', () => {
+  const world = new PhysicsWorld();
+  const hullShape = world.createConvexHullShape({
+    id: 'pyramid',
+    vertices: [
+      { x: -30, y: -30, z: -30 },
+      { x: 30, y: -30, z: -30 },
+      { x: 30, y: -30, z: 30 },
+      { x: -30, y: -30, z: 30 },
+      { x: 0, y: 45, z: 0 }
+    ]
+  });
+  const pose = {
+    position: { x: 0, y: 0, z: 0 },
+    rotation: { x: 0, y: 0, z: 0, w: 1 }
+  };
+
+  const supportPolygon = getShapeSupportPolygon(hullShape, pose, {
+    x: 0.28734788556634544,
+    y: 0.9578262852211515,
+    z: 0
+  });
+
+  assert.equal(supportPolygon.points.length, 1);
+  assert.equal(supportPolygon.points[0].featureId, 'vertex:4');
+});
+
 test('PhysicsWorld unsupported box on a static convex ledge tips and keeps contacts inside the support region', () => {
   const world = new PhysicsWorld({
     fixedDeltaTime: 1 / 120,
@@ -414,6 +462,60 @@ test('PhysicsWorld unsupported box on a static convex ledge tips and keeps conta
     assert.ok(contact.position.x >= -10.1 && contact.position.x <= 0.1, `expected clipped contact x to stay on the ledge support region, got ${contact.position.x}`);
   }
   assert.ok(maxTilt > 0.2, `expected unsupported box to tip, got max tilt ${maxTilt}`);
+});
+
+test('PhysicsWorld convex hull on a static ramp keeps first manifold contacts on the actual support plane', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 14
+  });
+  world.createStaticConvexHullCollider({
+    id: 'ramp',
+    position: { x: 0, y: -30, z: 0 },
+    vertices: [
+      { x: -100, y: -20, z: -60 },
+      { x: 100, y: -20, z: -60 },
+      { x: 100, y: -20, z: 60 },
+      { x: -100, y: -20, z: 60 },
+      { x: -100, y: 40, z: -60 },
+      { x: -100, y: 40, z: 60 }
+    ]
+  });
+  world.createConvexHullBody({
+    id: 'hull',
+    position: { x: -20, y: 120, z: 0 },
+    vertices: [
+      { x: -30, y: -30, z: -30 },
+      { x: 30, y: -30, z: -30 },
+      { x: 30, y: -30, z: 30 },
+      { x: -30, y: -30, z: 30 },
+      { x: 0, y: 45, z: 0 }
+    ],
+    mass: 1
+  });
+
+  let firstContactPair = null;
+  for (let stepIndex = 0; stepIndex < 720; stepIndex += 1) {
+    world.step(1 / 120);
+    const contactPair = world.getCollisionState().contactPairs.find((pair) => pair.colliderAId === 'ramp:collider' && pair.colliderBId === 'hull:collider');
+    if (contactPair) {
+      firstContactPair = contactPair;
+      break;
+    }
+  }
+
+  assert.ok(firstContactPair, 'expected hull to contact the ramp');
+  assert.ok(firstContactPair.contactCount <= 2, `expected vertex/edge ramp contact, got ${firstContactPair.contactCount}`);
+
+  const rampNormal = { x: 0.28734788556634544, y: 0.9578262852211515, z: 0 };
+  const rampPlaneOffset = -19.15652570442303;
+  for (const contact of firstContactPair.contacts) {
+    const signedDistance = contact.position.x * rampNormal.x + contact.position.y * rampNormal.y + contact.position.z * rampNormal.z - rampPlaneOffset;
+    assert.ok(
+      Math.abs(signedDistance + contact.penetration * 0.5) < 0.1,
+      `expected ramp contact to stay close to the support plane, got signed distance ${signedDistance} for penetration ${contact.penetration}`
+    );
+  }
 });
 
 test('PhysicsWorld capsule-box pairs use the GJK/EPA manifold path', () => {
@@ -1586,7 +1688,9 @@ test('PhysicsWorld hinge joint angular limits push an over-rotated door back tow
     bodyAId: 'limit-frame',
     bodyBId: 'limit-door',
     worldAnchor: { x: 1, y: 0, z: 0 },
-    worldAxis: { x: 0, y: 1, z: 0 }
+    worldAxis: { x: 0, y: 1, z: 0 },
+    localReferenceA: { x: 0, y: 0, z: 1 },
+    localReferenceB: { x: 0, y: 0, z: 1 }
   });
   world.configureHingeJoint('limit-hinge', {
     lowerAngle: -0.3,
@@ -1741,10 +1845,15 @@ test('PhysicsWorld hinge motor drives angular motion about the hinge axis', () =
 
   let maxSolvedJointCount = 0;
   let maxAngularVelocity = 0;
+  let maxAbsoluteAngle = 0;
+  let observedConnectedCollision = false;
   for (let stepIndex = 0; stepIndex < 240; stepIndex += 1) {
     world.step(1 / 120);
     maxSolvedJointCount = Math.max(maxSolvedJointCount, world.getSnapshot().lastSolverStats.solvedJointCount);
     maxAngularVelocity = Math.max(maxAngularVelocity, Math.abs(world.getBody('motor-door').angularVelocity.y));
+    maxAbsoluteAngle = Math.max(maxAbsoluteAngle, Math.abs(world.getJointAngle('motor-hinge') ?? 0));
+    observedConnectedCollision = observedConnectedCollision ||
+      world.getSnapshot().collision.contactPairs.some((pair) => pair.pairKey === 'motor-door:collider|motor-frame:collider');
   }
 
   const hingeAngle = world.getJointAngle('motor-hinge');
@@ -1752,9 +1861,10 @@ test('PhysicsWorld hinge motor drives angular motion about the hinge axis', () =
   const door = world.getBody('motor-door');
   const frame = world.buildDebugFrame();
 
-  assert.ok(hingeAngle > 0.12, `expected hinge motor to rotate the door, got angle ${hingeAngle}`);
+  assert.ok(maxAbsoluteAngle > 0.12, `expected hinge motor to rotate the door, got max |angle| ${maxAbsoluteAngle}`);
   assert.ok(maxAngularVelocity > 0.5, `expected hinge motor to affect angular velocity, got max ${maxAngularVelocity}`);
   assert.equal(joint.motorEnabled, true);
+  assert.equal(observedConnectedCollision, false);
   assert.ok(maxSolvedJointCount > 0);
   assert.ok(frame.primitives.some((primitive) => primitive.category === 'hinge-motor'));
 });

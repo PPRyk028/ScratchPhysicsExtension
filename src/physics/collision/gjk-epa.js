@@ -1,10 +1,14 @@
+import { rotateVec3ByQuat } from '../math/quat.js';
 import { addScaledVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } from '../math/vec3.js';
-import { createTangentBasis, getShapeSupportFeature, getShapeSupportPolygon, getShapeWorldCenter } from './support.js';
+import { createTangentBasis, getShapeSupportFeature, getShapeSupportPolygon, getShapeWorldCenter, getShapeWorldPose, transformPointByPose } from './support.js';
 
 const GJK_MAX_ITERATIONS = 24;
 const EPA_MAX_ITERATIONS = 32;
 const EPA_TOLERANCE = 1e-4;
 const MANIFOLD_CLIP_EPSILON = 1e-5;
+const FACE_CLIP_EPSILON = 1e-4;
+const REFERENCE_FACE_SWITCH_EPSILON = 1e-3;
+const FACE_SUPPORT_PLANE_EPSILON = 0.25;
 
 function createSupportVertex(shapeA, poseA, shapeB, poseB, direction) {
   const supportFeatureA = getShapeSupportFeature(shapeA, poseA, direction);
@@ -387,6 +391,86 @@ function selectManifoldCandidates(candidates, normal, maxContacts = 4) {
   return selected.slice(0, maxContacts);
 }
 
+function reduceOrderedPolygonCandidates(candidates, normal, maxContacts = 4) {
+  const uniqueCandidates = dedupeCandidates(candidates);
+  if (uniqueCandidates.length <= maxContacts) {
+    return uniqueCandidates;
+  }
+
+  const basis = createTangentBasis(normal);
+  const projected = uniqueCandidates.map((candidate, index) => ({
+    index,
+    candidate,
+    u: dotVec3(candidate.position, basis.tangentA),
+    v: dotVec3(candidate.position, basis.tangentB)
+  }));
+  const centroid = projected.reduce((sum, point) => ({
+    u: sum.u + point.u,
+    v: sum.v + point.v
+  }), { u: 0, v: 0 });
+  centroid.u /= projected.length;
+  centroid.v /= projected.length;
+
+  const ordered = projected
+    .map((point) => ({
+      ...point,
+      angle: Math.atan2(point.v - centroid.v, point.u - centroid.u),
+      radiusSquared: (point.u - centroid.u) * (point.u - centroid.u) + (point.v - centroid.v) * (point.v - centroid.v)
+    }))
+    .sort((left, right) => left.angle - right.angle);
+
+  let startIndex = 0;
+  for (let index = 1; index < ordered.length; index += 1) {
+    if (ordered[index].radiusSquared > ordered[startIndex].radiusSquared + 1e-8) {
+      startIndex = index;
+      continue;
+    }
+
+    if (
+      Math.abs(ordered[index].radiusSquared - ordered[startIndex].radiusSquared) <= 1e-8 &&
+      ordered[index].candidate.penetration > ordered[startIndex].candidate.penetration
+    ) {
+      startIndex = index;
+    }
+  }
+
+  const selected = [];
+  const selectedIndices = new Set();
+  const step = ordered.length / maxContacts;
+
+  for (let slot = 0; slot < maxContacts; slot += 1) {
+    const orderedIndex = Math.floor((startIndex + slot * step) % ordered.length);
+    if (selectedIndices.has(orderedIndex)) {
+      continue;
+    }
+
+    selectedIndices.add(orderedIndex);
+    selected.push(ordered[orderedIndex].candidate);
+  }
+
+  if (selected.length < maxContacts) {
+    const remaining = ordered
+      .filter((point, index) => !selectedIndices.has(index))
+      .sort((left, right) => {
+        if (right.radiusSquared !== left.radiusSquared) {
+          return right.radiusSquared - left.radiusSquared;
+        }
+
+        return right.candidate.penetration - left.candidate.penetration;
+      });
+
+    for (const point of remaining) {
+      if (selected.length >= maxContacts) {
+        break;
+      }
+
+      selected.push(point.candidate);
+    }
+  }
+
+  return selected.slice(0, maxContacts);
+}
+
 function projectSupportPolygon(points, basis) {
   return points.map((point, index) => ({
     index,
@@ -571,6 +655,417 @@ function describeProjectedFeatureAtPoint(point, polygon) {
   return faceFeatureId ? `face:${faceFeatureId}` : 'feature:face';
 }
 
+function createFeaturePoint(position, featureId) {
+  return {
+    position,
+    featureId: String(featureId ?? '').trim() || 'feature:unknown'
+  };
+}
+
+function getBoxWorldAxes(pose) {
+  const rotation = pose?.rotation;
+  return [
+    normalizeVec3(rotateVec3ByQuat(rotation, createVec3(1, 0, 0)), createVec3(1, 0, 0)),
+    normalizeVec3(rotateVec3ByQuat(rotation, createVec3(0, 1, 0)), createVec3(0, 1, 0)),
+    normalizeVec3(rotateVec3ByQuat(rotation, createVec3(0, 0, 1)), createVec3(0, 0, 1))
+  ];
+}
+
+function computeProjectedBoxRadius(halfExtents, axes, direction) {
+  return (
+    Math.abs(dotVec3(direction, axes[0])) * Number(halfExtents?.x ?? 0) +
+    Math.abs(dotVec3(direction, axes[1])) * Number(halfExtents?.y ?? 0) +
+    Math.abs(dotVec3(direction, axes[2])) * Number(halfExtents?.z ?? 0)
+  );
+}
+
+function computeBoxFaceAxisNormal(shapeA, poseA, shapeB, poseB) {
+  if (shapeA?.type !== 'box' || shapeB?.type !== 'box') {
+    return null;
+  }
+
+  const worldPoseA = getShapeWorldPose(shapeA, poseA);
+  const worldPoseB = getShapeWorldPose(shapeB, poseB);
+  const axesA = getBoxWorldAxes(worldPoseA);
+  const axesB = getBoxWorldAxes(worldPoseB);
+  const centerDelta = subtractVec3(worldPoseB.position, worldPoseA.position);
+  const candidateAxes = [...axesA, ...axesB];
+
+  let bestAxis = null;
+  let bestPenetration = Infinity;
+
+  for (const axis of candidateAxes) {
+    if (lengthSquaredVec3(axis) <= 1e-12) {
+      continue;
+    }
+
+    const unitAxis = normalizeVec3(axis, createVec3(0, 1, 0));
+    const distance = dotVec3(centerDelta, unitAxis);
+    const radiusA = computeProjectedBoxRadius(shapeA.geometry?.halfExtents, axesA, unitAxis);
+    const radiusB = computeProjectedBoxRadius(shapeB.geometry?.halfExtents, axesB, unitAxis);
+    const overlap = radiusA + radiusB - Math.abs(distance);
+    if (overlap <= 0) {
+      return null;
+    }
+
+    if (overlap < bestPenetration) {
+      bestPenetration = overlap;
+      bestAxis = distance >= 0 ? unitAxis : negateVec3(unitAxis);
+    }
+  }
+
+  if (!bestAxis) {
+    return null;
+  }
+
+  return {
+    normal: bestAxis,
+    penetration: bestPenetration
+  };
+}
+
+function getBoxLocalCorners(halfExtents) {
+  return [
+    createVec3(-halfExtents.x, -halfExtents.y, -halfExtents.z),
+    createVec3(halfExtents.x, -halfExtents.y, -halfExtents.z),
+    createVec3(halfExtents.x, halfExtents.y, -halfExtents.z),
+    createVec3(-halfExtents.x, halfExtents.y, -halfExtents.z),
+    createVec3(-halfExtents.x, -halfExtents.y, halfExtents.z),
+    createVec3(halfExtents.x, -halfExtents.y, halfExtents.z),
+    createVec3(halfExtents.x, halfExtents.y, halfExtents.z),
+    createVec3(-halfExtents.x, halfExtents.y, halfExtents.z)
+  ];
+}
+
+function projectWorldFacePoints(points, normal) {
+  const basis = createTangentBasis(normal);
+  return points.map((point, index) => ({
+    index,
+    u: dotVec3(point.position, basis.tangentA),
+    v: dotVec3(point.position, basis.tangentB)
+  }));
+}
+
+function orderWorldFacePoints(points, normal) {
+  if (!Array.isArray(points) || points.length <= 2) {
+    return Array.isArray(points) ? points.slice() : [];
+  }
+
+  const projected = projectWorldFacePoints(points, normal);
+  const orderedProjected = orderProjectedPolygon(projected);
+  return orderedProjected.map((projectedPoint) => points[projectedPoint.index]);
+}
+
+function createWorldFace(id, normal, points) {
+  const orderedPoints = orderWorldFacePoints(points, normal);
+  if (orderedPoints.length === 0) {
+    return null;
+  }
+
+  const unitNormal = normalizeVec3(normal, createVec3(0, 1, 0));
+  return {
+    id: String(id ?? '').trim() || 'face:unknown',
+    normal: unitNormal,
+    planeOffset: dotVec3(unitNormal, orderedPoints[0].position),
+    points: orderedPoints
+  };
+}
+
+function flipWorldFace(face) {
+  if (!face) {
+    return null;
+  }
+
+  return createWorldFace(face.id, negateVec3(face.normal), face.points.slice().reverse());
+}
+
+function getBoxWorldFaces(shape, pose) {
+  const worldPose = getShapeWorldPose(shape, pose);
+  const localCorners = getBoxLocalCorners(shape.geometry.halfExtents);
+  const faceDefinitions = [
+    { id: 'face:x+', normal: createVec3(1, 0, 0), indices: [1, 5, 6, 2] },
+    { id: 'face:x-', normal: createVec3(-1, 0, 0), indices: [4, 0, 3, 7] },
+    { id: 'face:y+', normal: createVec3(0, 1, 0), indices: [3, 2, 6, 7] },
+    { id: 'face:y-', normal: createVec3(0, -1, 0), indices: [0, 4, 5, 1] },
+    { id: 'face:z+', normal: createVec3(0, 0, 1), indices: [4, 7, 6, 5] },
+    { id: 'face:z-', normal: createVec3(0, 0, -1), indices: [0, 1, 2, 3] }
+  ];
+
+  return faceDefinitions
+    .map((definition) => createWorldFace(
+      definition.id,
+      rotateVec3ByQuat(worldPose.rotation, definition.normal),
+      definition.indices.map((index) => createFeaturePoint(
+        transformPointByPose(worldPose, localCorners[index]),
+        `vertex:${index}`
+      ))
+    ))
+    .filter(Boolean);
+}
+
+function getConvexHullWorldFaces(shape, pose) {
+  const worldPose = getShapeWorldPose(shape, pose);
+  const localVertices = Array.isArray(shape?.geometry?.vertices) ? shape.geometry.vertices : [];
+  const faces = Array.isArray(shape?.geometry?.faces) ? shape.geometry.faces : [];
+
+  return faces
+    .map((face, faceIndex) => {
+      const boundaryIndices = Array.isArray(face.boundaryIndices) ? face.boundaryIndices : [];
+      const points = boundaryIndices
+        .map((vertexIndex) => localVertices[vertexIndex])
+        .filter(Boolean)
+        .map((localPoint, boundaryIndex) => createFeaturePoint(
+          transformPointByPose(worldPose, localPoint),
+          `vertex:${boundaryIndices[boundaryIndex]}`
+        ));
+      return createWorldFace(
+        `face:${faceIndex}`,
+        rotateVec3ByQuat(worldPose.rotation, face.normal ?? createVec3(0, 1, 0)),
+        points
+      );
+    })
+    .filter((face) => face && face.points.length >= 2);
+}
+
+function getPolygonalWorldFaces(shape, pose) {
+  if (shape?.type === 'box') {
+    return getBoxWorldFaces(shape, pose);
+  }
+
+  if (shape?.type === 'convex-hull') {
+    return getConvexHullWorldFaces(shape, pose);
+  }
+
+  return [];
+}
+
+function findBestFacingFace(faces, direction) {
+  let bestFace = null;
+  let bestAlignment = -Infinity;
+
+  for (const face of Array.isArray(faces) ? faces : []) {
+    const alignment = dotVec3(face.normal, direction);
+    if (alignment > bestAlignment) {
+      bestAlignment = alignment;
+      bestFace = face;
+    }
+  }
+
+  return bestFace ? { face: bestFace, alignment: bestAlignment } : null;
+}
+
+function isWorldFaceNearSupportPlane(face, direction, supportPlaneOffset, epsilon = FACE_SUPPORT_PLANE_EPSILON) {
+  if (!face || !Array.isArray(face.points) || face.points.length < 3) {
+    return false;
+  }
+
+  return face.points.every((point) => dotVec3(point.position, direction) >= supportPlaneOffset - epsilon);
+}
+
+function getFaceClipConfiguration(shapeA, poseA, shapeB, poseB, normal) {
+  const facesA = getPolygonalWorldFaces(shapeA, poseA);
+  const facesB = getPolygonalWorldFaces(shapeB, poseB);
+  if (facesB.length === 0) {
+    return null;
+  }
+
+  const supportA = getShapeSupportPolygon(shapeA, poseA, normal);
+  const supportB = getShapeSupportPolygon(shapeB, poseB, negateVec3(normal));
+  const bestA = findBestFacingFace(facesA, normal);
+  if (bestA?.face && isWorldFaceNearSupportPlane(bestA.face, normal, supportA.planeOffset)) {
+    const bestB = findBestFacingFace(facesB, negateVec3(bestA.face.normal));
+    if (bestB?.face && isWorldFaceNearSupportPlane(bestB.face, negateVec3(bestA.face.normal), supportB.planeOffset)) {
+      return {
+        referenceFace: bestA.face,
+        incidentFace: bestB.face
+      };
+    }
+  }
+
+  const bestB = findBestFacingFace(facesB, negateVec3(normal));
+  if (!bestB?.face || facesA.length === 0) {
+    return null;
+  }
+
+  const flippedReference = flipWorldFace(bestB.face);
+  const incident = findBestFacingFace(facesA, negateVec3(flippedReference.normal));
+  if (!isWorldFaceNearSupportPlane(bestB.face, negateVec3(normal), supportB.planeOffset)) {
+    return null;
+  }
+
+  if (!incident?.face || !isWorldFaceNearSupportPlane(incident.face, negateVec3(flippedReference.normal), supportA.planeOffset)) {
+    return null;
+  }
+
+  return {
+    referenceFace: flippedReference,
+    incidentFace: incident.face
+  };
+}
+
+function intersectSegmentWithPlane(startPoint, endPoint, startDistance, endDistance, planeTag) {
+  const denominator = startDistance - endDistance;
+  const t = Math.abs(denominator) <= 1e-12 ? 0 : startDistance / denominator;
+  return createFeaturePoint(
+    createVec3(
+      startPoint.position.x + (endPoint.position.x - startPoint.position.x) * t,
+      startPoint.position.y + (endPoint.position.y - startPoint.position.y) * t,
+      startPoint.position.z + (endPoint.position.z - startPoint.position.z) * t
+    ),
+    `${startPoint.featureId}|${endPoint.featureId}|${planeTag}`
+  );
+}
+
+function clipPolygonAgainstPlane(points, planePoint, planeNormal, planeTag) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return [];
+  }
+
+  const output = [];
+  let previousPoint = points[points.length - 1];
+  let previousDistance = dotVec3(subtractVec3(previousPoint.position, planePoint), planeNormal);
+  let previousInside = previousDistance >= -FACE_CLIP_EPSILON;
+
+  for (const currentPoint of points) {
+    const currentDistance = dotVec3(subtractVec3(currentPoint.position, planePoint), planeNormal);
+    const currentInside = currentDistance >= -FACE_CLIP_EPSILON;
+
+    if (currentInside !== previousInside) {
+      output.push(intersectSegmentWithPlane(previousPoint, currentPoint, previousDistance, currentDistance, planeTag));
+    }
+
+    if (currentInside) {
+      output.push(currentPoint);
+    }
+
+    previousPoint = currentPoint;
+    previousDistance = currentDistance;
+    previousInside = currentInside;
+  }
+
+  return output;
+}
+
+function dedupeFaceClipPoints(points) {
+  const uniquePoints = [];
+  const seen = new Set();
+
+  for (const point of points) {
+    const key = `${point.position.x.toFixed(5)}|${point.position.y.toFixed(5)}|${point.position.z.toFixed(5)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniquePoints.push(point);
+  }
+
+  return uniquePoints;
+}
+
+function computeFeaturePointCentroid(points) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return createVec3();
+  }
+
+  const centroid = points.reduce((sum, point) => createVec3(
+    sum.x + point.position.x,
+    sum.y + point.position.y,
+    sum.z + point.position.z
+  ), createVec3());
+
+  return scaleVec3(centroid, 1 / points.length);
+}
+
+function buildFaceClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
+  const configuration = getFaceClipConfiguration(shapeA, poseA, shapeB, poseB, normal);
+  if (!configuration?.referenceFace || !configuration?.incidentFace) {
+    return null;
+  }
+
+  return buildProjectedFaceManifoldCandidates(configuration.referenceFace, configuration.incidentFace);
+}
+
+function buildProjectedFaceManifoldCandidates(referenceFace, incidentFace) {
+  const referencePoints = referenceFace?.points ?? [];
+  const incidentPoints = incidentFace?.points ?? [];
+  if (referencePoints.length < 3 || incidentPoints.length < 3) {
+    return null;
+  }
+
+  const basis = createTangentBasis(referenceFace.normal);
+  const referencePolygon = projectSupportPolygon(referencePoints.map((point) => ({
+    worldPoint: point.position,
+    featureId: point.featureId
+  })), basis);
+  const incidentPolygon = projectSupportPolygon(incidentPoints.map((point) => ({
+    worldPoint: point.position,
+    featureId: point.featureId
+  })), basis);
+  const clippedPolygon = intersectSupportPolygons(referencePolygon, incidentPolygon);
+  if (clippedPolygon.length === 0) {
+    return null;
+  }
+
+  const referenceOffset = dotVec3(referenceFace.normal, referencePoints[0].position);
+  const incidentOffset = incidentPoints.reduce(
+    (maxOffset, point) => Math.max(maxOffset, dotVec3(referenceFace.normal, point.position)),
+    -Infinity
+  );
+  const separation = incidentOffset - referenceOffset;
+  if (separation > FACE_CLIP_EPSILON) {
+    return null;
+  }
+
+  const penetration = Math.max(0, -separation);
+  const candidates = clippedPolygon.map((point) => {
+    const referencePoint = addScaledVec3(
+      addScaledVec3(createVec3(), basis.tangentA, point.u),
+      basis.tangentB,
+      point.v
+    );
+    referencePoint.x += referenceFace.normal.x * referenceOffset;
+    referencePoint.y += referenceFace.normal.y * referenceOffset;
+    referencePoint.z += referenceFace.normal.z * referenceOffset;
+
+    const incidentPoint = addScaledVec3(referencePoint, referenceFace.normal, separation);
+    const referenceFeature = describeProjectedFeatureAtPoint(point, referencePolygon);
+    const incidentFeature = describeProjectedFeatureAtPoint(point, incidentPolygon);
+
+    return {
+      featureId: `${referenceFeature}|${incidentFeature}`,
+      position: createVec3(
+        (referencePoint.x + incidentPoint.x) / 2,
+        (referencePoint.y + incidentPoint.y) / 2,
+        (referencePoint.z + incidentPoint.z) / 2
+      ),
+      penetration,
+      separation
+    };
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return {
+    normal: referenceFace.normal,
+    candidates
+  };
+}
+
+function buildBoxBoxFaceManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
+  const facesA = getBoxWorldFaces(shapeA, poseA);
+  const facesB = getBoxWorldFaces(shapeB, poseB);
+  const reference = findBestFacingFace(facesA, normal)?.face ?? null;
+  const incident = findBestFacingFace(facesB, negateVec3(normal))?.face ?? null;
+  if (!reference || !incident) {
+    return null;
+  }
+
+  return buildProjectedFaceManifoldCandidates(reference, incident);
+}
+
 function intersectSupportPolygons(referencePolygon, incidentPolygon) {
   const reference = orderProjectedPolygon(referencePolygon);
   const incident = orderProjectedPolygon(incidentPolygon);
@@ -611,7 +1106,7 @@ function intersectSupportPolygons(referencePolygon, incidentPolygon) {
   return orderProjectedPolygon(dedupeProjectedPoints(points));
 }
 
-function buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
+function buildSupportPolygonClippedCandidates(shapeA, poseA, shapeB, poseB, normal) {
   const basis = createTangentBasis(normal);
   const supportA = getShapeSupportPolygon(shapeA, poseA, normal);
   const supportB = getShapeSupportPolygon(shapeB, poseB, negateVec3(normal));
@@ -668,13 +1163,33 @@ function buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
 
 export function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResult) {
   if (!epaResult || epaResult.penetration <= 0) {
-    return [];
+    return {
+      normal: epaResult?.normal ?? createVec3(0, 1, 0),
+      contacts: []
+    };
   }
 
-  const clippedCandidates = buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, epaResult.normal)
+  const boxFaceAxis = computeBoxFaceAxisNormal(shapeA, poseA, shapeB, poseB);
+  const manifoldNormal = boxFaceAxis?.normal ?? epaResult.normal;
+  const polygonalResult = shapeA?.type === 'box' && shapeB?.type === 'box' && boxFaceAxis?.normal
+    ? (buildBoxBoxFaceManifoldCandidates(shapeA, poseA, shapeB, poseB, boxFaceAxis.normal)
+      ?? buildFaceClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal))
+    : buildFaceClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal);
+  const polygonalCandidates = polygonalResult?.candidates?.filter((candidate) => candidate.penetration > 0) ?? [];
+  if (polygonalCandidates.length > 0) {
+    return {
+      normal: polygonalResult.normal,
+      contacts: reduceOrderedPolygonCandidates(polygonalCandidates, polygonalResult.normal, 4)
+    };
+  }
+
+  const clippedCandidates = buildSupportPolygonClippedCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal)
     .filter((candidate) => candidate.penetration > 0);
   if (clippedCandidates.length > 0) {
-    return selectManifoldCandidates(clippedCandidates, epaResult.normal, 4);
+    return {
+      normal: manifoldNormal,
+      contacts: selectManifoldCandidates(clippedCandidates, manifoldNormal, 4)
+    };
   }
 
   const faceCandidates = collectFaceCandidates(epaResult.faceVertices ?? [], epaResult.normal);
@@ -684,7 +1199,10 @@ export function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResu
   const filteredCandidates = [...faceCandidates, ...sampledCandidates]
     .filter((candidate) => candidate.penetration >= minimumPenetration);
 
-  return selectManifoldCandidates(filteredCandidates, epaResult.normal, 4);
+  return {
+    normal: manifoldNormal,
+    contacts: selectManifoldCandidates(filteredCandidates, manifoldNormal, 4)
+  };
 }
 
 export function runGjk(shapeA, poseA, shapeB, poseB, options = {}) {

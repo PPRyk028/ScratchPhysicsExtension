@@ -230,11 +230,13 @@ function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
     return null;
   }
 
-  const contacts = buildConvexContactManifold(shapeA, poseA, shapeB, poseB, result);
+  const manifold = buildConvexContactManifold(shapeA, poseA, shapeB, poseB, result);
+  const contacts = Array.isArray(manifold?.contacts) ? manifold.contacts : [];
+  const resolvedNormal = manifold?.normal ?? result.normal;
   if (contacts.length === 0) {
     return createSingleContactPair(pair, {
       algorithm: 'gjk-epa-manifold-v1',
-      normal: result.normal,
+      normal: resolvedNormal,
       penetration: result.penetration,
       position: result.contactPosition,
       featureId: 'gjk:contact'
@@ -243,7 +245,7 @@ function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
 
   return createManifoldContactPair(pair, {
     algorithm: 'gjk-epa-manifold-v1',
-    normal: result.normal,
+    normal: resolvedNormal,
     penetration: Math.max(...contacts.map((contact) => Number(contact.penetration ?? 0)), result.penetration),
     contacts
   });

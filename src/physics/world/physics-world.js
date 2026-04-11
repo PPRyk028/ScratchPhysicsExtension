@@ -190,6 +190,16 @@ function cloneCcdEvents(events) {
   return Array.isArray(events) ? events.map((event) => cloneCcdEvent(event)) : [];
 }
 
+function createBodyPairKey(bodyAId, bodyBId) {
+  const left = String(bodyAId ?? '').trim();
+  const right = String(bodyBId ?? '').trim();
+  if (!left || !right) {
+    return null;
+  }
+
+  return [left, right].sort().join('|');
+}
+
 function createEmptySolverStats(iterations = 0) {
   return {
     iterations,
@@ -753,11 +763,15 @@ export class PhysicsWorld {
     const sharedWorldAnchor = cloneVec3(options.worldAnchor ?? scaleVec3(addVec3(bodyA.position, bodyB.position), 0.5));
     const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
       localAnchor: options.localAnchorA,
-      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorA !== undefined
+        ? undefined
+        : (options.worldAnchorA ?? sharedWorldAnchor)
     });
     const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
       localAnchor: options.localAnchorB,
-      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorB !== undefined
+        ? undefined
+        : (options.worldAnchorB ?? sharedWorldAnchor)
     });
 
     const joint = this.jointRegistry.createPointToPointJoint({
@@ -784,28 +798,40 @@ export class PhysicsWorld {
     const sharedWorldAxis = normalizeVec3(options.worldAxis ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
     const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
       localAnchor: options.localAnchorA,
-      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorA !== undefined
+        ? undefined
+        : (options.worldAnchorA ?? sharedWorldAnchor)
     });
     const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
       localAnchor: options.localAnchorB,
-      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorB !== undefined
+        ? undefined
+        : (options.worldAnchorB ?? sharedWorldAnchor)
     });
     const localAxisA = this.resolveBodyLocalAxis(bodyAId, {
       localAxis: options.localAxisA,
-      worldAxis: options.worldAxisA ?? sharedWorldAxis
+      worldAxis: options.localAxisA !== undefined
+        ? undefined
+        : (options.worldAxisA ?? sharedWorldAxis)
     });
     const localAxisB = this.resolveBodyLocalAxis(bodyBId, {
       localAxis: options.localAxisB,
-      worldAxis: options.worldAxisB ?? sharedWorldAxis
+      worldAxis: options.localAxisB !== undefined
+        ? undefined
+        : (options.worldAxisB ?? sharedWorldAxis)
     });
     const tangentBasis = createTangentBasis(sharedWorldAxis);
     const localReferenceA = this.resolveBodyLocalAxis(bodyAId, {
       localAxis: options.localReferenceA,
-      worldAxis: options.worldReferenceA ?? tangentBasis.tangentA
+      worldAxis: options.localReferenceA !== undefined
+        ? undefined
+        : (options.worldReferenceA ?? tangentBasis.tangentA)
     });
     const localReferenceB = this.resolveBodyLocalAxis(bodyBId, {
       localAxis: options.localReferenceB,
-      worldAxis: options.worldReferenceB ?? tangentBasis.tangentA
+      worldAxis: options.localReferenceB !== undefined
+        ? undefined
+        : (options.worldReferenceB ?? tangentBasis.tangentA)
     });
 
     const joint = this.jointRegistry.createHingeJoint({
@@ -843,27 +869,39 @@ export class PhysicsWorld {
     );
     const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
       localAnchor: options.localAnchorA,
-      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorA !== undefined
+        ? undefined
+        : (options.worldAnchorA ?? sharedWorldAnchor)
     });
     const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
       localAnchor: options.localAnchorB,
-      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorB !== undefined
+        ? undefined
+        : (options.worldAnchorB ?? sharedWorldAnchor)
     });
     const localAxisA = this.resolveBodyLocalAxis(bodyAId, {
       localAxis: options.localAxisA,
-      worldAxis: options.worldAxisA ?? sharedWorldAxis
+      worldAxis: options.localAxisA !== undefined
+        ? undefined
+        : (options.worldAxisA ?? sharedWorldAxis)
     });
     const localAxisB = this.resolveBodyLocalAxis(bodyBId, {
       localAxis: options.localAxisB,
-      worldAxis: options.worldAxisB ?? sharedWorldAxis
+      worldAxis: options.localAxisB !== undefined
+        ? undefined
+        : (options.worldAxisB ?? sharedWorldAxis)
     });
     const localReferenceA = this.resolveBodyLocalAxis(bodyAId, {
       localAxis: options.localReferenceA,
-      worldAxis: options.worldReferenceA ?? sharedWorldReference
+      worldAxis: options.localReferenceA !== undefined
+        ? undefined
+        : (options.worldReferenceA ?? sharedWorldReference)
     });
     const localReferenceB = this.resolveBodyLocalAxis(bodyBId, {
       localAxis: options.localReferenceB,
-      worldAxis: options.worldReferenceB ?? sharedWorldReference
+      worldAxis: options.localReferenceB !== undefined
+        ? undefined
+        : (options.worldReferenceB ?? sharedWorldReference)
     });
 
     const joint = this.jointRegistry.createFixedJoint({
@@ -1836,7 +1874,7 @@ export class PhysicsWorld {
     });
     const jointSolverStats = solveJointConstraints({
       bodyRegistry: this.bodyRegistry,
-      joints: this.jointRegistry.list().filter((joint) => joint.enabled !== false),
+      joints: this.jointRegistry.listMutable().filter((joint) => joint.enabled !== false),
       deltaTime,
       iterations: this.solverIterations,
       baumgarte: this.solverBaumgarte,
@@ -1935,9 +1973,11 @@ export class PhysicsWorld {
     const filteredPairs = [];
 
     for (const contactPair of Array.isArray(contactPairs) ? contactPairs : []) {
-      const contacts = Array.isArray(contactPair.contacts)
-        ? contactPair.contacts.filter((contact) => !this.shouldCullTransientContact(contactPair, contact))
-        : [];
+      const sourceContacts = Array.isArray(contactPair.contacts) ? contactPair.contacts : [];
+      const survivingContacts = sourceContacts.filter((contact) => !this.shouldCullTransientContact(contactPair, contact));
+      const contacts = sourceContacts.length > 1
+        ? (survivingContacts.length === 0 ? [] : sourceContacts)
+        : survivingContacts;
       if (contacts.length === 0) {
         continue;
       }
@@ -1953,9 +1993,30 @@ export class PhysicsWorld {
     return filteredPairs;
   }
 
+  buildNonCollidingJointBodyPairSet() {
+    const suppressedPairs = new Set();
+
+    this.jointRegistry.forEachMutable((joint) => {
+      if (!joint || joint.enabled === false || joint.collideConnected === true) {
+        return;
+      }
+
+      const pairKey = createBodyPairKey(joint.bodyAId, joint.bodyBId);
+      if (pairKey) {
+        suppressedPairs.add(pairKey);
+      }
+    });
+
+    return suppressedPairs;
+  }
+
   buildCollisionResults() {
     const broadphaseProxies = this.buildBroadphaseProxies();
-    const broadphasePairs = buildBroadphasePairs(broadphaseProxies);
+    const suppressedJointPairs = this.buildNonCollidingJointBodyPairSet();
+    const broadphasePairs = buildBroadphasePairs(broadphaseProxies).filter((pair) => {
+      const pairKey = createBodyPairKey(pair.bodyAId, pair.bodyBId);
+      return !pairKey || !suppressedJointPairs.has(pairKey);
+    });
     const narrowphase = runNarrowphase(broadphasePairs, {
       getShape: (shapeId) => this.getShape(shapeId),
       getPose: (colliderId) => this.getColliderWorldPose(colliderId)

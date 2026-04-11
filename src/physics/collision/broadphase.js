@@ -46,6 +46,42 @@ function cloneNullableId(value) {
   return value ? String(value) : null;
 }
 
+function shouldSwapPairOrder(options) {
+  const leftRank = motionTypeRank(canonicalMotionType(options.motionTypeA, Boolean(options.bodyAId)));
+  const rightRank = motionTypeRank(canonicalMotionType(options.motionTypeB, Boolean(options.bodyBId)));
+  if (leftRank !== rightRank) {
+    return leftRank < rightRank;
+  }
+
+  const leftColliderId = String(options.colliderAId ?? '').trim();
+  const rightColliderId = String(options.colliderBId ?? '').trim();
+  if (!leftColliderId || !rightColliderId) {
+    return false;
+  }
+
+  return leftColliderId.localeCompare(rightColliderId) > 0;
+}
+
+function swapPairSides(options) {
+  return {
+    ...options,
+    colliderAId: options.colliderBId,
+    colliderBId: options.colliderAId,
+    bodyAId: options.bodyBId,
+    bodyBId: options.bodyAId,
+    shapeAId: options.shapeBId,
+    shapeBId: options.shapeAId,
+    materialAId: options.materialBId,
+    materialBId: options.materialAId,
+    shapeAType: options.shapeBType,
+    shapeBType: options.shapeAType,
+    motionTypeA: options.motionTypeB,
+    motionTypeB: options.motionTypeA,
+    aabbA: options.aabbB,
+    aabbB: options.aabbA
+  };
+}
+
 function compareProxiesBySweepAxis(left, right) {
   if (left.aabb.min.x !== right.aabb.min.x) {
     return left.aabb.min.x - right.aabb.min.x;
@@ -86,25 +122,29 @@ export function cloneBroadphaseProxy(proxy) {
 }
 
 export function createBroadphasePair(options = {}) {
+  const canonicalOptions = shouldSwapPairOrder(options)
+    ? swapPairSides(options)
+    : options;
+
   return {
-    id: String(options.id ?? options.pairKey ?? '').trim() || createPairKey(options.colliderAId, options.colliderBId),
-    pairKey: String(options.pairKey ?? '').trim() || createPairKey(options.colliderAId, options.colliderBId),
+    id: String(canonicalOptions.id ?? canonicalOptions.pairKey ?? '').trim() || createPairKey(canonicalOptions.colliderAId, canonicalOptions.colliderBId),
+    pairKey: String(canonicalOptions.pairKey ?? '').trim() || createPairKey(canonicalOptions.colliderAId, canonicalOptions.colliderBId),
     type: 'potential-collision-pair',
-    pairKind: String(options.pairKind ?? '').trim() || 'dynamic-dynamic',
-    colliderAId: cloneNullableId(options.colliderAId),
-    colliderBId: cloneNullableId(options.colliderBId),
-    bodyAId: cloneNullableId(options.bodyAId),
-    bodyBId: cloneNullableId(options.bodyBId),
-    shapeAId: cloneNullableId(options.shapeAId),
-    shapeBId: cloneNullableId(options.shapeBId),
-    materialAId: cloneNullableId(options.materialAId),
-    materialBId: cloneNullableId(options.materialBId),
-    shapeAType: String(options.shapeAType ?? '').trim() || 'unknown',
-    shapeBType: String(options.shapeBType ?? '').trim() || 'unknown',
-    motionTypeA: canonicalMotionType(options.motionTypeA, Boolean(options.bodyAId)),
-    motionTypeB: canonicalMotionType(options.motionTypeB, Boolean(options.bodyBId)),
-    aabbA: cloneAabb(options.aabbA),
-    aabbB: cloneAabb(options.aabbB)
+    pairKind: String(canonicalOptions.pairKind ?? '').trim() || 'dynamic-dynamic',
+    colliderAId: cloneNullableId(canonicalOptions.colliderAId),
+    colliderBId: cloneNullableId(canonicalOptions.colliderBId),
+    bodyAId: cloneNullableId(canonicalOptions.bodyAId),
+    bodyBId: cloneNullableId(canonicalOptions.bodyBId),
+    shapeAId: cloneNullableId(canonicalOptions.shapeAId),
+    shapeBId: cloneNullableId(canonicalOptions.shapeBId),
+    materialAId: cloneNullableId(canonicalOptions.materialAId),
+    materialBId: cloneNullableId(canonicalOptions.materialBId),
+    shapeAType: String(canonicalOptions.shapeAType ?? '').trim() || 'unknown',
+    shapeBType: String(canonicalOptions.shapeBType ?? '').trim() || 'unknown',
+    motionTypeA: canonicalMotionType(canonicalOptions.motionTypeA, Boolean(canonicalOptions.bodyAId)),
+    motionTypeB: canonicalMotionType(canonicalOptions.motionTypeB, Boolean(canonicalOptions.bodyBId)),
+    aabbA: cloneAabb(canonicalOptions.aabbA),
+    aabbB: cloneAabb(canonicalOptions.aabbB)
   };
 }
 

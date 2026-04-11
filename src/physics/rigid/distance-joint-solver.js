@@ -163,6 +163,14 @@ function getRelativeAngularVelocity(bodyA, bodyB) {
 }
 
 function prepareJointContext(bodyRegistry, joint) {
+  if (joint?.type === 'hinge-joint') {
+    // Hinge angular correction impulses are accumulated in world space.
+    // Reapplying them across frames after the hinge basis rotates can oppose
+    // the motor on stale directions, so we keep hinge angular accumulation
+    // frame-local and only persist the scalar motor impulse.
+    joint.accumulatedAngularImpulse = createVec3();
+  }
+
   const bodyA = getDynamicBody(bodyRegistry, joint.bodyAId);
   const bodyB = getDynamicBody(bodyRegistry, joint.bodyBId);
   const anchorBodyA = bodyA ?? getAnyBody(bodyRegistry, joint.bodyAId);
