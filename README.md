@@ -103,10 +103,18 @@ The older scene-style blocks are still present as hidden compatibility aliases s
 
 ## Recommended next steps
 
-1. Add broadphase-ready collider bookkeeping and pair generation.
-2. Start the convex rigid-body collision pipeline with narrowphase entry points.
-3. Replace the current face-based multi-point manifold path with feature-based persistent manifolds.
-4. Add angular velocity, inertia tensors, and rotational contact response.
-5. Replace the current support-mapped AABB fallback with true convex GJK/EPA-style narrowphase.
-6. Add joints and CCD on top of the thicker rigid pipeline.
-7. Add cloth and soft-body systems only after the rigid pipeline is stable.
+The rigid pipeline now includes:
+
+- persistent manifolds for box-box stacks
+- angular velocity and local diagonal inertia data
+- angular contact response in the rigid solver
+- first-pass `GJK -> EPA -> feature-based manifold generation` for convex support-mapped pairs
+
+Recommended next steps:
+
+1. Improve the generic convex manifold reducer and clipping heuristics beyond the current first-pass feature sampling.
+2. Add raycast, shape-cast, and sweep query entry points that reuse the support-mapped narrowphase.
+3. Add early CCD/speculative contacts for fast rigid bodies.
+4. Add joints on top of the thicker rigid pipeline.
+5. Revisit box-box narrowphase so rotated box contacts can leave the AABB-era path.
+6. Add cloth and soft-body systems only after the rigid pipeline is stable.

@@ -657,13 +657,16 @@ The project now has the first rigid-world scaffold in code:
 - shared debug primitive schema
 - broadphase proxy generation
 - sweep-style broadphase pair generation
-- box-box narrowphase entry
+- box-box multi-point manifold path
+- angular velocity and local inertia integration
+- angular contact response in the solver
+- first-pass `GJK -> EPA -> feature-based manifold generation` for convex support-mapped pairs
 
 The next implementation phase should continue the rigid collision stack, not return to rendering polish.
 
 Immediate coding tasks:
 
-- replace the current face-based manifold path with feature-based persistent manifolds
-- add angular velocity, inertia tensors, and rotational contact response
-- replace the current support-mapped AABB fallback with true convex GJK/EPA-style narrowphase
-- add raycast and sweep query entry points that can share the same collider bookkeeping
+- improve the generic convex manifold reducer and clipping heuristics beyond the current first-pass feature sampling
+- add raycast, shape-cast, and sweep query entry points that can share the same support-mapped narrowphase
+- add early CCD/speculative contacts for fast rigid bodies
+- revisit rotated box-box contact generation so it can leave the AABB-era path

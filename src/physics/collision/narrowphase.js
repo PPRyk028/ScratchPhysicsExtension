@@ -1,6 +1,7 @@
 import { cloneVec3, createVec3, lengthVec3, negateVec3, normalizeVec3, subtractVec3 } from '../math/vec3.js';
 import { getAabbOverlap } from './aabb.js';
 import { collideBoxPair } from './box-box.js';
+import { buildConvexContactManifold, collideConvexPairWithGjkEpa } from './gjk-epa.js';
 import { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter, getSupportMappedPenetration } from './support.js';
 
 function cloneContact(contact) {
@@ -101,6 +102,26 @@ function createSingleContactPair(pair, options = {}) {
         featureId: options.featureId ?? 'contact:0'
       }
     ]
+  });
+}
+
+function createManifoldContactPair(pair, options = {}) {
+  const normal = cloneVec3(options.normal ?? createVec3(0, 1, 0));
+  const penetration = Number(options.penetration ?? 0);
+  const contacts = Array.isArray(options.contacts) ? options.contacts : [];
+
+  return createContactPairCore(pair, {
+    algorithm: options.algorithm,
+    normal,
+    penetration,
+    contacts: contacts.map((contact, index) => ({
+      id: `${pair.pairKey}:contact-${index}`,
+      position: cloneVec3(contact.position),
+      normal,
+      penetration: Number(contact.penetration ?? penetration),
+      separation: Number(contact.separation ?? -Number(contact.penetration ?? penetration)),
+      featureId: contact.featureId ?? `contact:${index}`
+    }))
   });
 }
 
@@ -227,6 +248,35 @@ function collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB) {
   });
 }
 
+function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
+  if (!isSupportMappedShape(shapeA.type) || !isSupportMappedShape(shapeB.type)) {
+    return null;
+  }
+
+  const result = collideConvexPairWithGjkEpa(shapeA, poseA, shapeB, poseB);
+  if (!result || result.penetration <= 0) {
+    return null;
+  }
+
+  const contacts = buildConvexContactManifold(shapeA, poseA, shapeB, poseB, result);
+  if (contacts.length === 0) {
+    return createSingleContactPair(pair, {
+      algorithm: 'gjk-epa-manifold-v1',
+      normal: result.normal,
+      penetration: result.penetration,
+      position: result.contactPosition,
+      featureId: 'gjk:contact'
+    });
+  }
+
+  return createManifoldContactPair(pair, {
+    algorithm: 'gjk-epa-manifold-v1',
+    normal: result.normal,
+    penetration: Math.max(...contacts.map((contact) => Number(contact.penetration ?? 0)), result.penetration),
+    contacts
+  });
+}
+
 function collidePair(pair, shapeA, poseA, shapeB, poseB) {
   if (!shapeA || !shapeB || !poseA || !poseB) {
     return null;
@@ -236,27 +286,7 @@ function collidePair(pair, shapeA, poseA, shapeB, poseB) {
     return collideBoxPair(pair);
   }
 
-  if (shapeA.type === 'sphere' && shapeB.type === 'sphere') {
-    return collideSphereSpherePair(pair, shapeA, poseA, shapeB, poseB);
-  }
-
-  if (shapeA.type === 'sphere' && shapeB.type === 'box') {
-    return collideSphereBoxPair(pair, shapeA, poseA, shapeB, poseB, true);
-  }
-
-  if (shapeA.type === 'box' && shapeB.type === 'sphere') {
-    return collideSphereBoxPair(pair, shapeB, poseB, shapeA, poseA, false);
-  }
-
-  if (shapeA.type === 'capsule' && shapeB.type === 'sphere') {
-    return collideCapsuleSpherePair(pair, shapeA, poseA, shapeB, poseB, true);
-  }
-
-  if (shapeA.type === 'sphere' && shapeB.type === 'capsule') {
-    return collideCapsuleSpherePair(pair, shapeB, poseB, shapeA, poseA, false);
-  }
-
-  return collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB);
+  return collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) ?? collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB);
 }
 
 export function createContactPair(options = {}) {

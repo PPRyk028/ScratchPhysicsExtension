@@ -1,4 +1,6 @@
+import { createIdentityQuat } from '../math/quat.js';
 import { addVec3, cloneVec3, createVec3, maxVec3, minVec3 } from '../math/vec3.js';
+import { getConvexHullBounds, getShapeSupportPoint, getShapeWorldPose } from './support.js';
 
 function toNonNegativeNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -102,51 +104,40 @@ export function getAabbOverlap(left, right) {
 }
 
 export function computeLocalShapeAabb(shape) {
-  const localCenter = cloneVec3(shape?.localPose?.position ?? createVec3());
-
-  if (shape?.type === 'box') {
-    return createAabbFromCenterHalfExtents(localCenter, shape.geometry.halfExtents);
-  }
-
-  if (shape?.type === 'sphere') {
-    return createAabbFromCenterHalfExtents(localCenter, createVec3(shape.geometry.radius, shape.geometry.radius, shape.geometry.radius));
-  }
-
-  if (shape?.type === 'capsule') {
-    return createAabbFromCenterHalfExtents(
-      localCenter,
-      createVec3(shape.geometry.radius, shape.geometry.halfHeight + shape.geometry.radius, shape.geometry.radius)
-    );
-  }
-
-  if (shape?.type === 'convex-hull') {
-    if (!Array.isArray(shape.geometry.vertices) || shape.geometry.vertices.length === 0) {
-      return createAabbFromCenterHalfExtents(localCenter, createVec3());
-    }
-
-    let localMin = addVec3(localCenter, shape.geometry.vertices[0]);
-    let localMax = addVec3(localCenter, shape.geometry.vertices[0]);
-
-    for (let index = 1; index < shape.geometry.vertices.length; index += 1) {
-      const vertex = addVec3(localCenter, shape.geometry.vertices[index]);
-      localMin = minVec3(localMin, vertex);
-      localMax = maxVec3(localMax, vertex);
-    }
-
-    return createAabbFromMinMax(localMin, localMax);
-  }
-
-  return null;
+  return computeShapeWorldAabb(shape, {
+    position: createVec3(),
+    rotation: createIdentityQuat()
+  });
 }
 
 export function computeShapeWorldAabb(shape, worldPose) {
-  const localAabb = computeLocalShapeAabb(shape);
-  if (!localAabb) {
+  if (!shape) {
     return null;
   }
 
-  return createAabbFromCenterHalfExtents(
-    addVec3(worldPose?.position ?? createVec3(), localAabb.center),
-    localAabb.halfExtents
+  if (shape.type === 'convex-hull') {
+    const bounds = getConvexHullBounds(shape, worldPose);
+    return createAabbFromMinMax(bounds.min, bounds.max);
+  }
+
+  const supportPose = getShapeWorldPose(shape, worldPose);
+  const min = createVec3(
+    getShapeSupportPoint(shape, worldPose, createVec3(-1, 0, 0)).x,
+    getShapeSupportPoint(shape, worldPose, createVec3(0, -1, 0)).y,
+    getShapeSupportPoint(shape, worldPose, createVec3(0, 0, -1)).z
   );
+  const max = createVec3(
+    getShapeSupportPoint(shape, worldPose, createVec3(1, 0, 0)).x,
+    getShapeSupportPoint(shape, worldPose, createVec3(0, 1, 0)).y,
+    getShapeSupportPoint(shape, worldPose, createVec3(0, 0, 1)).z
+  );
+
+  if (shape.type === 'sphere') {
+    return createAabbFromCenterHalfExtents(
+      supportPose.position,
+      createVec3(shape.geometry.radius, shape.geometry.radius, shape.geometry.radius)
+    );
+  }
+
+  return createAabbFromMinMax(min, max);
 }

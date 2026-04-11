@@ -54,6 +54,8 @@ export class BodyRegistry extends BaseRegistry {
       torqueAccumulator: cloneVec3(body.torqueAccumulator),
       mass: body.mass,
       inverseMass: body.inverseMass,
+      inertia: cloneVec3(body.inertia),
+      inverseInertia: cloneVec3(body.inverseInertia),
       sleeping: body.sleeping,
       enabled: body.enabled,
       userData: cloneNullableValue(body.userData)
@@ -79,6 +81,8 @@ export class BodyRegistry extends BaseRegistry {
       torqueAccumulator: cloneVec3(options.torqueAccumulator ?? createVec3()),
       mass,
       inverseMass: mass > 0 ? 1 / mass : 0,
+      inertia: cloneVec3(options.inertia ?? createVec3()),
+      inverseInertia: cloneVec3(options.inverseInertia ?? createVec3()),
       sleeping: Boolean(options.sleeping),
       enabled: options.enabled !== false,
       userData: cloneNullableValue(options.userData)

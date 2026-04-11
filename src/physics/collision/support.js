@@ -1,3 +1,4 @@
+import { cloneQuat, createIdentityQuat, inverseRotateVec3ByQuat, multiplyQuat, rotateVec3ByQuat } from '../math/quat.js';
 import { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, maxVec3, minVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } from '../math/vec3.js';
 
 function clampNumber(value, minValue, maxValue) {
@@ -5,51 +6,116 @@ function clampNumber(value, minValue, maxValue) {
 }
 
 export function getShapeWorldCenter(shape, worldPose) {
-  return addVec3(worldPose?.position ?? createVec3(), shape?.localPose?.position ?? createVec3());
+  return getShapeWorldPose(shape, worldPose).position;
 }
 
-export function getShapeSupportPoint(shape, worldPose, direction) {
-  const center = getShapeWorldCenter(shape, worldPose);
+export function composePoses(parentPose, localPose) {
+  const parentRotation = cloneQuat(parentPose?.rotation ?? createIdentityQuat());
+  const localRotation = cloneQuat(localPose?.rotation ?? createIdentityQuat());
+  const localPosition = cloneVec3(localPose?.position ?? createVec3());
+
+  return {
+    position: addVec3(parentPose?.position ?? createVec3(), rotateVec3ByQuat(parentRotation, localPosition)),
+    rotation: multiplyQuat(parentRotation, localRotation)
+  };
+}
+
+export function transformPointByPose(pose, point) {
+  return addVec3(pose?.position ?? createVec3(), rotateVec3ByQuat(pose?.rotation ?? createIdentityQuat(), point));
+}
+
+export function getShapeWorldPose(shape, worldPose) {
+  return composePoses(worldPose, shape?.localPose ?? {
+    position: createVec3(),
+    rotation: createIdentityQuat()
+  });
+}
+
+export function getShapeSupportFeature(shape, worldPose, direction) {
+  const shapeWorldPose = getShapeWorldPose(shape, worldPose);
   const dir = normalizeVec3(direction, createVec3(1, 0, 0));
+  const localDirection = inverseRotateVec3ByQuat(shapeWorldPose.rotation, dir);
 
   if (shape?.type === 'box') {
-    return addVec3(center, createVec3(
-      dir.x >= 0 ? shape.geometry.halfExtents.x : -shape.geometry.halfExtents.x,
-      dir.y >= 0 ? shape.geometry.halfExtents.y : -shape.geometry.halfExtents.y,
-      dir.z >= 0 ? shape.geometry.halfExtents.z : -shape.geometry.halfExtents.z
-    ));
+    const localPoint = createVec3(
+      localDirection.x >= 0 ? shape.geometry.halfExtents.x : -shape.geometry.halfExtents.x,
+      localDirection.y >= 0 ? shape.geometry.halfExtents.y : -shape.geometry.halfExtents.y,
+      localDirection.z >= 0 ? shape.geometry.halfExtents.z : -shape.geometry.halfExtents.z
+    );
+    return {
+      worldPoint: transformPointByPose(shapeWorldPose, localPoint),
+      localPoint,
+      featureId: `corner:${localPoint.x >= 0 ? '+' : '-'}${localPoint.y >= 0 ? '+' : '-'}${localPoint.z >= 0 ? '+' : '-'}`,
+      featureType: 'vertex'
+    };
   }
 
   if (shape?.type === 'sphere') {
-    return addScaledVec3(center, dir, shape.geometry.radius);
+    const localPoint = scaleVec3(localDirection, shape.geometry.radius);
+    return {
+      worldPoint: addScaledVec3(shapeWorldPose.position, dir, shape.geometry.radius),
+      localPoint,
+      featureId: 'sphere:surface',
+      featureType: 'surface'
+    };
   }
 
   if (shape?.type === 'capsule') {
-    const axisOffset = createVec3(0, dir.y >= 0 ? shape.geometry.halfHeight : -shape.geometry.halfHeight, 0);
-    return addScaledVec3(addVec3(center, axisOffset), dir, shape.geometry.radius);
+    const axisOffset = createVec3(0, localDirection.y >= 0 ? shape.geometry.halfHeight : -shape.geometry.halfHeight, 0);
+    const localPoint = addScaledVec3(axisOffset, localDirection, shape.geometry.radius);
+    return {
+      worldPoint: addScaledVec3(transformPointByPose(shapeWorldPose, axisOffset), dir, shape.geometry.radius),
+      localPoint,
+      featureId: `capsule:${axisOffset.y >= 0 ? 'top' : 'bottom'}`,
+      featureType: 'capsule-cap'
+    };
   }
 
   if (shape?.type === 'convex-hull') {
     if (!Array.isArray(shape.geometry.vertices) || shape.geometry.vertices.length === 0) {
-      return center;
+      return {
+        worldPoint: shapeWorldPose.position,
+        localPoint: createVec3(),
+        featureId: 'vertex:empty',
+        featureType: 'vertex'
+      };
     }
 
-    let bestVertex = addVec3(center, shape.geometry.vertices[0]);
-    let bestDot = dotVec3(bestVertex, dir);
+    let bestIndex = 0;
+    let bestLocalPoint = cloneVec3(shape.geometry.vertices[0]);
+    let bestWorldPoint = transformPointByPose(shapeWorldPose, bestLocalPoint);
+    let bestDot = dotVec3(bestWorldPoint, dir);
 
     for (let index = 1; index < shape.geometry.vertices.length; index += 1) {
-      const candidate = addVec3(center, shape.geometry.vertices[index]);
-      const candidateDot = dotVec3(candidate, dir);
-      if (candidateDot > bestDot) {
+      const candidateLocalPoint = shape.geometry.vertices[index];
+      const candidateWorldPoint = transformPointByPose(shapeWorldPose, candidateLocalPoint);
+      const candidateDot = dotVec3(candidateWorldPoint, dir);
+      if (candidateDot > bestDot + 1e-8) {
         bestDot = candidateDot;
-        bestVertex = candidate;
+        bestIndex = index;
+        bestLocalPoint = cloneVec3(candidateLocalPoint);
+        bestWorldPoint = candidateWorldPoint;
       }
     }
 
-    return bestVertex;
+    return {
+      worldPoint: bestWorldPoint,
+      localPoint: bestLocalPoint,
+      featureId: `vertex:${bestIndex}`,
+      featureType: 'vertex'
+    };
   }
 
-  return center;
+  return {
+    worldPoint: shapeWorldPose.position,
+    localPoint: createVec3(),
+    featureId: 'shape:center',
+    featureType: 'point'
+  };
+}
+
+export function getShapeSupportPoint(shape, worldPose, direction) {
+  return getShapeSupportFeature(shape, worldPose, direction).worldPoint;
 }
 
 export function clampPointToAabb(point, aabb) {
@@ -72,10 +138,11 @@ export function getClosestPointOnSegment(point, segmentStart, segmentEnd) {
 }
 
 export function getCapsuleSegmentEndpoints(shape, worldPose) {
-  const center = getShapeWorldCenter(shape, worldPose);
+  const shapeWorldPose = getShapeWorldPose(shape, worldPose);
+  const axis = rotateVec3ByQuat(shapeWorldPose.rotation, createVec3(0, 1, 0));
   return {
-    start: addVec3(center, createVec3(0, -shape.geometry.halfHeight, 0)),
-    end: addVec3(center, createVec3(0, shape.geometry.halfHeight, 0))
+    start: addScaledVec3(shapeWorldPose.position, axis, -shape.geometry.halfHeight),
+    end: addScaledVec3(shapeWorldPose.position, axis, shape.geometry.halfHeight)
   };
 }
 
@@ -107,19 +174,19 @@ export function getSupportMappedPenetration(shapeA, poseA, shapeB, poseB, normal
 }
 
 export function getConvexHullBounds(shape, worldPose) {
-  const center = getShapeWorldCenter(shape, worldPose);
+  const shapeWorldPose = getShapeWorldPose(shape, worldPose);
   if (!Array.isArray(shape?.geometry?.vertices) || shape.geometry.vertices.length === 0) {
     return {
-      min: center,
-      max: center
+      min: shapeWorldPose.position,
+      max: shapeWorldPose.position
     };
   }
 
-  let minPoint = addVec3(center, shape.geometry.vertices[0]);
+  let minPoint = transformPointByPose(shapeWorldPose, shape.geometry.vertices[0]);
   let maxPoint = cloneVec3(minPoint);
 
   for (let index = 1; index < shape.geometry.vertices.length; index += 1) {
-    const worldVertex = addVec3(center, shape.geometry.vertices[index]);
+    const worldVertex = transformPointByPose(shapeWorldPose, shape.geometry.vertices[index]);
     minPoint = minVec3(minPoint, worldVertex);
     maxPoint = maxVec3(maxPoint, worldVertex);
   }

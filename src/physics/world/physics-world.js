@@ -1,10 +1,11 @@
-import { computeShapeWorldAabb, createAabbFromCenterHalfExtents, testAabbOverlap, testPointInAabb } from '../collision/aabb.js';
+import { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfExtents, testAabbOverlap, testPointInAabb } from '../collision/aabb.js';
 import { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } from '../collision/broadphase.js';
 import { cloneContactPair, runNarrowphase } from '../collision/narrowphase.js';
+import { composePoses } from '../collision/support.js';
 import { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } from '../debug/debug-primitives.js';
 import { cloneManifold, ManifoldCache } from '../manifold/manifold-cache.js';
-import { cloneQuat, createIdentityQuat } from '../math/quat.js';
-import { addScaledVec3, addVec3, cloneVec3, createVec3 } from '../math/vec3.js';
+import { cloneQuat, createIdentityQuat, integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } from '../math/quat.js';
+import { addScaledVec3, addVec3, cloneVec3, createVec3, lengthSquaredVec3 } from '../math/vec3.js';
 import { solveNormalContactConstraints } from '../rigid/normal-contact-solver.js';
 import { BodyRegistry } from './body-registry.js';
 import { ColliderRegistry } from './collider-registry.js';
@@ -150,6 +151,77 @@ function combineMaterialProperties(materialA, materialB) {
   };
 }
 
+function safeInverse(value) {
+  return value > 1e-8 ? 1 / value : 0;
+}
+
+function cloneDiagonalInverse(inertia) {
+  return createVec3(
+    safeInverse(Number(inertia?.x ?? 0)),
+    safeInverse(Number(inertia?.y ?? 0)),
+    safeInverse(Number(inertia?.z ?? 0))
+  );
+}
+
+function computeBoxInertia(halfExtents, mass) {
+  const hx = Math.abs(Number(halfExtents?.x ?? 0));
+  const hy = Math.abs(Number(halfExtents?.y ?? 0));
+  const hz = Math.abs(Number(halfExtents?.z ?? 0));
+
+  return createVec3(
+    (mass / 3) * (hy * hy + hz * hz),
+    (mass / 3) * (hx * hx + hz * hz),
+    (mass / 3) * (hx * hx + hy * hy)
+  );
+}
+
+function computeSphereInertia(radius, mass) {
+  const resolvedRadius = Math.abs(Number(radius ?? 0));
+  const scalar = 0.4 * mass * resolvedRadius * resolvedRadius;
+  return createVec3(scalar, scalar, scalar);
+}
+
+function computeCapsuleInertia(shape, mass) {
+  const radius = Math.abs(Number(shape?.geometry?.radius ?? 0));
+  const halfHeight = Math.abs(Number(shape?.geometry?.halfHeight ?? 0));
+  return computeBoxInertia(createVec3(radius, halfHeight + radius, radius), mass);
+}
+
+function computeConvexHullInertia(shape, mass) {
+  const localAabb = computeLocalShapeAabb(shape);
+  return computeBoxInertia(localAabb?.halfExtents ?? createVec3(), mass);
+}
+
+function computeShapeInertia(shape, mass) {
+  if (!shape || mass <= 0) {
+    return createVec3();
+  }
+
+  if (shape.type === 'box') {
+    return computeBoxInertia(shape.geometry.halfExtents, mass);
+  }
+
+  if (shape.type === 'sphere') {
+    return computeSphereInertia(shape.geometry.radius, mass);
+  }
+
+  if (shape.type === 'capsule') {
+    return computeCapsuleInertia(shape, mass);
+  }
+
+  if (shape.type === 'convex-hull') {
+    return computeConvexHullInertia(shape, mass);
+  }
+
+  return createVec3();
+}
+
+function clearVector(vector) {
+  vector.x = 0;
+  vector.y = 0;
+  vector.z = 0;
+}
+
 export class PhysicsWorld {
   constructor(options = {}) {
     this.fixedDeltaTime = toPositiveNumber(options.fixedDeltaTime, 1 / 60);
@@ -256,8 +328,9 @@ export class PhysicsWorld {
 
   createRigidBody(options = {}) {
     const body = this.bodyRegistry.createRigidBody(options);
+    const updatedBody = this.updateBodyMassProperties(body.id) ?? body;
     this.markCollisionStateDirty();
-    return body;
+    return updatedBody;
   }
 
   createCollider(options = {}) {
@@ -268,10 +341,32 @@ export class PhysicsWorld {
 
     if (collider.bodyId) {
       this.bodyRegistry.attachCollider(collider.bodyId, collider.id, collider.shapeId);
+      this.updateBodyMassProperties(collider.bodyId);
     }
 
     this.markCollisionStateDirty();
     return collider;
+  }
+
+  updateBodyMassProperties(bodyId) {
+    const body = this.bodyRegistry.getMutable(bodyId);
+    if (!body) {
+      return null;
+    }
+
+    if (!body.enabled || body.motionType !== 'dynamic' || body.mass <= 0) {
+      body.inverseMass = 0;
+      body.inertia = createVec3();
+      body.inverseInertia = createVec3();
+      return this.getBody(bodyId);
+    }
+
+    const shape = body.shapeId ? this.getShape(body.shapeId) : null;
+    const inertia = computeShapeInertia(shape, body.mass);
+    body.inverseMass = safeInverse(body.mass);
+    body.inertia = inertia;
+    body.inverseInertia = cloneDiagonalInverse(inertia);
+    return this.getBody(bodyId);
   }
 
   createBoxBody(options = {}) {
@@ -286,6 +381,7 @@ export class PhysicsWorld {
       id: resolvedId,
       motionType: options.motionType ?? 'dynamic',
       position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
       linearVelocity: options.linearVelocity ?? createVec3(),
       angularVelocity: options.angularVelocity ?? createVec3(),
       mass: options.mass ?? 1,
@@ -318,6 +414,7 @@ export class PhysicsWorld {
       id: resolvedId,
       motionType: options.motionType ?? 'dynamic',
       position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
       linearVelocity: options.linearVelocity ?? createVec3(),
       angularVelocity: options.angularVelocity ?? createVec3(),
       mass: options.mass ?? 1,
@@ -350,6 +447,7 @@ export class PhysicsWorld {
       id: resolvedId,
       motionType: options.motionType ?? 'dynamic',
       position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
       linearVelocity: options.linearVelocity ?? createVec3(),
       angularVelocity: options.angularVelocity ?? createVec3(),
       mass: options.mass ?? 1,
@@ -381,6 +479,7 @@ export class PhysicsWorld {
       id: resolvedId,
       motionType: options.motionType ?? 'dynamic',
       position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
       linearVelocity: options.linearVelocity ?? createVec3(),
       angularVelocity: options.angularVelocity ?? createVec3(),
       mass: options.mass ?? 1,
@@ -524,6 +623,21 @@ export class PhysicsWorld {
     };
   }
 
+  applyInverseInertia(body, worldVector) {
+    if (!body || body.motionType !== 'dynamic' || !body.inverseInertia) {
+      return createVec3();
+    }
+
+    const rotation = body.rotation ?? createIdentityQuat();
+    const localVector = inverseRotateVec3ByQuat(rotation, worldVector ?? createVec3());
+    const localResult = createVec3(
+      localVector.x * Number(body.inverseInertia.x ?? 0),
+      localVector.y * Number(body.inverseInertia.y ?? 0),
+      localVector.z * Number(body.inverseInertia.z ?? 0)
+    );
+    return rotateVec3ByQuat(rotation, localResult);
+  }
+
   integrateRigidBodies(deltaTime) {
     let movedAnyDynamicBody = false;
 
@@ -532,9 +646,19 @@ export class PhysicsWorld {
         return;
       }
 
-      body.linearVelocity = addScaledVec3(body.linearVelocity, this.gravity, deltaTime);
+      const linearAcceleration = addScaledVec3(this.gravity, body.forceAccumulator, body.inverseMass);
+      const angularAcceleration = this.applyInverseInertia(body, body.torqueAccumulator);
+      body.linearVelocity = addScaledVec3(body.linearVelocity, linearAcceleration, deltaTime);
+      body.angularVelocity = addScaledVec3(body.angularVelocity, angularAcceleration, deltaTime);
       body.position = addScaledVec3(body.position, body.linearVelocity, deltaTime);
-      movedAnyDynamicBody = true;
+      body.rotation = integrateQuat(body.rotation, body.angularVelocity, deltaTime);
+      movedAnyDynamicBody = movedAnyDynamicBody ||
+        lengthSquaredVec3(body.linearVelocity) > 1e-12 ||
+        lengthSquaredVec3(body.angularVelocity) > 1e-12 ||
+        lengthSquaredVec3(linearAcceleration) > 1e-12 ||
+        lengthSquaredVec3(angularAcceleration) > 1e-12;
+      clearVector(body.forceAccumulator);
+      clearVector(body.torqueAccumulator);
     });
 
     if (movedAnyDynamicBody) {
@@ -584,10 +708,10 @@ export class PhysicsWorld {
       };
     }
 
-    return {
-      position: addVec3(body.position, collider.localPose.position),
-      rotation: cloneQuat(body.rotation ?? createIdentityQuat())
-    };
+    return composePoses({
+      position: body.position,
+      rotation: body.rotation ?? createIdentityQuat()
+    }, collider.localPose);
   }
 
   buildBroadphaseProxies() {

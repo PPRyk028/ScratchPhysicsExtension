@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEBUG_FRAME_SCHEMA_VERSION, DEBUG_PRIMITIVE_TYPES, PhysicsWorld } from '../src/physics/index.js';
+import { DEBUG_FRAME_SCHEMA_VERSION, DEBUG_PRIMITIVE_TYPES, PhysicsWorld, rotateVec3ByQuat } from '../src/physics/index.js';
 
 test('PhysicsWorld creates box bodies with matching shape, body, collider, and default material records', () => {
   const world = new PhysicsWorld();
@@ -77,6 +77,28 @@ test('PhysicsWorld fixed-step integration advances dynamic bodies', () => {
   assert.equal(stepStats.simulationTick, 2);
   assert.equal(body.linearVelocity.y, -10);
   assert.equal(body.position.y, -2.5);
+});
+
+test('PhysicsWorld angular integration advances orientation from angular velocity', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 0.5,
+    maxSubsteps: 2,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+
+  world.createBoxBody({
+    id: 'spinner',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2,
+    angularVelocity: { x: 0, y: 0, z: Math.PI }
+  });
+
+  world.step(0.5);
+  const body = world.getBody('spinner');
+  const rotatedXAxis = rotateVec3ByQuat(body.rotation, { x: 1, y: 0, z: 0 });
+
+  assert.ok(Math.abs(body.rotation.z) > 0.5, `expected non-trivial z quaternion component, got ${body.rotation.z}`);
+  assert.ok(rotatedXAxis.y > 0.8, `expected x axis to rotate toward +y, got ${JSON.stringify(rotatedXAxis)}`);
 });
 
 test('PhysicsWorld debug frames expose the shared primitive schema', () => {
@@ -167,10 +189,27 @@ test('PhysicsWorld sphere restitution produces a bounce against a floor box', ()
     }
   }
 
+  assert.equal(observedBounce, true);
+});
+
+test('PhysicsWorld sphere-box overlaps use the GJK/EPA manifold path', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+  world.createSphereBody({
+    id: 'ball',
+    position: { x: 0, y: 0.2, z: 0 },
+    radius: 0.5,
+    mass: 1
+  });
+
   const collisionState = world.getCollisionState();
 
-  assert.equal(observedBounce, true);
-  assert.equal(collisionState.summary.algorithms['sphere-box-v1'], 1);
+  assert.equal(collisionState.summary.algorithms['gjk-epa-manifold-v1'], 1);
+  assert.ok(collisionState.contactPairs[0].contactCount >= 1);
 });
 
 test('PhysicsWorld friction reduces tangential velocity on a resting box', () => {
@@ -210,7 +249,42 @@ test('PhysicsWorld friction reduces tangential velocity on a resting box', () =>
   assert.ok(maxTangentSolved > 0);
 });
 
-test('PhysicsWorld capsule-sphere narrowphase reports dedicated contacts', () => {
+test('PhysicsWorld friction transfers tangential motion into sphere spin', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12,
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createMaterial({
+    id: 'rolling',
+    friction: 1.1,
+    restitution: 0
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2,
+    materialId: 'rolling'
+  });
+  world.createSphereBody({
+    id: 'ball',
+    position: { x: 0, y: 0.55, z: 0 },
+    radius: 0.5,
+    mass: 1,
+    linearVelocity: { x: 4, y: 0, z: 0 },
+    materialId: 'rolling'
+  });
+
+  for (let stepIndex = 0; stepIndex < 48; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  const ball = world.getBody('ball');
+  assert.ok(Math.abs(ball.angularVelocity.z) > 0.2, `expected rolling spin around z, got ${ball.angularVelocity.z}`);
+  assert.ok(Math.abs(ball.linearVelocity.x) < 4, `expected friction to reduce sphere x velocity, got ${ball.linearVelocity.x}`);
+});
+
+test('PhysicsWorld capsule-sphere narrowphase reports GJK/EPA manifold contacts', () => {
   const world = new PhysicsWorld();
   world.createCapsuleBody({
     id: 'capsule',
@@ -228,11 +302,11 @@ test('PhysicsWorld capsule-sphere narrowphase reports dedicated contacts', () =>
 
   const collisionState = world.getCollisionState();
 
-  assert.equal(collisionState.summary.algorithms['capsule-sphere-v1'], 1);
-  assert.equal(collisionState.contactPairs[0].contactCount, 1);
+  assert.equal(collisionState.summary.algorithms['gjk-epa-manifold-v1'], 1);
+  assert.ok(collisionState.contactPairs[0].contactCount >= 1);
 });
 
-test('PhysicsWorld convex hulls use the support-mapped fallback narrowphase', () => {
+test('PhysicsWorld convex hulls use multi-point GJK/EPA manifold generation', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({
     id: 'floor',
@@ -254,8 +328,32 @@ test('PhysicsWorld convex hulls use the support-mapped fallback narrowphase', ()
 
   const collisionState = world.getCollisionState();
 
-  assert.equal(collisionState.summary.algorithms['support-mapped-aabb-v1'], 1);
-  assert.equal(collisionState.contactPairs[0].contactCount, 1);
+  const featureIds = new Set(collisionState.contactPairs[0].contacts.map((contact) => contact.featureId));
+
+  assert.equal(collisionState.summary.algorithms['gjk-epa-manifold-v1'], 1);
+  assert.ok(collisionState.contactPairs[0].contactCount >= 3, `expected multi-point hull contact, got ${collisionState.contactPairs[0].contactCount}`);
+  assert.ok(featureIds.size >= 3, `expected distinct hull feature ids, got ${Array.from(featureIds).join(', ')}`);
+});
+
+test('PhysicsWorld capsule-box pairs use the GJK/EPA manifold path', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+  world.createCapsuleBody({
+    id: 'capsule',
+    position: { x: 0, y: 0.4, z: 0 },
+    radius: 0.5,
+    halfHeight: 0.8,
+    mass: 1
+  });
+
+  const collisionState = world.getCollisionState();
+
+  assert.equal(collisionState.summary.algorithms['gjk-epa-manifold-v1'], 1);
+  assert.ok(collisionState.contactPairs[0].contactCount >= 1);
 });
 
 test('PhysicsWorld manifold cache and normal solver keep a falling box resting on a floor', () => {
@@ -286,9 +384,10 @@ test('PhysicsWorld manifold cache and normal solver keep a falling box resting o
   assert.ok(restManifold);
   assert.equal(collisionState.summary.manifoldCount, 1);
   assert.ok(restManifold.contacts[0].accumulatedNormalImpulse > 0);
-  assert.ok(restManifold.contacts[0].accumulatedTangentImpulseA === 0);
+  assert.ok(Math.abs(restManifold.contacts[0].accumulatedTangentImpulseA) < 0.05);
   assert.ok(Math.abs(box.position.y - 1) < 0.1, `expected resting height near 1, got ${box.position.y}`);
   assert.ok(Math.abs(box.linearVelocity.y) < 0.2, `expected resting velocity near 0, got ${box.linearVelocity.y}`);
+  assert.ok(Math.abs(box.angularVelocity.x) < 0.05, `expected resting angular x velocity near 0, got ${box.angularVelocity.x}`);
 });
 
 test('PhysicsWorld normal solver supports a simple two-box stack', () => {
@@ -327,6 +426,40 @@ test('PhysicsWorld normal solver supports a simple two-box stack', () => {
   assert.ok(topBox.position.y > bottomBox.position.y + 1.7, 'top box should remain above bottom box');
   assert.ok(collisionState.summary.manifoldCount >= 2);
   assert.ok(collisionState.summary.contactCount >= 2);
+});
+
+test('PhysicsWorld off-center box impact generates angular velocity', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 3, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'impact-box',
+    position: { x: 0, y: 1.25, z: 0 },
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 8, y: 0, z: 0 }
+  });
+
+  let observedSpin = false;
+  for (let stepIndex = 0; stepIndex < 80; stepIndex += 1) {
+    world.step(1 / 120);
+    const body = world.getBody('impact-box');
+    if (Math.abs(body.angularVelocity.z) > 0.2) {
+      observedSpin = true;
+      break;
+    }
+  }
+
+  const body = world.getBody('impact-box');
+  assert.equal(observedSpin, true);
+  assert.ok(Math.abs(body.angularVelocity.z) > 0.2, `expected off-center impact spin, got ${body.angularVelocity.z}`);
 });
 
 test('PhysicsWorld point and AABB queries return overlapping bodies and colliders', () => {
