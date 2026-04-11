@@ -2,7 +2,7 @@ import { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfE
 import { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } from '../collision/broadphase.js';
 import { cloneContactPair, runNarrowphase } from '../collision/narrowphase.js';
 import { capsuleCastShape, castConvexShapesWithToi, cloneRaycastResult, cloneShapeCastResult, computeSweptShapeAabb, createRaycastResult, createShapeCastResult, raycastShape, sphereCastShape } from '../collision/raycast.js';
-import { composePoses, createTangentBasis } from '../collision/support.js';
+import { composePoses, createTangentBasis, transformPointByPose } from '../collision/support.js';
 import { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } from '../debug/debug-primitives.js';
 import { cloneManifold, ManifoldCache } from '../manifold/manifold-cache.js';
 import { cloneQuat, createIdentityQuat, integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } from '../math/quat.js';
@@ -345,6 +345,23 @@ function combineMaterialProperties(materialA, materialB) {
     restitution: Math.max(0, restitutionA, restitutionB),
     restitutionThreshold: 1
   };
+}
+
+function buildConvexHullDebugLines(shape, pose, color, source, category) {
+  const vertices = Array.isArray(shape?.geometry?.vertices) ? shape.geometry.vertices : [];
+  const debugEdges = Array.isArray(shape?.geometry?.debugEdges) ? shape.geometry.debugEdges : [];
+  if (vertices.length === 0 || debugEdges.length === 0) {
+    return [];
+  }
+
+  return debugEdges.map((edge, index) => createDebugLine({
+    id: `${source.colliderId}:wire-edge:${index}`,
+    category,
+    start: transformPointByPose(pose, vertices[edge.startIndex]),
+    end: transformPointByPose(pose, vertices[edge.endIndex]),
+    color,
+    source
+  }));
 }
 
 function safeInverse(value) {
@@ -2348,23 +2365,30 @@ export class PhysicsWorld {
         shapeId: shape.id,
         materialId: collider.materialId
       };
-      const wireHalfExtents = shape.type === 'box'
-        ? shape.geometry.halfExtents
-        : proxy.aabb.halfExtents;
+      const wireColor = body
+        ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
+        : DEFAULT_DEBUG_COLORS.staticColliderWireframe;
+      const wireCategory = body ? 'rigid-body' : 'static-collider';
 
-      primitives.push(
-        createDebugWireBox({
-          id: `${proxy.colliderId}:wire-box`,
-          category: body ? 'rigid-body' : 'static-collider',
-          center: pose.position,
-          halfExtents: wireHalfExtents,
-          rotation: pose.rotation,
-          color: body
-            ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
-            : DEFAULT_DEBUG_COLORS.staticColliderWireframe,
-          source
-        })
-      );
+      if (shape.type === 'convex-hull') {
+        primitives.push(...buildConvexHullDebugLines(shape, pose, wireColor, source, wireCategory));
+      } else {
+        const wireHalfExtents = shape.type === 'box'
+          ? shape.geometry.halfExtents
+          : proxy.aabb.halfExtents;
+
+        primitives.push(
+          createDebugWireBox({
+            id: `${proxy.colliderId}:wire-box`,
+            category: wireCategory,
+            center: pose.position,
+            halfExtents: wireHalfExtents,
+            rotation: pose.rotation,
+            color: wireColor,
+            source
+          })
+        );
+      }
 
       primitives.push(
         createDebugPoint({

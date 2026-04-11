@@ -126,6 +126,28 @@ test('PhysicsWorld debug frames expose the shared primitive schema', () => {
   assert.equal(frame.primitives[0].source.materialId, 'material-default');
 });
 
+test('PhysicsWorld draws convex hull debug geometry as per-face line segments', () => {
+  const world = new PhysicsWorld();
+  world.createConvexHullBody({
+    id: 'debug-hull',
+    position: { x: 0, y: 0, z: 0 },
+    vertices: [
+      { x: -1, y: -1, z: -1 },
+      { x: 1, y: -1, z: -1 },
+      { x: 1, y: -1, z: 1 },
+      { x: -1, y: -1, z: 1 },
+      { x: 0, y: 1, z: 0 }
+    ]
+  });
+
+  const frame = world.buildDebugFrame();
+
+  assert.ok((frame.stats.byType[DEBUG_PRIMITIVE_TYPES.LINE] ?? 0) >= 8);
+  assert.equal(frame.stats.byType[DEBUG_PRIMITIVE_TYPES.WIRE_BOX], 1);
+  assert.ok(frame.primitives.some((primitive) => primitive.id === 'debug-hull:collider:wire-edge:0'));
+  assert.ok(frame.primitives.every((primitive) => primitive.id !== 'debug-hull:collider:wire-box'));
+});
+
 test('PhysicsWorld debug camera preserves independent target state', () => {
   const world = new PhysicsWorld();
   world.setDebugCameraPosition({ x: 120, y: 60, z: 320 });
