@@ -19,7 +19,19 @@ const REQUIRED_OPCODES = [
   'setCameraPosition',
   'createBoxRigidBody',
   'createStaticBoxCollider',
+  'createDistanceJoint',
+  'createPointToPointJoint',
+  'createHingeJoint',
+  'createFixedJoint',
+  'configureDistanceJoint',
+  'configureHingeJoint',
+  'configureFixedJoint',
+  'configureHingeMotor',
+  'configureHingeServo',
   'stepWorld',
+  'sphereCast',
+  'capsuleCast',
+  'raycast',
   'renderDebugFrame',
   'showDebugOverlay',
   'hideDebugOverlay',
@@ -27,10 +39,14 @@ const REQUIRED_OPCODES = [
   'rigidBodySummary',
   'colliderSummary',
   'materialSummary',
+  'jointSummary',
   'queryPointBodies',
   'queryPointColliders',
   'queryAabbBodies',
   'queryAabbColliders',
+  'raycastSummary',
+  'shapeCastSummary',
+  'ccdSummary',
   'debugFrameSummary',
   'debugOverlaySummary',
   'hostSummary',
@@ -151,16 +167,35 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.setCameraPosition({ X: 10, Y: 20, Z: 300 });
   extension.createStaticBoxCollider({ ID: 'floor', X: 0, Y: -10, Z: 0, SIZE: 100, MATERIAL: 'ice' });
   extension.createBoxRigidBody({ ID: 'probe', X: 5, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
+  extension.createBoxRigidBody({ ID: 'probe-2', X: 40, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
+  extension.createDistanceJoint({ ID: 'joint-1', BODY_A: 'probe', BODY_B: 'probe-2', LENGTH: 35 });
+  extension.createPointToPointJoint({ ID: 'joint-2', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7 });
+  extension.createHingeJoint({ ID: 'joint-3', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7, AX: 0, AY: 1, AZ: 0 });
+  extension.createFixedJoint({ ID: 'joint-4', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7 });
+  extension.configureDistanceJoint({ ID: 'joint-1', MIN: 20, MAX: 45, SPRING: 2, DAMPING: 0.8 });
+  extension.configureHingeJoint({ ID: 'joint-3', LOWER: -30, UPPER: 30, DAMPING: 2 });
+  extension.configureFixedJoint({ ID: 'joint-4', BREAK_FORCE: 2500, BREAK_TORQUE: 1800 });
+  extension.configureHingeMotor({ ID: 'joint-3', SPEED: 180, MAX_TORQUE: 25 });
+  extension.configureHingeServo({ ID: 'joint-3', TARGET: 30, MAX_SPEED: 240, MAX_TORQUE: 25 });
+  extension.sphereCast({ X: 0, Y: 120, Z: 0, RADIUS: 10, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
+  extension.capsuleCast({ X: 0, Y: 120, Z: 0, RADIUS: 8, HALF_HEIGHT: 20, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
+  extension.raycast({ X: 0, Y: 120, Z: 0, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
   extension.showDebugOverlay();
   assert.match(extension.queryPointBodies({ X: 5, Y: 6, Z: 7 }), /1 bodies/);
-  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /2 colliders/);
+  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /3 colliders/);
   extension.stepWorld({ SECONDS: 1 / 60 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
 
-  assert.match(extension.worldSummary(), /1 bodies/);
+  assert.match(extension.worldSummary(), /2 bodies/);
+  assert.match(extension.jointSummary({ ID: 'joint-1' }), /distance-joint/);
+  assert.match(extension.jointSummary({ ID: 'joint-3' }), /motor mode:servo/);
+  assert.match(extension.jointSummary({ ID: 'joint-4' }), /break force:/);
   assert.match(extension.colliderSummary({ ID: 'floor:collider' }), /body:static/);
   assert.match(extension.materialSummary({ ID: 'ice' }), /friction:0.05/);
+  assert.match(extension.raycastSummary(), /Ray hit/);
+  assert.match(extension.shapeCastSummary(), /cast hit/);
+  assert.match(extension.ccdSummary(), /(No CCD events|CCD events)/);
   assert.match(extension.debugFrameSummary(), /TurboWarp frame 1/);
   assert.match(extension.debugOverlaySummary(), /overlay/);
   assert.match(extension.hostSummary(), /TurboWarp/);
@@ -207,12 +242,30 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.resetWorld();
   extension.createStaticBoxCollider({ ID: 'remote-floor', X: 0, Y: -5, Z: 0, SIZE: 10, MATERIAL: 'material-default' });
   extension.createBoxRigidBody({ ID: 'remote-probe', X: 0, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
+  extension.createBoxRigidBody({ ID: 'remote-probe-2', X: 20, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
+  extension.createDistanceJoint({ ID: 'remote-joint', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', LENGTH: 20 });
+  extension.createPointToPointJoint({ ID: 'remote-ball', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0 });
+  extension.createHingeJoint({ ID: 'remote-hinge', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0, AX: 0, AY: 1, AZ: 0 });
+  extension.createFixedJoint({ ID: 'remote-fixed', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0 });
+  extension.configureDistanceJoint({ ID: 'remote-joint', MIN: 15, MAX: 25, SPRING: 1.5, DAMPING: 0.6 });
+  extension.configureHingeJoint({ ID: 'remote-hinge', LOWER: -20, UPPER: 20, DAMPING: 1.5 });
+  extension.configureFixedJoint({ ID: 'remote-fixed', BREAK_FORCE: 1200, BREAK_TORQUE: 900 });
+  extension.configureHingeMotor({ ID: 'remote-hinge', SPEED: 90, MAX_TORQUE: 10 });
+  extension.configureHingeServo({ ID: 'remote-hinge', TARGET: 15, MAX_SPEED: 120, MAX_TORQUE: 10 });
+  extension.sphereCast({ X: 0, Y: 40, Z: 0, RADIUS: 5, DX: 0, DY: -1, DZ: 0, LENGTH: 100 });
+  extension.capsuleCast({ X: 0, Y: 40, Z: 0, RADIUS: 4, HALF_HEIGHT: 8, DX: 0, DY: -1, DZ: 0, LENGTH: 100 });
+  extension.raycast({ X: 0, Y: 40, Z: 0, DX: 0, DY: -1, DZ: 0, LENGTH: 100 });
   extension.showDebugOverlay();
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
 
-  assert.match(extension.worldSummary(), /1 bodies/);
+  assert.match(extension.worldSummary(), /2 bodies/);
+  assert.match(extension.jointSummary({ ID: 'remote-joint' }), /distance-joint/);
+  assert.match(extension.jointSummary({ ID: 'remote-hinge' }), /motor mode:servo/);
+  assert.match(extension.jointSummary({ ID: 'remote-fixed' }), /break force:/);
   assert.match(extension.queryPointColliders({ X: 0, Y: 0, Z: 0 }), /2 colliders/);
+  assert.match(extension.raycastSummary(), /Ray hit/);
+  assert.match(extension.shapeCastSummary(), /cast hit/);
   assert.match(extension.debugFrameSummary(), /Gandi Remote frame 1/);
   assert.match(extension.debugOverlaySummary(), /overlay/);
   assert.match(extension.hostSummary(), /Gandi Remote/);
@@ -237,15 +290,33 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.setCameraPosition({ X: -12, Y: 0, Z: 512 });
   extension.createStaticBoxCollider({ ID: 'gandi-floor', X: 1, Y: -10, Z: 3, SIZE: 64, MATERIAL: 'rubber' });
   extension.createBoxRigidBody({ ID: 'gandi-probe', X: 1, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
-  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 40, HY: 40, HZ: 40 }), /2 colliders/);
+  extension.createBoxRigidBody({ ID: 'gandi-link', X: 40, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
+  extension.createDistanceJoint({ ID: 'gandi-joint', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', LENGTH: 40 });
+  extension.createPointToPointJoint({ ID: 'gandi-ball', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3 });
+  extension.createHingeJoint({ ID: 'gandi-hinge', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3, AX: 0, AY: 1, AZ: 0 });
+  extension.createFixedJoint({ ID: 'gandi-fixed', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3 });
+  extension.configureDistanceJoint({ ID: 'gandi-joint', MIN: 30, MAX: 50, SPRING: 2.5, DAMPING: 0.75 });
+  extension.configureHingeJoint({ ID: 'gandi-hinge', LOWER: -35, UPPER: 35, DAMPING: 2.5 });
+  extension.configureFixedJoint({ ID: 'gandi-fixed', BREAK_FORCE: 2000, BREAK_TORQUE: 1500 });
+  extension.configureHingeMotor({ ID: 'gandi-hinge', SPEED: 120, MAX_TORQUE: 12 });
+  extension.configureHingeServo({ ID: 'gandi-hinge', TARGET: 20, MAX_SPEED: 180, MAX_TORQUE: 12 });
+  extension.sphereCast({ X: 1, Y: 80, Z: 3, RADIUS: 10, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
+  extension.capsuleCast({ X: 1, Y: 80, Z: 3, RADIUS: 8, HALF_HEIGHT: 16, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
+  extension.raycast({ X: 1, Y: 80, Z: 3, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
+  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 60, HY: 60, HZ: 60 }), /3 colliders/);
   extension.showDebugOverlay();
   extension.stepWorld({ SECONDS: 1 / 30 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
 
-  assert.match(extension.worldSummary(), /1 bodies/);
+  assert.match(extension.worldSummary(), /2 bodies/);
   assert.match(extension.rigidBodySummary({ ID: 'gandi-probe' }), /gandi-probe/);
   assert.match(extension.materialSummary({ ID: 'rubber' }), /restitution:0.8/);
+  assert.match(extension.jointSummary({ ID: 'gandi-joint' }), /distance-joint/);
+  assert.match(extension.jointSummary({ ID: 'gandi-hinge' }), /motor mode:servo/);
+  assert.match(extension.jointSummary({ ID: 'gandi-fixed' }), /break force:/);
+  assert.match(extension.raycastSummary(), /Ray hit/);
+  assert.match(extension.shapeCastSummary(), /cast hit/);
   assert.match(extension.debugFrameSummary(), /Gandi Approved frame 1/);
   assert.match(extension.debugOverlaySummary(), /overlay/);
   assert.match(extension.hostSummary(), /Gandi Approved/);

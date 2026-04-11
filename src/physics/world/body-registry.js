@@ -56,7 +56,9 @@ export class BodyRegistry extends BaseRegistry {
       inverseMass: body.inverseMass,
       inertia: cloneVec3(body.inertia),
       inverseInertia: cloneVec3(body.inverseInertia),
+      canSleep: body.canSleep,
       sleeping: body.sleeping,
+      sleepTimer: body.sleepTimer,
       enabled: body.enabled,
       userData: cloneNullableValue(body.userData)
     };
@@ -83,7 +85,9 @@ export class BodyRegistry extends BaseRegistry {
       inverseMass: mass > 0 ? 1 / mass : 0,
       inertia: cloneVec3(options.inertia ?? createVec3()),
       inverseInertia: cloneVec3(options.inverseInertia ?? createVec3()),
+      canSleep: options.canSleep !== false,
       sleeping: Boolean(options.sleeping),
+      sleepTimer: Math.max(0, toFiniteNumber(options.sleepTimer, 0)),
       enabled: options.enabled !== false,
       userData: cloneNullableValue(options.userData)
     });

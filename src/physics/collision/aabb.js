@@ -60,6 +60,41 @@ export function cloneAabb(aabb) {
   );
 }
 
+export function expandAabb(aabb, halfExtents) {
+  if (!aabb) {
+    return null;
+  }
+
+  const expansion = absoluteHalfExtents(halfExtents);
+  return createAabbFromMinMax(
+    createVec3(
+      aabb.min.x - expansion.x,
+      aabb.min.y - expansion.y,
+      aabb.min.z - expansion.z
+    ),
+    createVec3(
+      aabb.max.x + expansion.x,
+      aabb.max.y + expansion.y,
+      aabb.max.z + expansion.z
+    )
+  );
+}
+
+export function combineAabbs(left, right) {
+  if (!left) {
+    return right ? cloneAabb(right) : null;
+  }
+
+  if (!right) {
+    return cloneAabb(left);
+  }
+
+  return createAabbFromMinMax(
+    minVec3(left.min, right.min),
+    maxVec3(left.max, right.max)
+  );
+}
+
 export function testPointInAabb(point, aabb) {
   if (!aabb) {
     return false;
@@ -89,6 +124,81 @@ export function testAabbOverlap(left, right) {
     left.max.z < right.min.z ||
     left.min.z > right.max.z
   );
+}
+
+export function intersectRayAabb(origin, direction, maxDistance, aabb) {
+  if (!aabb) {
+    return null;
+  }
+
+  const resolvedOrigin = cloneVec3(origin);
+  const resolvedDirection = cloneVec3(direction);
+  let entryDistance = 0;
+  let exitDistance = Number.isFinite(maxDistance) ? maxDistance : Number.POSITIVE_INFINITY;
+  let hitAxis = 'x';
+  let hitNormal = createVec3(-1, 0, 0);
+
+  for (const axis of ['x', 'y', 'z']) {
+    const originValue = resolvedOrigin[axis];
+    const directionValue = resolvedDirection[axis];
+    const minValue = aabb.min[axis];
+    const maxValue = aabb.max[axis];
+
+    if (Math.abs(directionValue) <= 1e-12) {
+      if (originValue < minValue || originValue > maxValue) {
+        return null;
+      }
+
+      continue;
+    }
+
+    const inverseDirection = 1 / directionValue;
+    let nearDistance = (minValue - originValue) * inverseDirection;
+    let farDistance = (maxValue - originValue) * inverseDirection;
+    let nearNormal = axis === 'x'
+      ? createVec3(-1, 0, 0)
+      : axis === 'y'
+        ? createVec3(0, -1, 0)
+        : createVec3(0, 0, -1);
+
+    if (nearDistance > farDistance) {
+      const temp = nearDistance;
+      nearDistance = farDistance;
+      farDistance = temp;
+      nearNormal = axis === 'x'
+        ? createVec3(1, 0, 0)
+        : axis === 'y'
+          ? createVec3(0, 1, 0)
+          : createVec3(0, 0, 1);
+    }
+
+    if (nearDistance > entryDistance) {
+      entryDistance = nearDistance;
+      hitAxis = axis;
+      hitNormal = nearNormal;
+    }
+
+    exitDistance = Math.min(exitDistance, farDistance);
+    if (entryDistance > exitDistance) {
+      return null;
+    }
+  }
+
+  if (exitDistance < 0 || entryDistance > maxDistance) {
+    return null;
+  }
+
+  const distance = entryDistance >= 0 ? entryDistance : 0;
+  return {
+    distance,
+    point: addVec3(resolvedOrigin, createVec3(
+      resolvedDirection.x * distance,
+      resolvedDirection.y * distance,
+      resolvedDirection.z * distance
+    )),
+    normal: hitNormal,
+    axis: hitAxis
+  };
 }
 
 export function getAabbOverlap(left, right) {

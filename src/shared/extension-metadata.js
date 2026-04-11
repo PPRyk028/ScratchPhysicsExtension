@@ -91,11 +91,163 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createDistanceJoint',
+        blockType: 'command',
+        text: 'create distance joint [ID] body a:[BODY_A] body b:[BODY_B] length:[LENGTH]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-1' },
+          BODY_A: { type: 'string', defaultValue: 'body-1' },
+          BODY_B: { type: 'string', defaultValue: 'body-2' },
+          LENGTH: { type: 'number', defaultValue: 100 }
+        }
+      },
+      {
+        opcode: 'createPointToPointJoint',
+        blockType: 'command',
+        text: 'create point-to-point joint [ID] body a:[BODY_A] body b:[BODY_B] anchor x:[X] y:[Y] z:[Z]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-2' },
+          BODY_A: { type: 'string', defaultValue: 'body-1' },
+          BODY_B: { type: 'string', defaultValue: 'body-2' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'createHingeJoint',
+        blockType: 'command',
+        text: 'create hinge joint [ID] body a:[BODY_A] body b:[BODY_B] anchor x:[X] y:[Y] z:[Z] axis x:[AX] y:[AY] z:[AZ]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-3' },
+          BODY_A: { type: 'string', defaultValue: 'body-1' },
+          BODY_B: { type: 'string', defaultValue: 'body-2' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          AX: { type: 'number', defaultValue: 0 },
+          AY: { type: 'number', defaultValue: 1 },
+          AZ: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'createFixedJoint',
+        blockType: 'command',
+        text: 'create fixed joint [ID] body a:[BODY_A] body b:[BODY_B] anchor x:[X] y:[Y] z:[Z]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-4' },
+          BODY_A: { type: 'string', defaultValue: 'body-1' },
+          BODY_B: { type: 'string', defaultValue: 'body-2' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'configureDistanceJoint',
+        blockType: 'command',
+        text: 'configure distance joint [ID] min:[MIN] max:[MAX] spring:[SPRING] damping:[DAMPING]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-1' },
+          MIN: { type: 'number', defaultValue: 50 },
+          MAX: { type: 'number', defaultValue: 150 },
+          SPRING: { type: 'number', defaultValue: 0 },
+          DAMPING: { type: 'number', defaultValue: 0.5 }
+        }
+      },
+      {
+        opcode: 'configureHingeJoint',
+        blockType: 'command',
+        text: 'configure hinge joint [ID] lower:[LOWER] upper:[UPPER] damping:[DAMPING]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-3' },
+          LOWER: { type: 'number', defaultValue: -45 },
+          UPPER: { type: 'number', defaultValue: 45 },
+          DAMPING: { type: 'number', defaultValue: 4 }
+        }
+      },
+      {
+        opcode: 'configureFixedJoint',
+        blockType: 'command',
+        text: 'configure fixed joint [ID] break force:[BREAK_FORCE] break torque:[BREAK_TORQUE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-4' },
+          BREAK_FORCE: { type: 'number', defaultValue: 0 },
+          BREAK_TORQUE: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'configureHingeMotor',
+        blockType: 'command',
+        text: 'configure hinge motor [ID] speed:[SPEED] max torque:[MAX_TORQUE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-3' },
+          SPEED: { type: 'number', defaultValue: 180 },
+          MAX_TORQUE: { type: 'number', defaultValue: 20 }
+        }
+      },
+      {
+        opcode: 'configureHingeServo',
+        blockType: 'command',
+        text: 'configure hinge servo [ID] target angle:[TARGET] max speed:[MAX_SPEED] max torque:[MAX_TORQUE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-3' },
+          TARGET: { type: 'number', defaultValue: 45 },
+          MAX_SPEED: { type: 'number', defaultValue: 180 },
+          MAX_TORQUE: { type: 'number', defaultValue: 20 }
+        }
+      },
+      {
         opcode: 'stepWorld',
         blockType: 'command',
         text: 'step physics world by [SECONDS] seconds',
         arguments: {
           SECONDS: { type: 'number', defaultValue: 0.016666666666666666 }
+        }
+      },
+      {
+        opcode: 'sphereCast',
+        blockType: 'command',
+        text: 'sphere cast from x:[X] y:[Y] z:[Z] radius:[RADIUS] dir x:[DX] y:[DY] z:[DZ] length:[LENGTH]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 120 },
+          Z: { type: 'number', defaultValue: 0 },
+          RADIUS: { type: 'number', defaultValue: 25 },
+          DX: { type: 'number', defaultValue: 0 },
+          DY: { type: 'number', defaultValue: -1 },
+          DZ: { type: 'number', defaultValue: 0 },
+          LENGTH: { type: 'number', defaultValue: 300 }
+        }
+      },
+      {
+        opcode: 'capsuleCast',
+        blockType: 'command',
+        text: 'capsule cast from x:[X] y:[Y] z:[Z] radius:[RADIUS] half height:[HALF_HEIGHT] dir x:[DX] y:[DY] z:[DZ] length:[LENGTH]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 120 },
+          Z: { type: 'number', defaultValue: 0 },
+          RADIUS: { type: 'number', defaultValue: 20 },
+          HALF_HEIGHT: { type: 'number', defaultValue: 40 },
+          DX: { type: 'number', defaultValue: 0 },
+          DY: { type: 'number', defaultValue: -1 },
+          DZ: { type: 'number', defaultValue: 0 },
+          LENGTH: { type: 'number', defaultValue: 300 }
+        }
+      },
+      {
+        opcode: 'raycast',
+        blockType: 'command',
+        text: 'raycast from x:[X] y:[Y] z:[Z] dir x:[DX] y:[DY] z:[DZ] length:[LENGTH]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 100 },
+          Z: { type: 'number', defaultValue: 0 },
+          DX: { type: 'number', defaultValue: 0 },
+          DY: { type: 'number', defaultValue: -1 },
+          DZ: { type: 'number', defaultValue: 0 },
+          LENGTH: { type: 'number', defaultValue: 300 }
         }
       },
       {
@@ -143,6 +295,14 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'jointSummary',
+        blockType: 'reporter',
+        text: 'joint [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-1' }
+        }
+      },
+      {
         opcode: 'queryPointBodies',
         blockType: 'reporter',
         text: 'bodies at point x:[X] y:[Y] z:[Z]',
@@ -187,6 +347,21 @@ export function createExtensionInfo() {
           HY: { type: 'number', defaultValue: 50 },
           HZ: { type: 'number', defaultValue: 50 }
         }
+      },
+      {
+        opcode: 'raycastSummary',
+        blockType: 'reporter',
+        text: 'last raycast summary'
+      },
+      {
+        opcode: 'shapeCastSummary',
+        blockType: 'reporter',
+        text: 'last shape cast summary'
+      },
+      {
+        opcode: 'ccdSummary',
+        blockType: 'reporter',
+        text: 'ccd summary'
       },
       {
         opcode: 'debugFrameSummary',

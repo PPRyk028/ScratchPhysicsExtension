@@ -1,4 +1,4 @@
-import { addScaledVec3, createVec3, crossVec3 } from './vec3.js';
+import { addScaledVec3, createVec3, crossVec3, normalizeVec3 } from './vec3.js';
 
 function toFiniteNumber(value, fallback) {
   const parsed = Number(value);
@@ -16,6 +16,18 @@ export function createQuat(x = 0, y = 0, z = 0, w = 1) {
 
 export function createIdentityQuat() {
   return createQuat(0, 0, 0, 1);
+}
+
+export function createQuatFromAxisAngle(axis, angleRadians = 0) {
+  const unitAxis = normalizeVec3(axis, createVec3(0, 1, 0));
+  const halfAngle = toFiniteNumber(angleRadians, 0) * 0.5;
+  const sine = Math.sin(halfAngle);
+  return normalizeQuat(createQuat(
+    unitAxis.x * sine,
+    unitAxis.y * sine,
+    unitAxis.z * sine,
+    Math.cos(halfAngle)
+  ));
 }
 
 export function cloneQuat(quaternion) {

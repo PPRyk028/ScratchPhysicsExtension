@@ -4,8 +4,20 @@ function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
 }
 
+function formatOptionalNumber(value, fallback = 'none') {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  return Number.isFinite(Number(value)) ? `${Number(value)}` : fallback;
+}
+
+function radiansToDegrees(value) {
+  return Number(value) * (180 / Math.PI);
+}
+
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -91,10 +103,197 @@ export class Engine3D {
     return collider;
   }
 
+  createDistanceJoint(id, bodyAId, bodyBId, distance = 0) {
+    const joint = this.world.createDistanceJoint({
+      id,
+      bodyAId,
+      bodyBId,
+      distance: distance > 0 ? distance : undefined
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Distance joint ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Distance joint ${joint.id} registered between ${joint.bodyAId} and ${joint.bodyBId}`);
+    return joint;
+  }
+
+  createPointToPointJoint(id, bodyAId, bodyBId, x, y, z) {
+    const joint = this.world.createPointToPointJoint({
+      id,
+      bodyAId,
+      bodyBId,
+      worldAnchor: createVec3(x, y, z)
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Point-to-point joint ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Point-to-point joint ${joint.id} registered between ${joint.bodyAId} and ${joint.bodyBId}`);
+    return joint;
+  }
+
+  createHingeJoint(id, bodyAId, bodyBId, x, y, z, axisX, axisY, axisZ) {
+    const joint = this.world.createHingeJoint({
+      id,
+      bodyAId,
+      bodyBId,
+      worldAnchor: createVec3(x, y, z),
+      worldAxis: createVec3(axisX, axisY, axisZ)
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Hinge joint ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Hinge joint ${joint.id} registered between ${joint.bodyAId} and ${joint.bodyBId}`);
+    return joint;
+  }
+
+  createFixedJoint(id, bodyAId, bodyBId, x, y, z) {
+    const joint = this.world.createFixedJoint({
+      id,
+      bodyAId,
+      bodyBId,
+      worldAnchor: createVec3(x, y, z)
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Fixed joint ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Fixed joint ${joint.id} registered between ${joint.bodyAId} and ${joint.bodyBId}`);
+    return joint;
+  }
+
+  configureDistanceJoint(id, minLength, maxLength, spring, damping) {
+    const joint = this.world.configureDistanceJoint(id, {
+      minDistance: minLength,
+      maxDistance: maxLength,
+      springFrequency: spring,
+      dampingRatio: damping
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Distance joint ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Distance joint ${joint.id} configured`);
+    return joint;
+  }
+
+  configureHingeJoint(id, lowerAngleDegrees, upperAngleDegrees, damping) {
+    const joint = this.world.configureHingeJoint(id, {
+      lowerAngle: lowerAngleDegrees * (Math.PI / 180),
+      upperAngle: upperAngleDegrees * (Math.PI / 180),
+      angularDamping: damping
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Hinge joint ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Hinge joint ${joint.id} configured`);
+    return joint;
+  }
+
+  configureFixedJoint(id, breakForce, breakTorque) {
+    const joint = this.world.configureFixedJoint(id, {
+      breakForce,
+      breakTorque
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Fixed joint ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Fixed joint ${joint.id} configured`);
+    return joint;
+  }
+
+  configureHingeMotor(id, speedDegreesPerSecond, maxTorque) {
+    const joint = this.world.configureHingeMotor(id, {
+      motorMode: 'speed',
+      motorEnabled: maxTorque > 0,
+      motorSpeed: speedDegreesPerSecond * (Math.PI / 180),
+      maxMotorTorque: maxTorque
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Hinge motor ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Hinge motor ${joint.id} configured`);
+    return joint;
+  }
+
+  configureHingeServo(id, targetAngleDegrees, maxSpeedDegreesPerSecond, maxTorque) {
+    const joint = this.world.configureHingeServo(id, {
+      motorEnabled: maxTorque > 0,
+      motorTargetAngle: targetAngleDegrees * (Math.PI / 180),
+      maxMotorSpeed: maxSpeedDegreesPerSecond * (Math.PI / 180),
+      maxMotorTorque: maxTorque
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Hinge servo ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Hinge servo ${joint.id} configured`);
+    return joint;
+  }
+
+  raycast(x, y, z, dx, dy, dz, length) {
+    const result = this.world.raycast({
+      origin: createVec3(x, y, z),
+      direction: createVec3(dx, dy, dz),
+      maxDistance: length
+    });
+
+    this.hostBridge.log(this.getLastRaycastSummary());
+    return result;
+  }
+
   stepWorld(seconds) {
     const stats = this.world.step(seconds);
     this.hostBridge.log(`Physics world stepped ${stats.performedSubsteps} substeps`);
     return stats;
+  }
+
+  sphereCast(x, y, z, radius, dx, dy, dz, length) {
+    const result = this.world.sphereCast({
+      origin: createVec3(x, y, z),
+      radius,
+      direction: createVec3(dx, dy, dz),
+      maxDistance: length
+    });
+
+    this.hostBridge.log(this.getLastShapeCastSummary());
+    return result;
+  }
+
+  capsuleCast(x, y, z, radius, halfHeight, dx, dy, dz, length) {
+    const result = this.world.capsuleCast({
+      origin: createVec3(x, y, z),
+      radius,
+      halfHeight,
+      direction: createVec3(dx, dy, dz),
+      maxDistance: length
+    });
+
+    this.hostBridge.log(this.getLastShapeCastSummary());
+    return result;
   }
 
   renderDebugFrame() {
@@ -139,7 +338,7 @@ export class Engine3D {
       return `Rigid body ${id} not found`;
     }
 
-    return `${body.id} | motion:${body.motionType} | position ${formatVector(body.position)} | velocity ${formatVector(body.linearVelocity)} | colliders ${body.colliderIds.length}`;
+    return `${body.id} | motion:${body.motionType} | sleeping:${body.sleeping ? 'yes' : 'no'} | position ${formatVector(body.position)} | velocity ${formatVector(body.linearVelocity)} | colliders ${body.colliderIds.length}`;
   }
 
   getColliderSummary(id) {
@@ -159,6 +358,26 @@ export class Engine3D {
     }
 
     return `${material.id} | friction:${material.friction} | restitution:${material.restitution} | density:${material.density}`;
+  }
+
+  getJointSummary(id) {
+    const joint = this.world.getJoint(id);
+    if (!joint) {
+      return `Joint ${id} not found`;
+    }
+
+    const anchors = this.world.getJointWorldAnchors(id);
+    const axes = this.world.getJointWorldAxes(id);
+    const axisSummary = axes ? ` | axisA ${formatVector(axes.axisA)} | axisB ${formatVector(axes.axisB)}` : '';
+    const rangeSummary = ` | range:${formatOptionalNumber(joint.minDistance)}..${formatOptionalNumber(joint.maxDistance)} | spring:${formatOptionalNumber(joint.springFrequency, '0')} | damping:${formatOptionalNumber(joint.dampingRatio, '0')}`;
+    const hingeAngle = this.world.getJointAngle(id);
+    const hingeSummary = joint.type === 'hinge-joint'
+      ? ` | angle:${formatOptionalNumber(radiansToDegrees(hingeAngle))}deg | limits:${formatOptionalNumber(radiansToDegrees(joint.lowerAngle))}..${formatOptionalNumber(radiansToDegrees(joint.upperAngle))}deg | angular damping:${formatOptionalNumber(joint.angularDamping, '0')} | motor mode:${joint.motorMode ?? 'speed'} | motor:${formatOptionalNumber(radiansToDegrees(joint.motorSpeed), '0')}deg/s @ ${formatOptionalNumber(joint.maxMotorTorque, '0')}${joint.motorMode === 'servo' ? ` | target:${formatOptionalNumber(radiansToDegrees(joint.motorTargetAngle), '0')}deg` : ''}`
+      : '';
+    const fixedSummary = joint.type === 'fixed-joint'
+      ? ` | break force:${formatOptionalNumber(joint.breakForce)} | break torque:${formatOptionalNumber(joint.breakTorque)}`
+      : '';
+    return `${joint.id} | type:${joint.type} | enabled:${joint.enabled !== false ? 'yes' : 'no'} | broken:${joint.broken === true ? 'yes' : 'no'} | force:${formatOptionalNumber(joint.lastAppliedForce, '0')} | torque:${formatOptionalNumber(joint.lastAppliedTorque, '0')} | bodies:${joint.bodyAId}->${joint.bodyBId} | distance:${joint.distance} | anchorA ${formatVector(anchors.anchorA)} | anchorB ${formatVector(anchors.anchorB)}${axisSummary}${rangeSummary}${hingeSummary}${fixedSummary}`;
   }
 
   queryPointBodies(x, y, z) {
@@ -187,6 +406,42 @@ export class Engine3D {
     });
 
     return `${result.count.colliders} colliders in AABB ${x}, ${y}, ${z} | ${joinIds(result.colliders)}`;
+  }
+
+  getLastRaycastSummary() {
+    const raycast = this.world.getLastRaycast();
+    if (!raycast) {
+      return 'No raycast performed yet';
+    }
+
+    if (!raycast.hit) {
+      return `Ray miss | origin ${formatVector(raycast.origin)} | direction ${formatVector(raycast.direction)} | length ${raycast.maxDistance}`;
+    }
+
+    return `Ray hit ${raycast.colliderId} | body:${raycast.bodyId || 'static'} | distance ${raycast.distance} | point ${formatVector(raycast.point)} | normal ${formatVector(raycast.normal)}`;
+  }
+
+  getLastShapeCastSummary() {
+    const shapeCast = this.world.getLastShapeCast();
+    if (!shapeCast) {
+      return 'No shape cast performed yet';
+    }
+
+    if (!shapeCast.hit) {
+      return `${shapeCast.castType} cast miss | origin ${formatVector(shapeCast.origin)} | direction ${formatVector(shapeCast.direction)} | length ${shapeCast.maxDistance}`;
+    }
+
+    return `${shapeCast.castType} cast hit ${shapeCast.colliderId} | body:${shapeCast.bodyId || 'static'} | distance ${shapeCast.distance} | point ${formatVector(shapeCast.point)} | normal ${formatVector(shapeCast.normal)}`;
+  }
+
+  getCcdSummary() {
+    const events = this.world.getLastCcdEvents();
+    if (!events.length) {
+      return 'No CCD events in the last step';
+    }
+
+    const labels = events.map((event) => `${event.bodyId}->${event.targetColliderId}@${event.distance}`);
+    return `${events.length} CCD events | ${labels.join(' | ')}`;
   }
 
   getLastFrameSummary() {

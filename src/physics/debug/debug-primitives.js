@@ -58,7 +58,30 @@ export const DEFAULT_DEBUG_COLORS = Object.freeze({
   staticColliderWireframe: Object.freeze({ r: 107, g: 222, b: 157, a: 1 }),
   broadphaseAabb: Object.freeze({ r: 250, g: 128, b: 114, a: 0.9 }),
   contactPoint: Object.freeze({ r: 255, g: 72, b: 72, a: 1 }),
-  contactNormal: Object.freeze({ r: 255, g: 150, b: 54, a: 1 })
+  contactNormal: Object.freeze({ r: 255, g: 150, b: 54, a: 1 }),
+  raycastHitLine: Object.freeze({ r: 76, g: 229, b: 255, a: 1 }),
+  raycastMissLine: Object.freeze({ r: 113, g: 132, b: 164, a: 0.95 }),
+  raycastHitPoint: Object.freeze({ r: 255, g: 64, b: 197, a: 1 }),
+  raycastHitNormal: Object.freeze({ r: 192, g: 104, b: 255, a: 1 }),
+  shapeCastHitLine: Object.freeze({ r: 78, g: 245, b: 194, a: 1 }),
+  shapeCastMissLine: Object.freeze({ r: 102, g: 150, b: 130, a: 0.95 }),
+  shapeCastHitPoint: Object.freeze({ r: 255, g: 214, b: 72, a: 1 }),
+  shapeCastHitNormal: Object.freeze({ r: 255, g: 133, b: 64, a: 1 }),
+  ccdPath: Object.freeze({ r: 255, g: 94, b: 94, a: 1 }),
+  ccdHitPoint: Object.freeze({ r: 255, g: 255, b: 255, a: 1 }),
+  ccdHitNormal: Object.freeze({ r: 255, g: 186, b: 59, a: 1 }),
+  distanceJoint: Object.freeze({ r: 185, g: 136, b: 255, a: 1 }),
+  sleepingDistanceJoint: Object.freeze({ r: 142, g: 128, b: 160, a: 0.95 }),
+  pointToPointJoint: Object.freeze({ r: 255, g: 162, b: 73, a: 1 }),
+  sleepingPointToPointJoint: Object.freeze({ r: 164, g: 137, b: 112, a: 0.95 }),
+  hingeJoint: Object.freeze({ r: 255, g: 215, b: 94, a: 1 }),
+  sleepingHingeJoint: Object.freeze({ r: 168, g: 154, b: 112, a: 0.95 }),
+  fixedJoint: Object.freeze({ r: 145, g: 232, b: 129, a: 1 }),
+  sleepingFixedJoint: Object.freeze({ r: 118, g: 158, b: 111, a: 0.95 }),
+  brokenJoint: Object.freeze({ r: 255, g: 92, b: 92, a: 1 }),
+  hingeAxisA: Object.freeze({ r: 102, g: 208, b: 255, a: 1 }),
+  hingeAxisB: Object.freeze({ r: 255, g: 118, b: 118, a: 1 }),
+  hingeMotor: Object.freeze({ r: 94, g: 255, b: 156, a: 1 })
 });
 
 export function countDebugPrimitivesByType(primitives) {

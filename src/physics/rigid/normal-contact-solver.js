@@ -24,7 +24,7 @@ function getDynamicBody(bodyRegistry, bodyId) {
   }
 
   const body = bodyRegistry.getMutable(bodyId);
-  if (!body || !body.enabled || body.motionType !== 'dynamic') {
+  if (!body || !body.enabled || body.motionType !== 'dynamic' || body.sleeping) {
     return null;
   }
 

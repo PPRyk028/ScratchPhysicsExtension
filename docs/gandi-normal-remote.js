@@ -3,7 +3,7 @@
 const __modules = {
   0: function(__require, __exports) {
 const { Base3DExtension } = __require(1);
-const { createGandiRemoteHost } = __require(23);
+const { createGandiRemoteHost } = __require(27);
 const ScratchApi = globalThis.Scratch;
 
 if (!ScratchApi) {
@@ -22,8 +22,8 @@ ScratchApi.extensions.register(new GandiRemote3DExtension());
 },
   1: function(__require, __exports) {
 const { Engine3D } = __require(2);
-const { toNumber, toString } = __require(21);
-const { createExtensionInfo } = __require(22);
+const { toNumber, toString } = __require(25);
+const { createExtensionInfo } = __require(26);
 class Base3DExtension {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
@@ -100,9 +100,137 @@ class Base3DExtension {
     );
   }
 
+  createDistanceJoint(args) {
+    this.engine.createDistanceJoint(
+      toString(args.ID, 'joint'),
+      toString(args.BODY_A, 'body-a'),
+      toString(args.BODY_B, 'body-b'),
+      toNumber(args.LENGTH, 0)
+    );
+  }
+
+  createPointToPointJoint(args) {
+    this.engine.createPointToPointJoint(
+      toString(args.ID, 'joint'),
+      toString(args.BODY_A, 'body-a'),
+      toString(args.BODY_B, 'body-b'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z)
+    );
+  }
+
+  createHingeJoint(args) {
+    this.engine.createHingeJoint(
+      toString(args.ID, 'joint'),
+      toString(args.BODY_A, 'body-a'),
+      toString(args.BODY_B, 'body-b'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.AX, 0),
+      toNumber(args.AY, 1),
+      toNumber(args.AZ, 0)
+    );
+  }
+
+  createFixedJoint(args) {
+    this.engine.createFixedJoint(
+      toString(args.ID, 'joint'),
+      toString(args.BODY_A, 'body-a'),
+      toString(args.BODY_B, 'body-b'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z)
+    );
+  }
+
+  configureDistanceJoint(args) {
+    this.engine.configureDistanceJoint(
+      toString(args.ID, 'joint'),
+      toNumber(args.MIN, 0),
+      toNumber(args.MAX, 100),
+      toNumber(args.SPRING, 0),
+      toNumber(args.DAMPING, 0)
+    );
+  }
+
+  configureHingeJoint(args) {
+    this.engine.configureHingeJoint(
+      toString(args.ID, 'joint'),
+      toNumber(args.LOWER, -45),
+      toNumber(args.UPPER, 45),
+      toNumber(args.DAMPING, 0)
+    );
+  }
+
+  configureFixedJoint(args) {
+    this.engine.configureFixedJoint(
+      toString(args.ID, 'joint'),
+      toNumber(args.BREAK_FORCE, 0),
+      toNumber(args.BREAK_TORQUE, 0)
+    );
+  }
+
+  configureHingeMotor(args) {
+    this.engine.configureHingeMotor(
+      toString(args.ID, 'joint'),
+      toNumber(args.SPEED, 0),
+      toNumber(args.MAX_TORQUE, 0)
+    );
+  }
+
+  configureHingeServo(args) {
+    this.engine.configureHingeServo(
+      toString(args.ID, 'joint'),
+      toNumber(args.TARGET, 0),
+      toNumber(args.MAX_SPEED, 180),
+      toNumber(args.MAX_TORQUE, 0)
+    );
+  }
+
+  raycast(args) {
+    this.engine.raycast(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.DX, 0),
+      toNumber(args.DY, -1),
+      toNumber(args.DZ, 0),
+      toNumber(args.LENGTH, 100)
+    );
+  }
+
   stepWorld(args) {
     this.engine.stepWorld(
       toNumber(args.SECONDS, 1 / 60)
+    );
+  }
+
+  sphereCast(args) {
+    this.engine.sphereCast(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.RADIUS, 10),
+      toNumber(args.DX, 0),
+      toNumber(args.DY, -1),
+      toNumber(args.DZ, 0),
+      toNumber(args.LENGTH, 100)
+    );
+  }
+
+  capsuleCast(args) {
+    this.engine.capsuleCast(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.RADIUS, 10),
+      toNumber(args.HALF_HEIGHT, 20),
+      toNumber(args.DX, 0),
+      toNumber(args.DY, -1),
+      toNumber(args.DZ, 0),
+      toNumber(args.LENGTH, 100)
     );
   }
 
@@ -144,6 +272,12 @@ class Base3DExtension {
     );
   }
 
+  jointSummary(args) {
+    return this.engine.getJointSummary(
+      toString(args.ID, 'joint')
+    );
+  }
+
   queryPointBodies(args) {
     return this.engine.queryPointBodies(
       toNumber(args.X),
@@ -182,6 +316,18 @@ class Base3DExtension {
     );
   }
 
+  raycastSummary() {
+    return this.engine.getLastRaycastSummary();
+  }
+
+  shapeCastSummary() {
+    return this.engine.getLastShapeCastSummary();
+  }
+
+  ccdSummary() {
+    return this.engine.getCcdSummary();
+  }
+
   debugFrameSummary() {
     return this.engine.getLastFrameSummary();
   }
@@ -207,8 +353,20 @@ function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
 }
 
+function formatOptionalNumber(value, fallback = 'none') {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  return Number.isFinite(Number(value)) ? `${Number(value)}` : fallback;
+}
+
+function radiansToDegrees(value) {
+  return Number(value) * (180 / Math.PI);
+}
+
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -293,10 +451,197 @@ class Engine3D {
     return collider;
   }
 
+  createDistanceJoint(id, bodyAId, bodyBId, distance = 0) {
+    const joint = this.world.createDistanceJoint({
+      id,
+      bodyAId,
+      bodyBId,
+      distance: distance > 0 ? distance : undefined
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Distance joint ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Distance joint ${joint.id} registered between ${joint.bodyAId} and ${joint.bodyBId}`);
+    return joint;
+  }
+
+  createPointToPointJoint(id, bodyAId, bodyBId, x, y, z) {
+    const joint = this.world.createPointToPointJoint({
+      id,
+      bodyAId,
+      bodyBId,
+      worldAnchor: createVec3(x, y, z)
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Point-to-point joint ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Point-to-point joint ${joint.id} registered between ${joint.bodyAId} and ${joint.bodyBId}`);
+    return joint;
+  }
+
+  createHingeJoint(id, bodyAId, bodyBId, x, y, z, axisX, axisY, axisZ) {
+    const joint = this.world.createHingeJoint({
+      id,
+      bodyAId,
+      bodyBId,
+      worldAnchor: createVec3(x, y, z),
+      worldAxis: createVec3(axisX, axisY, axisZ)
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Hinge joint ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Hinge joint ${joint.id} registered between ${joint.bodyAId} and ${joint.bodyBId}`);
+    return joint;
+  }
+
+  createFixedJoint(id, bodyAId, bodyBId, x, y, z) {
+    const joint = this.world.createFixedJoint({
+      id,
+      bodyAId,
+      bodyBId,
+      worldAnchor: createVec3(x, y, z)
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Fixed joint ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Fixed joint ${joint.id} registered between ${joint.bodyAId} and ${joint.bodyBId}`);
+    return joint;
+  }
+
+  configureDistanceJoint(id, minLength, maxLength, spring, damping) {
+    const joint = this.world.configureDistanceJoint(id, {
+      minDistance: minLength,
+      maxDistance: maxLength,
+      springFrequency: spring,
+      dampingRatio: damping
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Distance joint ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Distance joint ${joint.id} configured`);
+    return joint;
+  }
+
+  configureHingeJoint(id, lowerAngleDegrees, upperAngleDegrees, damping) {
+    const joint = this.world.configureHingeJoint(id, {
+      lowerAngle: lowerAngleDegrees * (Math.PI / 180),
+      upperAngle: upperAngleDegrees * (Math.PI / 180),
+      angularDamping: damping
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Hinge joint ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Hinge joint ${joint.id} configured`);
+    return joint;
+  }
+
+  configureFixedJoint(id, breakForce, breakTorque) {
+    const joint = this.world.configureFixedJoint(id, {
+      breakForce,
+      breakTorque
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Fixed joint ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Fixed joint ${joint.id} configured`);
+    return joint;
+  }
+
+  configureHingeMotor(id, speedDegreesPerSecond, maxTorque) {
+    const joint = this.world.configureHingeMotor(id, {
+      motorMode: 'speed',
+      motorEnabled: maxTorque > 0,
+      motorSpeed: speedDegreesPerSecond * (Math.PI / 180),
+      maxMotorTorque: maxTorque
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Hinge motor ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Hinge motor ${joint.id} configured`);
+    return joint;
+  }
+
+  configureHingeServo(id, targetAngleDegrees, maxSpeedDegreesPerSecond, maxTorque) {
+    const joint = this.world.configureHingeServo(id, {
+      motorEnabled: maxTorque > 0,
+      motorTargetAngle: targetAngleDegrees * (Math.PI / 180),
+      maxMotorSpeed: maxSpeedDegreesPerSecond * (Math.PI / 180),
+      maxMotorTorque: maxTorque
+    });
+
+    if (!joint) {
+      this.hostBridge.log(`Hinge servo ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Hinge servo ${joint.id} configured`);
+    return joint;
+  }
+
+  raycast(x, y, z, dx, dy, dz, length) {
+    const result = this.world.raycast({
+      origin: createVec3(x, y, z),
+      direction: createVec3(dx, dy, dz),
+      maxDistance: length
+    });
+
+    this.hostBridge.log(this.getLastRaycastSummary());
+    return result;
+  }
+
   stepWorld(seconds) {
     const stats = this.world.step(seconds);
     this.hostBridge.log(`Physics world stepped ${stats.performedSubsteps} substeps`);
     return stats;
+  }
+
+  sphereCast(x, y, z, radius, dx, dy, dz, length) {
+    const result = this.world.sphereCast({
+      origin: createVec3(x, y, z),
+      radius,
+      direction: createVec3(dx, dy, dz),
+      maxDistance: length
+    });
+
+    this.hostBridge.log(this.getLastShapeCastSummary());
+    return result;
+  }
+
+  capsuleCast(x, y, z, radius, halfHeight, dx, dy, dz, length) {
+    const result = this.world.capsuleCast({
+      origin: createVec3(x, y, z),
+      radius,
+      halfHeight,
+      direction: createVec3(dx, dy, dz),
+      maxDistance: length
+    });
+
+    this.hostBridge.log(this.getLastShapeCastSummary());
+    return result;
   }
 
   renderDebugFrame() {
@@ -341,7 +686,7 @@ class Engine3D {
       return `Rigid body ${id} not found`;
     }
 
-    return `${body.id} | motion:${body.motionType} | position ${formatVector(body.position)} | velocity ${formatVector(body.linearVelocity)} | colliders ${body.colliderIds.length}`;
+    return `${body.id} | motion:${body.motionType} | sleeping:${body.sleeping ? 'yes' : 'no'} | position ${formatVector(body.position)} | velocity ${formatVector(body.linearVelocity)} | colliders ${body.colliderIds.length}`;
   }
 
   getColliderSummary(id) {
@@ -361,6 +706,26 @@ class Engine3D {
     }
 
     return `${material.id} | friction:${material.friction} | restitution:${material.restitution} | density:${material.density}`;
+  }
+
+  getJointSummary(id) {
+    const joint = this.world.getJoint(id);
+    if (!joint) {
+      return `Joint ${id} not found`;
+    }
+
+    const anchors = this.world.getJointWorldAnchors(id);
+    const axes = this.world.getJointWorldAxes(id);
+    const axisSummary = axes ? ` | axisA ${formatVector(axes.axisA)} | axisB ${formatVector(axes.axisB)}` : '';
+    const rangeSummary = ` | range:${formatOptionalNumber(joint.minDistance)}..${formatOptionalNumber(joint.maxDistance)} | spring:${formatOptionalNumber(joint.springFrequency, '0')} | damping:${formatOptionalNumber(joint.dampingRatio, '0')}`;
+    const hingeAngle = this.world.getJointAngle(id);
+    const hingeSummary = joint.type === 'hinge-joint'
+      ? ` | angle:${formatOptionalNumber(radiansToDegrees(hingeAngle))}deg | limits:${formatOptionalNumber(radiansToDegrees(joint.lowerAngle))}..${formatOptionalNumber(radiansToDegrees(joint.upperAngle))}deg | angular damping:${formatOptionalNumber(joint.angularDamping, '0')} | motor mode:${joint.motorMode ?? 'speed'} | motor:${formatOptionalNumber(radiansToDegrees(joint.motorSpeed), '0')}deg/s @ ${formatOptionalNumber(joint.maxMotorTorque, '0')}${joint.motorMode === 'servo' ? ` | target:${formatOptionalNumber(radiansToDegrees(joint.motorTargetAngle), '0')}deg` : ''}`
+      : '';
+    const fixedSummary = joint.type === 'fixed-joint'
+      ? ` | break force:${formatOptionalNumber(joint.breakForce)} | break torque:${formatOptionalNumber(joint.breakTorque)}`
+      : '';
+    return `${joint.id} | type:${joint.type} | enabled:${joint.enabled !== false ? 'yes' : 'no'} | broken:${joint.broken === true ? 'yes' : 'no'} | force:${formatOptionalNumber(joint.lastAppliedForce, '0')} | torque:${formatOptionalNumber(joint.lastAppliedTorque, '0')} | bodies:${joint.bodyAId}->${joint.bodyBId} | distance:${joint.distance} | anchorA ${formatVector(anchors.anchorA)} | anchorB ${formatVector(anchors.anchorB)}${axisSummary}${rangeSummary}${hingeSummary}${fixedSummary}`;
   }
 
   queryPointBodies(x, y, z) {
@@ -391,6 +756,42 @@ class Engine3D {
     return `${result.count.colliders} colliders in AABB ${x}, ${y}, ${z} | ${joinIds(result.colliders)}`;
   }
 
+  getLastRaycastSummary() {
+    const raycast = this.world.getLastRaycast();
+    if (!raycast) {
+      return 'No raycast performed yet';
+    }
+
+    if (!raycast.hit) {
+      return `Ray miss | origin ${formatVector(raycast.origin)} | direction ${formatVector(raycast.direction)} | length ${raycast.maxDistance}`;
+    }
+
+    return `Ray hit ${raycast.colliderId} | body:${raycast.bodyId || 'static'} | distance ${raycast.distance} | point ${formatVector(raycast.point)} | normal ${formatVector(raycast.normal)}`;
+  }
+
+  getLastShapeCastSummary() {
+    const shapeCast = this.world.getLastShapeCast();
+    if (!shapeCast) {
+      return 'No shape cast performed yet';
+    }
+
+    if (!shapeCast.hit) {
+      return `${shapeCast.castType} cast miss | origin ${formatVector(shapeCast.origin)} | direction ${formatVector(shapeCast.direction)} | length ${shapeCast.maxDistance}`;
+    }
+
+    return `${shapeCast.castType} cast hit ${shapeCast.colliderId} | body:${shapeCast.bodyId || 'static'} | distance ${shapeCast.distance} | point ${formatVector(shapeCast.point)} | normal ${formatVector(shapeCast.normal)}`;
+  }
+
+  getCcdSummary() {
+    const events = this.world.getLastCcdEvents();
+    if (!events.length) {
+      return 'No CCD events in the last step';
+    }
+
+    const labels = events.map((event) => `${event.bodyId}->${event.targetColliderId}@${event.distance}`);
+    return `${events.length} CCD events | ${labels.join(' | ')}`;
+  }
+
   getLastFrameSummary() {
     if (!this.lastFrame) {
       return 'No frame rendered yet';
@@ -416,29 +817,36 @@ class Engine3D {
 __exports.Engine3D = Engine3D;
 },
   3: function(__require, __exports) {
-const { createAabbFromCenterHalfExtents, createAabbFromMinMax, cloneAabb, computeLocalShapeAabb, computeShapeWorldAabb, getAabbOverlap, testAabbOverlap, testPointInAabb } = __require(4);
+const { combineAabbs, createAabbFromCenterHalfExtents, createAabbFromMinMax, cloneAabb, computeLocalShapeAabb, computeShapeWorldAabb, expandAabb, getAabbOverlap, intersectRayAabb, testAabbOverlap, testPointInAabb } = __require(4);
 const { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphasePair, createBroadphaseProxy } = __require(8);
 const { collideBoxPair } = __require(9);
 const { buildConvexContactManifold, collideConvexPairWithGjkEpa, runEpa, runGjk } = __require(10);
 const { cloneContactPair, createContactPair, runNarrowphase } = __require(11);
+const { capsuleCastShape, castConvexShapesWithToi, cloneRaycastResult, cloneShapeCastResult, computeSweptShapeAabb, createRaycastResult, createShapeCastResult, raycastShape, sphereCastShape } = __require(12);
 const { clampPointToAabb, composePoses, createTangentBasis, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportFeature, getShapeSupportPoint, getShapeWorldCenter, getShapeWorldPose, getSupportMappedPenetration, transformPointByPose } = __require(7);
-const { DEBUG_FRAME_SCHEMA_VERSION, DEBUG_PRIMITIVE_TYPES, DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox, countDebugPrimitivesByType } = __require(12);
-const { cloneManifold, cloneManifoldContact, ManifoldCache } = __require(13);
-const { cloneQuat, conjugateQuat, createIdentityQuat, createQuat, integrateQuat, inverseRotateVec3ByQuat, lengthSquaredQuat, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
+const { DEBUG_FRAME_SCHEMA_VERSION, DEBUG_PRIMITIVE_TYPES, DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox, countDebugPrimitivesByType } = __require(13);
+const { cloneManifold, cloneManifoldContact, ManifoldCache } = __require(14);
+const { cloneQuat, conjugateQuat, createIdentityQuat, createQuat, createQuatFromAxisAngle, integrateQuat, inverseRotateVec3ByQuat, lengthSquaredQuat, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
 const { createVec3, cloneVec3, zeroVec3, scaleVec3, addVec3, addScaledVec3, subtractVec3, minVec3, maxVec3, dotVec3, lengthSquaredVec3, lengthVec3, negateVec3, normalizeVec3, crossVec3 } = __require(6);
-const { solveNormalContactConstraints } = __require(14);
-const { PhysicsWorld } = __require(15);
-const { ShapeRegistry } = __require(20);
-const { BodyRegistry } = __require(16);
-const { ColliderRegistry } = __require(18);
-const { MaterialRegistry } = __require(19);
+const { solveDistanceJointConstraints, solveJointConstraints } = __require(15);
+const { solveNormalContactConstraints } = __require(16);
+const { buildRigidBodyIslandGraph, cloneRigidBodyIsland, cloneRigidBodyIslandGraph } = __require(17);
+const { PhysicsWorld } = __require(18);
+const { ShapeRegistry } = __require(24);
+const { BodyRegistry } = __require(19);
+const { ColliderRegistry } = __require(21);
+const { JointRegistry } = __require(22);
+const { MaterialRegistry } = __require(23);
 
+__exports.combineAabbs = combineAabbs;
 __exports.createAabbFromCenterHalfExtents = createAabbFromCenterHalfExtents;
 __exports.createAabbFromMinMax = createAabbFromMinMax;
 __exports.cloneAabb = cloneAabb;
 __exports.computeLocalShapeAabb = computeLocalShapeAabb;
 __exports.computeShapeWorldAabb = computeShapeWorldAabb;
+__exports.expandAabb = expandAabb;
 __exports.getAabbOverlap = getAabbOverlap;
+__exports.intersectRayAabb = intersectRayAabb;
 __exports.testAabbOverlap = testAabbOverlap;
 __exports.testPointInAabb = testPointInAabb;
 __exports.buildBroadphasePairs = buildBroadphasePairs;
@@ -454,6 +862,15 @@ __exports.buildConvexContactManifold = buildConvexContactManifold;
 __exports.cloneContactPair = cloneContactPair;
 __exports.createContactPair = createContactPair;
 __exports.runNarrowphase = runNarrowphase;
+__exports.createRaycastResult = createRaycastResult;
+__exports.cloneRaycastResult = cloneRaycastResult;
+__exports.createShapeCastResult = createShapeCastResult;
+__exports.cloneShapeCastResult = cloneShapeCastResult;
+__exports.raycastShape = raycastShape;
+__exports.sphereCastShape = sphereCastShape;
+__exports.capsuleCastShape = capsuleCastShape;
+__exports.castConvexShapesWithToi = castConvexShapesWithToi;
+__exports.computeSweptShapeAabb = computeSweptShapeAabb;
 __exports.clampPointToAabb = clampPointToAabb;
 __exports.composePoses = composePoses;
 __exports.createTangentBasis = createTangentBasis;
@@ -478,6 +895,7 @@ __exports.cloneManifoldContact = cloneManifoldContact;
 __exports.ManifoldCache = ManifoldCache;
 __exports.createQuat = createQuat;
 __exports.createIdentityQuat = createIdentityQuat;
+__exports.createQuatFromAxisAngle = createQuatFromAxisAngle;
 __exports.cloneQuat = cloneQuat;
 __exports.lengthSquaredQuat = lengthSquaredQuat;
 __exports.normalizeQuat = normalizeQuat;
@@ -501,11 +919,17 @@ __exports.lengthVec3 = lengthVec3;
 __exports.negateVec3 = negateVec3;
 __exports.normalizeVec3 = normalizeVec3;
 __exports.crossVec3 = crossVec3;
+__exports.solveJointConstraints = solveJointConstraints;
+__exports.solveDistanceJointConstraints = solveDistanceJointConstraints;
 __exports.solveNormalContactConstraints = solveNormalContactConstraints;
+__exports.buildRigidBodyIslandGraph = buildRigidBodyIslandGraph;
+__exports.cloneRigidBodyIsland = cloneRigidBodyIsland;
+__exports.cloneRigidBodyIslandGraph = cloneRigidBodyIslandGraph;
 __exports.PhysicsWorld = PhysicsWorld;
 __exports.ShapeRegistry = ShapeRegistry;
 __exports.BodyRegistry = BodyRegistry;
 __exports.ColliderRegistry = ColliderRegistry;
+__exports.JointRegistry = JointRegistry;
 __exports.MaterialRegistry = MaterialRegistry;
 },
   4: function(__require, __exports) {
@@ -566,6 +990,39 @@ function cloneAabb(aabb) {
     aabb?.halfExtents ?? createVec3()
   );
 }
+function expandAabb(aabb, halfExtents) {
+  if (!aabb) {
+    return null;
+  }
+
+  const expansion = absoluteHalfExtents(halfExtents);
+  return createAabbFromMinMax(
+    createVec3(
+      aabb.min.x - expansion.x,
+      aabb.min.y - expansion.y,
+      aabb.min.z - expansion.z
+    ),
+    createVec3(
+      aabb.max.x + expansion.x,
+      aabb.max.y + expansion.y,
+      aabb.max.z + expansion.z
+    )
+  );
+}
+function combineAabbs(left, right) {
+  if (!left) {
+    return right ? cloneAabb(right) : null;
+  }
+
+  if (!right) {
+    return cloneAabb(left);
+  }
+
+  return createAabbFromMinMax(
+    minVec3(left.min, right.min),
+    maxVec3(left.max, right.max)
+  );
+}
 function testPointInAabb(point, aabb) {
   if (!aabb) {
     return false;
@@ -594,6 +1051,80 @@ function testAabbOverlap(left, right) {
     left.max.z < right.min.z ||
     left.min.z > right.max.z
   );
+}
+function intersectRayAabb(origin, direction, maxDistance, aabb) {
+  if (!aabb) {
+    return null;
+  }
+
+  const resolvedOrigin = cloneVec3(origin);
+  const resolvedDirection = cloneVec3(direction);
+  let entryDistance = 0;
+  let exitDistance = Number.isFinite(maxDistance) ? maxDistance : Number.POSITIVE_INFINITY;
+  let hitAxis = 'x';
+  let hitNormal = createVec3(-1, 0, 0);
+
+  for (const axis of ['x', 'y', 'z']) {
+    const originValue = resolvedOrigin[axis];
+    const directionValue = resolvedDirection[axis];
+    const minValue = aabb.min[axis];
+    const maxValue = aabb.max[axis];
+
+    if (Math.abs(directionValue) <= 1e-12) {
+      if (originValue < minValue || originValue > maxValue) {
+        return null;
+      }
+
+      continue;
+    }
+
+    const inverseDirection = 1 / directionValue;
+    let nearDistance = (minValue - originValue) * inverseDirection;
+    let farDistance = (maxValue - originValue) * inverseDirection;
+    let nearNormal = axis === 'x'
+      ? createVec3(-1, 0, 0)
+      : axis === 'y'
+        ? createVec3(0, -1, 0)
+        : createVec3(0, 0, -1);
+
+    if (nearDistance > farDistance) {
+      const temp = nearDistance;
+      nearDistance = farDistance;
+      farDistance = temp;
+      nearNormal = axis === 'x'
+        ? createVec3(1, 0, 0)
+        : axis === 'y'
+          ? createVec3(0, 1, 0)
+          : createVec3(0, 0, 1);
+    }
+
+    if (nearDistance > entryDistance) {
+      entryDistance = nearDistance;
+      hitAxis = axis;
+      hitNormal = nearNormal;
+    }
+
+    exitDistance = Math.min(exitDistance, farDistance);
+    if (entryDistance > exitDistance) {
+      return null;
+    }
+  }
+
+  if (exitDistance < 0 || entryDistance > maxDistance) {
+    return null;
+  }
+
+  const distance = entryDistance >= 0 ? entryDistance : 0;
+  return {
+    distance,
+    point: addVec3(resolvedOrigin, createVec3(
+      resolvedDirection.x * distance,
+      resolvedDirection.y * distance,
+      resolvedDirection.z * distance
+    )),
+    normal: hitNormal,
+    axis: hitAxis
+  };
 }
 function getAabbOverlap(left, right) {
   if (!testAabbOverlap(left, right)) {
@@ -647,14 +1178,17 @@ function computeShapeWorldAabb(shape, worldPose) {
 __exports.createAabbFromCenterHalfExtents = createAabbFromCenterHalfExtents;
 __exports.createAabbFromMinMax = createAabbFromMinMax;
 __exports.cloneAabb = cloneAabb;
+__exports.expandAabb = expandAabb;
+__exports.combineAabbs = combineAabbs;
 __exports.testPointInAabb = testPointInAabb;
 __exports.testAabbOverlap = testAabbOverlap;
+__exports.intersectRayAabb = intersectRayAabb;
 __exports.getAabbOverlap = getAabbOverlap;
 __exports.computeLocalShapeAabb = computeLocalShapeAabb;
 __exports.computeShapeWorldAabb = computeShapeWorldAabb;
 },
   5: function(__require, __exports) {
-const { addScaledVec3, createVec3, crossVec3 } = __require(6);
+const { addScaledVec3, createVec3, crossVec3, normalizeVec3 } = __require(6);
 function toFiniteNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -669,6 +1203,17 @@ function createQuat(x = 0, y = 0, z = 0, w = 1) {
 }
 function createIdentityQuat() {
   return createQuat(0, 0, 0, 1);
+}
+function createQuatFromAxisAngle(axis, angleRadians = 0) {
+  const unitAxis = normalizeVec3(axis, createVec3(0, 1, 0));
+  const halfAngle = toFiniteNumber(angleRadians, 0) * 0.5;
+  const sine = Math.sin(halfAngle);
+  return normalizeQuat(createQuat(
+    unitAxis.x * sine,
+    unitAxis.y * sine,
+    unitAxis.z * sine,
+    Math.cos(halfAngle)
+  ));
 }
 function cloneQuat(quaternion) {
   return createQuat(quaternion?.x, quaternion?.y, quaternion?.z, quaternion?.w);
@@ -741,6 +1286,7 @@ function integrateQuat(quaternion, angularVelocity, deltaTime) {
 
 __exports.createQuat = createQuat;
 __exports.createIdentityQuat = createIdentityQuat;
+__exports.createQuatFromAxisAngle = createQuatFromAxisAngle;
 __exports.cloneQuat = cloneQuat;
 __exports.lengthSquaredQuat = lengthSquaredQuat;
 __exports.normalizeQuat = normalizeQuat;
@@ -2295,6 +2841,698 @@ __exports.cloneContactPair = cloneContactPair;
 __exports.runNarrowphase = runNarrowphase;
 },
   12: function(__require, __exports) {
+const { combineAabbs, computeShapeWorldAabb, createAabbFromCenterHalfExtents, expandAabb, intersectRayAabb, testAabbOverlap } = __require(4);
+const { runEpa, runGjk } = __require(10);
+const { getClosestPointOnSegment, getShapeWorldPose } = __require(7);
+const { cloneQuat, createIdentityQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
+const { addScaledVec3, addVec3, cloneVec3, createVec3, dotVec3, lengthSquaredVec3, negateVec3, normalizeVec3, subtractVec3 } = __require(6);
+function createQueryEndPoint(origin, direction, maxDistance) {
+  return addScaledVec3(origin, direction, maxDistance);
+}
+
+function cloneOptionalVec3(vector) {
+  return vector ? cloneVec3(vector) : null;
+}
+
+function cloneVec3List(items) {
+  return Array.isArray(items) ? items.map((item) => cloneVec3(item)) : [];
+}
+
+function createShapeHit(options = {}) {
+  return {
+    distance: Number(options.distance ?? 0),
+    point: cloneVec3(options.point ?? createVec3()),
+    normal: normalizeVec3(options.normal ?? createVec3(0, 1, 0), createVec3(0, 1, 0)),
+    sweepPosition: cloneOptionalVec3(options.sweepPosition ?? null),
+    algorithm: String(options.algorithm ?? 'query').trim() || 'query',
+    featureId: String(options.featureId ?? '').trim() || 'feature:unknown',
+    sampleId: String(options.sampleId ?? '').trim() || null
+  };
+}
+
+function createBaseQueryResult(options = {}) {
+  const origin = cloneVec3(options.origin ?? createVec3());
+  const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+  const maxDistance = Number(options.maxDistance ?? 0);
+
+  return {
+    hit: Boolean(options.hit),
+    origin,
+    direction,
+    maxDistance,
+    endPoint: cloneVec3(options.endPoint ?? createQueryEndPoint(origin, direction, maxDistance)),
+    distance: options.hit ? Number(options.distance ?? 0) : null,
+    point: options.hit ? cloneOptionalVec3(options.point ?? createVec3()) : null,
+    normal: options.hit ? cloneOptionalVec3(options.normal ?? createVec3(0, 1, 0)) : null,
+    sweepPosition: options.hit ? cloneOptionalVec3(options.sweepPosition ?? createVec3()) : null,
+    colliderId: options.hit ? String(options.colliderId ?? '').trim() || null : null,
+    bodyId: options.hit ? String(options.bodyId ?? '').trim() || null : null,
+    shapeId: options.hit ? String(options.shapeId ?? '').trim() || null : null,
+    materialId: options.hit ? String(options.materialId ?? '').trim() || null : null,
+    shapeType: options.hit ? String(options.shapeType ?? '').trim() || null : null,
+    algorithm: options.hit ? String(options.algorithm ?? '').trim() || null : null,
+    featureId: options.hit ? String(options.featureId ?? '').trim() || null : null,
+    proxyCount: Math.max(0, Math.floor(Number(options.proxyCount ?? 0))),
+    candidateCount: Math.max(0, Math.floor(Number(options.candidateCount ?? 0))),
+    testedShapeCount: Math.max(0, Math.floor(Number(options.testedShapeCount ?? 0)))
+  };
+}
+function createRaycastResult(options = {}) {
+  return createBaseQueryResult(options);
+}
+function cloneRaycastResult(result) {
+  if (!result) {
+    return null;
+  }
+
+  return createRaycastResult(result);
+}
+function createShapeCastResult(options = {}) {
+  return {
+    ...createBaseQueryResult(options),
+    castType: String(options.castType ?? 'shape').trim() || 'shape',
+    radius: Number(options.radius ?? 0),
+    halfHeight: Number(options.halfHeight ?? 0),
+    rotation: cloneQuat(options.rotation ?? createIdentityQuat()),
+    sampleId: options.hit ? String(options.sampleId ?? '').trim() || null : null,
+    sampleOrigins: cloneVec3List(options.sampleOrigins),
+    sampleEndPoints: cloneVec3List(options.sampleEndPoints)
+  };
+}
+function cloneShapeCastResult(result) {
+  if (!result) {
+    return null;
+  }
+
+  return createShapeCastResult(result);
+}
+
+function chooseCloserHit(currentBest, candidate) {
+  if (!candidate) {
+    return currentBest;
+  }
+
+  if (!currentBest) {
+    return candidate;
+  }
+
+  if (candidate.distance < currentBest.distance - 1e-8) {
+    return candidate;
+  }
+
+  return currentBest;
+}
+
+function isSupportMappedShape(shape) {
+  return shape?.type === 'box' ||
+    shape?.type === 'sphere' ||
+    shape?.type === 'capsule' ||
+    shape?.type === 'convex-hull';
+}
+
+function createPoseAtDistance(origin, rotation, direction, distance) {
+  return {
+    position: addScaledVec3(origin, direction, distance),
+    rotation: cloneQuat(rotation ?? createIdentityQuat())
+  };
+}
+
+function createCastShape(castType, radius, halfHeight = 0) {
+  if (castType === 'capsule') {
+    return {
+      type: 'capsule',
+      geometry: {
+        radius,
+        halfHeight
+      },
+      localPose: {
+        position: createVec3(),
+        rotation: createIdentityQuat()
+      }
+    };
+  }
+
+  return {
+    type: 'sphere',
+    geometry: {
+      radius
+    },
+    localPose: {
+      position: createVec3(),
+      rotation: createIdentityQuat()
+    }
+  };
+}
+
+function createSupportMappedHit(queryShape, queryPose, targetShape, targetPose, distance, algorithm) {
+  const gjk = runGjk(queryShape, queryPose, targetShape, targetPose);
+  if (!gjk.hit) {
+    return null;
+  }
+
+  const epa = runEpa(queryShape, queryPose, targetShape, targetPose, gjk.simplex);
+  if (!epa) {
+    return null;
+  }
+
+  return createShapeHit({
+    distance,
+    point: epa.contactPosition,
+    normal: negateVec3(epa.normal),
+    sweepPosition: queryPose.position,
+    algorithm,
+    featureId: 'gjk-epa:toi'
+  });
+}
+function castConvexShapesWithToi(options = {}) {
+  const queryShape = options.queryShape ?? null;
+  const targetShape = options.targetShape ?? null;
+  if (!isSupportMappedShape(queryShape) || !isSupportMappedShape(targetShape)) {
+    return null;
+  }
+
+  const origin = cloneVec3(options.origin ?? createVec3());
+  const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+  const maxDistance = Number.isFinite(Number(options.maxDistance)) ? Math.max(0, Number(options.maxDistance)) : 0;
+  const rotation = cloneQuat(options.rotation ?? createIdentityQuat());
+  const targetPose = options.targetPose ?? {
+    position: createVec3(),
+    rotation: createIdentityQuat()
+  };
+  const targetAabb = computeShapeWorldAabb(targetShape, targetPose);
+  const distanceTolerance = Math.max(1e-5, Number(options.distanceTolerance ?? Math.max(maxDistance / 16384, 5e-4)));
+  const maxDepth = Math.max(8, Math.floor(Number(options.maxDepth ?? 22)));
+  const overlapCache = new Map();
+
+  function getQueryPose(distance) {
+    return createPoseAtDistance(origin, rotation, direction, distance);
+  }
+
+  function getOverlapSample(distance) {
+    const key = distance.toFixed(8);
+    if (overlapCache.has(key)) {
+      return overlapCache.get(key);
+    }
+
+    const queryPose = getQueryPose(distance);
+    const gjk = runGjk(queryShape, queryPose, targetShape, targetPose);
+    const value = {
+      hit: gjk.hit,
+      queryPose,
+      gjk
+    };
+    overlapCache.set(key, value);
+    return value;
+  }
+
+  function resolveHit(distance) {
+    const queryPose = getQueryPose(distance);
+    return createSupportMappedHit(queryShape, queryPose, targetShape, targetPose, distance, 'convex-toi-v1');
+  }
+
+  function recurse(distanceStart, distanceEnd, depth) {
+    const sweepAabb = computeSweptShapeAabb({
+      shape: queryShape,
+      origin: addScaledVec3(origin, direction, distanceStart),
+      direction,
+      maxDistance: Math.max(0, distanceEnd - distanceStart),
+      rotation
+    });
+
+    if (!sweepAabb || !targetAabb || !testAabbOverlap(sweepAabb, targetAabb)) {
+      return null;
+    }
+
+    const startSample = getOverlapSample(distanceStart);
+    if (startSample.hit) {
+      return resolveHit(distanceStart);
+    }
+
+    const endSample = getOverlapSample(distanceEnd);
+    const segmentLength = distanceEnd - distanceStart;
+    if (depth >= maxDepth || segmentLength <= distanceTolerance) {
+      const sampleDistances = [distanceStart, (distanceStart + distanceEnd) / 2, distanceEnd];
+      for (const distance of sampleDistances) {
+        const sample = getOverlapSample(distance);
+        if (sample.hit) {
+          return resolveHit(distance);
+        }
+      }
+
+      return null;
+    }
+
+    const midDistance = (distanceStart + distanceEnd) / 2;
+    const leftHit = recurse(distanceStart, midDistance, depth + 1);
+    if (leftHit) {
+      return leftHit;
+    }
+
+    if (endSample.hit) {
+      const rightHit = recurse(midDistance, distanceEnd, depth + 1);
+      if (rightHit) {
+        return rightHit;
+      }
+      return resolveHit(distanceEnd);
+    }
+
+    return recurse(midDistance, distanceEnd, depth + 1);
+  }
+
+  return recurse(0, maxDistance, 0);
+}
+
+function raycastSphere(origin, direction, maxDistance, center, radius) {
+  const offset = subtractVec3(origin, center);
+  const b = dotVec3(offset, direction);
+  const c = dotVec3(offset, offset) - radius * radius;
+
+  if (c > 0 && b > 0) {
+    return null;
+  }
+
+  const discriminant = b * b - c;
+  if (discriminant < 0) {
+    return null;
+  }
+
+  let distance = -b - Math.sqrt(discriminant);
+  if (distance < 0) {
+    distance = 0;
+  }
+
+  if (distance > maxDistance) {
+    return null;
+  }
+
+  const point = addScaledVec3(origin, direction, distance);
+  const normal = normalizeVec3(subtractVec3(point, center), negateVec3(direction));
+
+  return createShapeHit({
+    distance,
+    point,
+    normal,
+    sweepPosition: point,
+    algorithm: 'sphere-raycast-v1',
+    featureId: 'sphere:surface'
+  });
+}
+
+function raycastBox(shape, worldPose, origin, direction, maxDistance) {
+  const shapePose = getShapeWorldPose(shape, worldPose);
+  const localOrigin = inverseRotateVec3ByQuat(shapePose.rotation, subtractVec3(origin, shapePose.position));
+  const localDirection = inverseRotateVec3ByQuat(shapePose.rotation, direction);
+  const localAabb = createAabbFromCenterHalfExtents(createVec3(), shape.geometry.halfExtents);
+  const localHit = intersectRayAabb(localOrigin, localDirection, maxDistance, localAabb);
+
+  if (!localHit) {
+    return null;
+  }
+
+  return createShapeHit({
+    distance: localHit.distance,
+    point: addVec3(shapePose.position, rotateVec3ByQuat(shapePose.rotation, localHit.point)),
+    normal: rotateVec3ByQuat(shapePose.rotation, localHit.normal),
+    sweepPosition: addScaledVec3(origin, direction, localHit.distance),
+    algorithm: 'box-raycast-v1',
+    featureId: `face:${localHit.axis}:${localHit.normal[localHit.axis] >= 0 ? '+' : '-'}`
+  });
+}
+
+function raycastCapsule(shape, worldPose, origin, direction, maxDistance) {
+  const shapePose = getShapeWorldPose(shape, worldPose);
+  const localOrigin = inverseRotateVec3ByQuat(shapePose.rotation, subtractVec3(origin, shapePose.position));
+  const localDirection = inverseRotateVec3ByQuat(shapePose.rotation, direction);
+  const radius = Number(shape.geometry.radius ?? 0);
+  const halfHeight = Number(shape.geometry.halfHeight ?? 0);
+  const top = createVec3(0, halfHeight, 0);
+  const bottom = createVec3(0, -halfHeight, 0);
+  const closestPoint = getClosestPointOnSegment(localOrigin, bottom, top);
+  const insideOffset = subtractVec3(localOrigin, closestPoint);
+
+  if (lengthSquaredVec3(insideOffset) <= radius * radius) {
+    return createShapeHit({
+      distance: 0,
+      point: cloneVec3(origin),
+      normal: rotateVec3ByQuat(shapePose.rotation, normalizeVec3(insideOffset, negateVec3(localDirection))),
+      sweepPosition: cloneVec3(origin),
+      algorithm: 'capsule-raycast-v1',
+      featureId: 'capsule:inside'
+    });
+  }
+
+  let bestHit = null;
+  const radialA = localDirection.x * localDirection.x + localDirection.z * localDirection.z;
+  if (radialA > 1e-12) {
+    const radialB = localOrigin.x * localDirection.x + localOrigin.z * localDirection.z;
+    const radialC = localOrigin.x * localOrigin.x + localOrigin.z * localOrigin.z - radius * radius;
+    const discriminant = radialB * radialB - radialA * radialC;
+
+    if (discriminant >= 0) {
+      const sqrtDiscriminant = Math.sqrt(discriminant);
+      for (const candidateDistance of [
+        (-radialB - sqrtDiscriminant) / radialA,
+        (-radialB + sqrtDiscriminant) / radialA
+      ]) {
+        if (candidateDistance < 0 || candidateDistance > maxDistance) {
+          continue;
+        }
+
+        const candidatePoint = addScaledVec3(localOrigin, localDirection, candidateDistance);
+        if (candidatePoint.y < -halfHeight - 1e-8 || candidatePoint.y > halfHeight + 1e-8) {
+          continue;
+        }
+
+        bestHit = chooseCloserHit(bestHit, createShapeHit({
+          distance: candidateDistance,
+          point: addVec3(shapePose.position, rotateVec3ByQuat(shapePose.rotation, candidatePoint)),
+          normal: rotateVec3ByQuat(shapePose.rotation, normalizeVec3(createVec3(candidatePoint.x, 0, candidatePoint.z), negateVec3(localDirection))),
+          sweepPosition: addScaledVec3(origin, direction, candidateDistance),
+          algorithm: 'capsule-raycast-v1',
+          featureId: 'capsule:side'
+        }));
+      }
+    }
+  }
+
+  for (const [capName, capCenter] of [['top', top], ['bottom', bottom]]) {
+    const capHit = raycastSphere(localOrigin, localDirection, maxDistance, capCenter, radius);
+    if (!capHit) {
+      continue;
+    }
+
+    bestHit = chooseCloserHit(bestHit, createShapeHit({
+      distance: capHit.distance,
+      point: addVec3(shapePose.position, rotateVec3ByQuat(shapePose.rotation, capHit.point)),
+      normal: rotateVec3ByQuat(shapePose.rotation, capHit.normal),
+      sweepPosition: addScaledVec3(origin, direction, capHit.distance),
+      algorithm: 'capsule-raycast-v1',
+      featureId: `capsule:${capName}`
+    }));
+  }
+
+  return bestHit;
+}
+
+function raycastConvexHullFallback(shape, worldPose, origin, direction, maxDistance) {
+  const aabb = computeShapeWorldAabb(shape, worldPose);
+  const hit = intersectRayAabb(origin, direction, maxDistance, aabb);
+  if (!hit) {
+    return null;
+  }
+
+  return createShapeHit({
+    distance: hit.distance,
+    point: hit.point,
+    normal: hit.normal,
+    sweepPosition: addScaledVec3(origin, direction, hit.distance),
+    algorithm: 'convex-aabb-raycast-v1',
+    featureId: `aabb:${hit.axis}`
+  });
+}
+function raycastShape(options = {}) {
+  const shape = options.shape ?? null;
+  if (!shape) {
+    return null;
+  }
+
+  const origin = cloneVec3(options.origin ?? createVec3());
+  const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+  const maxDistance = Number.isFinite(Number(options.maxDistance)) ? Math.max(0, Number(options.maxDistance)) : Number.POSITIVE_INFINITY;
+  const worldPose = options.worldPose ?? {
+    position: createVec3(),
+    rotation: undefined
+  };
+
+  if (shape.type === 'box') {
+    return raycastBox(shape, worldPose, origin, direction, maxDistance);
+  }
+
+  if (shape.type === 'sphere') {
+    return raycastSphere(origin, direction, maxDistance, getShapeWorldPose(shape, worldPose).position, Number(shape.geometry.radius ?? 0));
+  }
+
+  if (shape.type === 'capsule') {
+    return raycastCapsule(shape, worldPose, origin, direction, maxDistance);
+  }
+
+  if (shape.type === 'convex-hull') {
+    return raycastConvexHullFallback(shape, worldPose, origin, direction, maxDistance);
+  }
+
+  return null;
+}
+
+function createInflatedBoxShape(shape, inflationRadius) {
+  return {
+    ...shape,
+    geometry: {
+      ...shape.geometry,
+      halfExtents: createVec3(
+        Number(shape.geometry.halfExtents.x ?? 0) + inflationRadius,
+        Number(shape.geometry.halfExtents.y ?? 0) + inflationRadius,
+        Number(shape.geometry.halfExtents.z ?? 0) + inflationRadius
+      )
+    }
+  };
+}
+
+function createInflatedSphereShape(shape, inflationRadius) {
+  return {
+    ...shape,
+    geometry: {
+      ...shape.geometry,
+      radius: Number(shape.geometry.radius ?? 0) + inflationRadius
+    }
+  };
+}
+
+function createInflatedCapsuleShape(shape, inflationRadius) {
+  return {
+    ...shape,
+    geometry: {
+      ...shape.geometry,
+      radius: Number(shape.geometry.radius ?? 0) + inflationRadius
+    }
+  };
+}
+
+function sphereCastShapeHit(options = {}) {
+  const origin = cloneVec3(options.origin ?? createVec3());
+  const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+  const radius = Math.max(0, Number(options.radius ?? 0));
+  const maxDistance = Number.isFinite(Number(options.maxDistance)) ? Math.max(0, Number(options.maxDistance)) : Number.POSITIVE_INFINITY;
+  const shape = options.shape ?? null;
+  const worldPose = options.worldPose ?? {
+    position: createVec3(),
+    rotation: createIdentityQuat()
+  };
+
+  if (!shape) {
+    return null;
+  }
+
+  if (isSupportMappedShape(shape)) {
+    const toiHit = castConvexShapesWithToi({
+      queryShape: createCastShape('sphere', radius),
+      targetShape: shape,
+      targetPose: worldPose,
+      origin,
+      rotation: createIdentityQuat(),
+      direction,
+      maxDistance,
+      distanceTolerance: options.distanceTolerance,
+      maxDepth: options.maxDepth
+    });
+
+    if (toiHit) {
+      return createShapeHit({
+        ...toiHit,
+        sampleId: options.sampleId ?? 'center'
+      });
+    }
+  }
+
+  let targetHit = null;
+  if (shape.type === 'box') {
+    targetHit = raycastBox(createInflatedBoxShape(shape, radius), worldPose, origin, direction, maxDistance);
+  } else if (shape.type === 'sphere') {
+    const sphereCenter = getShapeWorldPose(shape, worldPose).position;
+    targetHit = raycastSphere(origin, direction, maxDistance, sphereCenter, Number(shape.geometry.radius ?? 0) + radius);
+  } else if (shape.type === 'capsule') {
+    targetHit = raycastCapsule(createInflatedCapsuleShape(shape, radius), worldPose, origin, direction, maxDistance);
+  } else if (shape.type === 'convex-hull') {
+    const expandedAabb = expandAabb(computeShapeWorldAabb(shape, worldPose), createVec3(radius, radius, radius));
+    const aabbHit = intersectRayAabb(origin, direction, maxDistance, expandedAabb);
+    if (aabbHit) {
+      targetHit = createShapeHit({
+        distance: aabbHit.distance,
+        point: aabbHit.point,
+        normal: aabbHit.normal,
+        sweepPosition: addScaledVec3(origin, direction, aabbHit.distance),
+        algorithm: 'convex-aabb-sphere-cast-v1',
+        featureId: `aabb:${aabbHit.axis}`
+      });
+    }
+  }
+
+  if (!targetHit) {
+    return null;
+  }
+
+  const sweepPosition = cloneVec3(targetHit.sweepPosition ?? addScaledVec3(origin, direction, targetHit.distance));
+  return createShapeHit({
+    distance: targetHit.distance,
+    point: addScaledVec3(sweepPosition, targetHit.normal, -radius),
+    normal: targetHit.normal,
+    sweepPosition,
+    algorithm: targetHit.algorithm,
+    featureId: targetHit.featureId,
+    sampleId: options.sampleId ?? 'center'
+  });
+}
+
+function getCapsuleCastSamples(origin, halfHeight, rotation) {
+  if (halfHeight <= 1e-8) {
+    return [
+      {
+        id: 'center',
+        position: cloneVec3(origin)
+      }
+    ];
+  }
+
+  const axisOffset = rotateVec3ByQuat(rotation ?? createIdentityQuat(), createVec3(0, halfHeight, 0));
+  return [
+    {
+      id: 'center',
+      position: cloneVec3(origin)
+    },
+    {
+      id: 'top',
+      position: addVec3(origin, axisOffset)
+    },
+    {
+      id: 'bottom',
+      position: addScaledVec3(origin, axisOffset, -1)
+    }
+  ];
+}
+function sphereCastShape(options = {}) {
+  return sphereCastShapeHit(options);
+}
+function capsuleCastShape(options = {}) {
+  const origin = cloneVec3(options.origin ?? createVec3());
+  const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+  const maxDistance = Number.isFinite(Number(options.maxDistance)) ? Math.max(0, Number(options.maxDistance)) : Number.POSITIVE_INFINITY;
+  const radius = Math.max(0, Number(options.radius ?? 0));
+  const halfHeight = Math.max(0, Number(options.halfHeight ?? 0));
+  const rotation = cloneQuat(options.rotation ?? createIdentityQuat());
+  const shape = options.shape ?? null;
+  if (!shape) {
+    return null;
+  }
+
+  if (isSupportMappedShape(shape)) {
+    const toiHit = castConvexShapesWithToi({
+      queryShape: createCastShape('capsule', radius, halfHeight),
+      targetShape: shape,
+      targetPose: options.worldPose ?? {
+        position: createVec3(),
+        rotation: createIdentityQuat()
+      },
+      origin,
+      rotation,
+      direction,
+      maxDistance,
+      distanceTolerance: options.distanceTolerance,
+      maxDepth: options.maxDepth
+    });
+
+    if (toiHit) {
+      return createShapeHit({
+        ...toiHit,
+        sampleId: 'capsule'
+      });
+    }
+  }
+
+  const sampleOrigins = getCapsuleCastSamples(origin, halfHeight, rotation);
+  let bestHit = null;
+
+  for (const sample of sampleOrigins) {
+    const sampleHit = sphereCastShapeHit({
+      ...options,
+      origin: sample.position,
+      direction,
+      maxDistance,
+      radius,
+      sampleId: sample.id
+    });
+
+    if (!sampleHit) {
+      continue;
+    }
+
+    if (!bestHit || sampleHit.distance < bestHit.distance - 1e-8) {
+      bestHit = {
+        ...sampleHit,
+        sweepPosition: addScaledVec3(origin, direction, sampleHit.distance),
+        sampleId: sample.id
+      };
+    }
+  }
+
+  if (!bestHit) {
+    return null;
+  }
+
+  return createShapeHit({
+    distance: bestHit.distance,
+    point: bestHit.point,
+    normal: bestHit.normal,
+    sweepPosition: bestHit.sweepPosition,
+    algorithm: `capsule-cast-fallback-v1:${bestHit.algorithm}`,
+    featureId: bestHit.featureId,
+    sampleId: bestHit.sampleId
+  });
+}
+function computeSweptShapeAabb(options = {}) {
+  const shape = options.shape ?? null;
+  if (!shape) {
+    return null;
+  }
+
+  const origin = cloneVec3(options.origin ?? createVec3());
+  const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+  const maxDistance = Number.isFinite(Number(options.maxDistance)) ? Math.max(0, Number(options.maxDistance)) : 0;
+  const rotation = cloneQuat(options.rotation ?? createIdentityQuat());
+  const worldPose = {
+    position: origin,
+    rotation
+  };
+  const endPose = {
+    position: addScaledVec3(origin, direction, maxDistance),
+    rotation
+  };
+
+  return combineAabbs(
+    computeShapeWorldAabb(shape, worldPose),
+    computeShapeWorldAabb(shape, endPose)
+  );
+}
+
+__exports.createRaycastResult = createRaycastResult;
+__exports.cloneRaycastResult = cloneRaycastResult;
+__exports.createShapeCastResult = createShapeCastResult;
+__exports.cloneShapeCastResult = cloneShapeCastResult;
+__exports.castConvexShapesWithToi = castConvexShapesWithToi;
+__exports.raycastShape = raycastShape;
+__exports.sphereCastShape = sphereCastShape;
+__exports.capsuleCastShape = capsuleCastShape;
+__exports.computeSweptShapeAabb = computeSweptShapeAabb;
+},
+  13: function(__require, __exports) {
 const { cloneQuat, createIdentityQuat } = __require(5);
 const { cloneVec3, createVec3 } = __require(6);
 function toFiniteNumber(value, fallback = 0) {
@@ -2351,7 +3589,30 @@ const DEFAULT_DEBUG_COLORS = Object.freeze({
   staticColliderWireframe: Object.freeze({ r: 107, g: 222, b: 157, a: 1 }),
   broadphaseAabb: Object.freeze({ r: 250, g: 128, b: 114, a: 0.9 }),
   contactPoint: Object.freeze({ r: 255, g: 72, b: 72, a: 1 }),
-  contactNormal: Object.freeze({ r: 255, g: 150, b: 54, a: 1 })
+  contactNormal: Object.freeze({ r: 255, g: 150, b: 54, a: 1 }),
+  raycastHitLine: Object.freeze({ r: 76, g: 229, b: 255, a: 1 }),
+  raycastMissLine: Object.freeze({ r: 113, g: 132, b: 164, a: 0.95 }),
+  raycastHitPoint: Object.freeze({ r: 255, g: 64, b: 197, a: 1 }),
+  raycastHitNormal: Object.freeze({ r: 192, g: 104, b: 255, a: 1 }),
+  shapeCastHitLine: Object.freeze({ r: 78, g: 245, b: 194, a: 1 }),
+  shapeCastMissLine: Object.freeze({ r: 102, g: 150, b: 130, a: 0.95 }),
+  shapeCastHitPoint: Object.freeze({ r: 255, g: 214, b: 72, a: 1 }),
+  shapeCastHitNormal: Object.freeze({ r: 255, g: 133, b: 64, a: 1 }),
+  ccdPath: Object.freeze({ r: 255, g: 94, b: 94, a: 1 }),
+  ccdHitPoint: Object.freeze({ r: 255, g: 255, b: 255, a: 1 }),
+  ccdHitNormal: Object.freeze({ r: 255, g: 186, b: 59, a: 1 }),
+  distanceJoint: Object.freeze({ r: 185, g: 136, b: 255, a: 1 }),
+  sleepingDistanceJoint: Object.freeze({ r: 142, g: 128, b: 160, a: 0.95 }),
+  pointToPointJoint: Object.freeze({ r: 255, g: 162, b: 73, a: 1 }),
+  sleepingPointToPointJoint: Object.freeze({ r: 164, g: 137, b: 112, a: 0.95 }),
+  hingeJoint: Object.freeze({ r: 255, g: 215, b: 94, a: 1 }),
+  sleepingHingeJoint: Object.freeze({ r: 168, g: 154, b: 112, a: 0.95 }),
+  fixedJoint: Object.freeze({ r: 145, g: 232, b: 129, a: 1 }),
+  sleepingFixedJoint: Object.freeze({ r: 118, g: 158, b: 111, a: 0.95 }),
+  brokenJoint: Object.freeze({ r: 255, g: 92, b: 92, a: 1 }),
+  hingeAxisA: Object.freeze({ r: 102, g: 208, b: 255, a: 1 }),
+  hingeAxisB: Object.freeze({ r: 255, g: 118, b: 118, a: 1 }),
+  hingeMotor: Object.freeze({ r: 94, g: 255, b: 156, a: 1 })
 });
 function countDebugPrimitivesByType(primitives) {
   const counts = {};
@@ -2426,7 +3687,7 @@ __exports.DEBUG_FRAME_SCHEMA_VERSION = DEBUG_FRAME_SCHEMA_VERSION;
 __exports.DEBUG_PRIMITIVE_TYPES = DEBUG_PRIMITIVE_TYPES;
 __exports.DEFAULT_DEBUG_COLORS = DEFAULT_DEBUG_COLORS;
 },
-  13: function(__require, __exports) {
+  14: function(__require, __exports) {
 const { cloneVec3, createVec3 } = __require(6);
 function cloneManifoldContact(contact) {
   return {
@@ -2576,7 +3837,644 @@ __exports.ManifoldCache = ManifoldCache;
 __exports.cloneManifoldContact = cloneManifoldContact;
 __exports.cloneManifold = cloneManifold;
 },
-  14: function(__require, __exports) {
+  15: function(__require, __exports) {
+const { createTangentBasis } = __require(7);
+const { createIdentityQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
+const { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
+const WORLD_AXES = Object.freeze([
+  Object.freeze({ x: 1, y: 0, z: 0 }),
+  Object.freeze({ x: 0, y: 1, z: 0 }),
+  Object.freeze({ x: 0, y: 0, z: 1 })
+]);
+
+function clampNumber(value, minValue, maxValue) {
+  return Math.max(minValue, Math.min(maxValue, value));
+}
+
+function toOptionalFiniteNumber(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function createEmptyJointSolverStats(iterations) {
+  return {
+    iterations,
+    jointCount: 0,
+    warmStartedJointCount: 0,
+    solvedJointCount: 0,
+    skippedJointCount: 0,
+    jointImpulsesApplied: 0,
+    maxJointError: 0,
+    jointResults: []
+  };
+}
+
+function createJointSolveResult(joint) {
+  return {
+    jointId: joint.id,
+    jointType: joint.type,
+    linearImpulse: 0,
+    angularImpulse: 0,
+    motorImpulse: 0,
+    maxLinearError: 0,
+    maxAngularError: 0
+  };
+}
+
+function getDynamicBody(bodyRegistry, bodyId) {
+  if (!bodyId) {
+    return null;
+  }
+
+  const body = bodyRegistry.getMutable(bodyId);
+  if (!body || !body.enabled || body.motionType !== 'dynamic' || body.sleeping) {
+    return null;
+  }
+
+  return body;
+}
+
+function getAnyBody(bodyRegistry, bodyId) {
+  if (!bodyId) {
+    return null;
+  }
+
+  return bodyRegistry.get(bodyId);
+}
+
+function applyInverseInertiaWorld(body, worldVector) {
+  if (!body || body.motionType !== 'dynamic') {
+    return createVec3();
+  }
+
+  const rotation = body.rotation ?? createIdentityQuat();
+  const localVector = inverseRotateVec3ByQuat(rotation, worldVector ?? createVec3());
+  const localResult = createVec3(
+    localVector.x * Number(body.inverseInertia?.x ?? 0),
+    localVector.y * Number(body.inverseInertia?.y ?? 0),
+    localVector.z * Number(body.inverseInertia?.z ?? 0)
+  );
+  return rotateVec3ByQuat(rotation, localResult);
+}
+
+function getAnchorOffset(body, localAnchor) {
+  if (!body) {
+    return createVec3();
+  }
+
+  return rotateVec3ByQuat(body.rotation ?? createIdentityQuat(), localAnchor ?? createVec3());
+}
+
+function getWorldAnchor(body, localAnchor) {
+  if (!body) {
+    return cloneVec3(localAnchor ?? createVec3());
+  }
+
+  return addVec3(body.position, getAnchorOffset(body, localAnchor));
+}
+
+function getVelocityAtOffset(body, offset) {
+  if (!body) {
+    return createVec3();
+  }
+
+  return addVec3(body.linearVelocity, crossVec3(body.angularVelocity, offset));
+}
+
+function getRelativeVelocity(bodyA, bodyB, offsetA, offsetB) {
+  return subtractVec3(
+    getVelocityAtOffset(bodyB, offsetB),
+    getVelocityAtOffset(bodyA, offsetA)
+  );
+}
+
+function applyLinearImpulse(bodyA, bodyB, offsetA, offsetB, impulse) {
+  if (bodyA) {
+    const impulseA = scaleVec3(impulse, -1);
+    bodyA.linearVelocity = addScaledVec3(bodyA.linearVelocity, impulseA, bodyA.inverseMass);
+    bodyA.angularVelocity = addVec3(bodyA.angularVelocity, applyInverseInertiaWorld(bodyA, crossVec3(offsetA, impulseA)));
+  }
+
+  if (bodyB) {
+    bodyB.linearVelocity = addScaledVec3(bodyB.linearVelocity, impulse, bodyB.inverseMass);
+    bodyB.angularVelocity = addVec3(bodyB.angularVelocity, applyInverseInertiaWorld(bodyB, crossVec3(offsetB, impulse)));
+  }
+}
+
+function applyAngularImpulse(bodyA, bodyB, impulse) {
+  if (bodyA) {
+    bodyA.angularVelocity = addVec3(bodyA.angularVelocity, applyInverseInertiaWorld(bodyA, scaleVec3(impulse, -1)));
+  }
+
+  if (bodyB) {
+    bodyB.angularVelocity = addVec3(bodyB.angularVelocity, applyInverseInertiaWorld(bodyB, impulse));
+  }
+}
+
+function computeLinearEffectiveMass(bodyA, bodyB, offsetA, offsetB, direction) {
+  let inverseMassSum = (bodyA?.inverseMass ?? 0) + (bodyB?.inverseMass ?? 0);
+
+  if (bodyA) {
+    const angularMassA = crossVec3(applyInverseInertiaWorld(bodyA, crossVec3(offsetA, direction)), offsetA);
+    inverseMassSum += dotVec3(direction, angularMassA);
+  }
+
+  if (bodyB) {
+    const angularMassB = crossVec3(applyInverseInertiaWorld(bodyB, crossVec3(offsetB, direction)), offsetB);
+    inverseMassSum += dotVec3(direction, angularMassB);
+  }
+
+  return inverseMassSum;
+}
+
+function computeAngularEffectiveMass(bodyA, bodyB, direction) {
+  const angularMassA = bodyA ? applyInverseInertiaWorld(bodyA, direction) : createVec3();
+  const angularMassB = bodyB ? applyInverseInertiaWorld(bodyB, direction) : createVec3();
+  return dotVec3(direction, addVec3(angularMassA, angularMassB));
+}
+
+function getRelativeAngularVelocity(bodyA, bodyB) {
+  return subtractVec3(bodyB?.angularVelocity ?? createVec3(), bodyA?.angularVelocity ?? createVec3());
+}
+
+function prepareJointContext(bodyRegistry, joint) {
+  const bodyA = getDynamicBody(bodyRegistry, joint.bodyAId);
+  const bodyB = getDynamicBody(bodyRegistry, joint.bodyBId);
+  const anchorBodyA = bodyA ?? getAnyBody(bodyRegistry, joint.bodyAId);
+  const anchorBodyB = bodyB ?? getAnyBody(bodyRegistry, joint.bodyBId);
+
+  return {
+    joint,
+    bodyA,
+    bodyB,
+    anchorBodyA,
+    anchorBodyB,
+    result: createJointSolveResult(joint)
+  };
+}
+
+function refreshJointFrame(context) {
+  const offsetA = getAnchorOffset(context.anchorBodyA, context.joint.localAnchorA);
+  const offsetB = getAnchorOffset(context.anchorBodyB, context.joint.localAnchorB);
+  const worldAnchorA = getWorldAnchor(context.anchorBodyA, context.joint.localAnchorA);
+  const worldAnchorB = getWorldAnchor(context.anchorBodyB, context.joint.localAnchorB);
+  const delta = subtractVec3(worldAnchorB, worldAnchorA);
+
+  return {
+    offsetA,
+    offsetB,
+    worldAnchorA,
+    worldAnchorB,
+    delta
+  };
+}
+
+function getDistanceConstraintState(joint, currentDistance) {
+  const minDistance = toOptionalFiniteNumber(joint.minDistance);
+  const maxDistance = toOptionalFiniteNumber(joint.maxDistance);
+  const restDistance = Number.isFinite(Number(joint.distance)) ? Math.max(0, Number(joint.distance)) : currentDistance;
+  const springFrequency = Math.max(0, Number(joint.springFrequency ?? 0));
+
+  if (minDistance !== null && currentDistance < minDistance) {
+    return {
+      active: true,
+      mode: 'min-limit',
+      jointError: currentDistance - minDistance,
+      springFrequency
+    };
+  }
+
+  if (maxDistance !== null && currentDistance > maxDistance) {
+    return {
+      active: true,
+      mode: 'max-limit',
+      jointError: currentDistance - maxDistance,
+      springFrequency
+    };
+  }
+
+  if ((minDistance !== null || maxDistance !== null) && springFrequency <= 0) {
+    return {
+      active: false,
+      mode: 'range',
+      jointError: 0,
+      springFrequency
+    };
+  }
+
+  return {
+    active: true,
+    mode: springFrequency > 0 ? 'spring' : 'distance',
+    jointError: currentDistance - restDistance,
+    springFrequency
+  };
+}
+
+function buildAngularFrame(context) {
+  const joint = context.joint;
+  const axisA = normalizeVec3(
+    rotateVec3ByQuat(context.anchorBodyA?.rotation ?? createIdentityQuat(), joint.localAxisA ?? createVec3(0, 1, 0)),
+    createVec3(0, 1, 0)
+  );
+  const axisB = normalizeVec3(
+    rotateVec3ByQuat(context.anchorBodyB?.rotation ?? createIdentityQuat(), joint.localAxisB ?? createVec3(0, 1, 0)),
+    createVec3(0, 1, 0)
+  );
+  const alignmentAxis = normalizeVec3(addVec3(axisA, axisB), axisA);
+  const tangentBasis = createTangentBasis(alignmentAxis);
+  const referenceA = normalizeVec3(
+    rotateVec3ByQuat(context.anchorBodyA?.rotation ?? createIdentityQuat(), joint.localReferenceA ?? tangentBasis.tangentA),
+    tangentBasis.tangentA
+  );
+  const referenceB = normalizeVec3(
+    rotateVec3ByQuat(context.anchorBodyB?.rotation ?? createIdentityQuat(), joint.localReferenceB ?? tangentBasis.tangentA),
+    tangentBasis.tangentA
+  );
+  const angularError = Math.atan2(
+    dotVec3(crossVec3(referenceA, referenceB), alignmentAxis),
+    dotVec3(referenceA, referenceB)
+  );
+
+  return {
+    axisA,
+    axisB,
+    alignmentAxis,
+    tangentBasis,
+    referenceA,
+    referenceB,
+    angularError
+  };
+}
+
+function applyWarmStart(context, frame, stats) {
+  const joint = context.joint;
+  let warmed = false;
+
+  if (joint.type === 'distance-joint' && Math.abs(Number(joint.accumulatedImpulse ?? 0)) > 1e-8) {
+    const distanceNormal = normalizeVec3(frame.delta, createVec3(1, 0, 0));
+    applyLinearImpulse(context.bodyA, context.bodyB, frame.offsetA, frame.offsetB, scaleVec3(distanceNormal, joint.accumulatedImpulse));
+    stats.jointImpulsesApplied += Math.abs(joint.accumulatedImpulse);
+    warmed = true;
+  }
+
+  if (lengthSquaredVec3(joint.accumulatedLinearImpulse ?? createVec3()) > 1e-8) {
+    applyLinearImpulse(context.bodyA, context.bodyB, frame.offsetA, frame.offsetB, joint.accumulatedLinearImpulse);
+    stats.jointImpulsesApplied += Math.sqrt(lengthSquaredVec3(joint.accumulatedLinearImpulse));
+    warmed = true;
+  }
+
+  if (lengthSquaredVec3(joint.accumulatedAngularImpulse ?? createVec3()) > 1e-8) {
+    applyAngularImpulse(context.bodyA, context.bodyB, joint.accumulatedAngularImpulse);
+    stats.jointImpulsesApplied += Math.sqrt(lengthSquaredVec3(joint.accumulatedAngularImpulse));
+    warmed = true;
+  }
+
+  if (joint.type === 'hinge-joint' && joint.motorEnabled && Math.abs(Number(joint.accumulatedMotorImpulse ?? 0)) > 1e-8) {
+    const angularFrame = buildAngularFrame(context);
+    applyAngularImpulse(context.bodyA, context.bodyB, scaleVec3(angularFrame.alignmentAxis, Number(joint.accumulatedMotorImpulse)));
+    stats.jointImpulsesApplied += Math.abs(Number(joint.accumulatedMotorImpulse));
+    warmed = true;
+  }
+
+  if (warmed) {
+    stats.warmStartedJointCount += 1;
+  }
+}
+
+function solveDistanceJoint(context, frame, deltaTime, baumgarte, allowedStretch, stats) {
+  const joint = context.joint;
+  const currentDistance = Math.sqrt(lengthSquaredVec3(frame.delta));
+  const normal = normalizeVec3(frame.delta, createVec3(1, 0, 0));
+  const constraintState = getDistanceConstraintState(joint, currentDistance);
+  const jointError = constraintState.jointError;
+  stats.maxJointError = Math.max(stats.maxJointError, Math.abs(jointError));
+  context.result.maxLinearError = Math.max(context.result.maxLinearError, Math.abs(jointError));
+
+  if (!constraintState.active) {
+    return;
+  }
+
+  const effectiveMass = computeLinearEffectiveMass(context.bodyA, context.bodyB, frame.offsetA, frame.offsetB, normal);
+  if (effectiveMass <= 1e-8) {
+    stats.skippedJointCount += 1;
+    return;
+  }
+
+  const relativeVelocity = getRelativeVelocity(context.bodyA, context.bodyB, frame.offsetA, frame.offsetB);
+  const relativeNormalVelocity = dotVec3(relativeVelocity, normal);
+  const hardConstraint = constraintState.mode !== 'spring';
+  const positionBias = hardConstraint && Math.abs(jointError) > allowedStretch
+    ? (baumgarte * jointError) / deltaTime
+    : 0;
+  const springFrequency = constraintState.mode === 'spring' ? constraintState.springFrequency : 0;
+  const dampingRatio = springFrequency > 0 ? Math.max(0, Number(joint.dampingRatio ?? 0)) : 0;
+  const omega = springFrequency > 0 ? (Math.PI * 2 * springFrequency) : 0;
+  const springVelocityBias = springFrequency > 0 ? (omega * omega * jointError * deltaTime) : 0;
+  const dampingScale = springFrequency > 0 ? (1 + (2 * dampingRatio * omega * deltaTime)) : 1;
+  const impulseDelta = -((relativeNormalVelocity * dampingScale) + positionBias + springVelocityBias) / effectiveMass;
+
+  if (Math.abs(impulseDelta) <= 1e-8) {
+    return;
+  }
+
+  joint.accumulatedImpulse = Number(joint.accumulatedImpulse ?? 0) + impulseDelta;
+  applyLinearImpulse(context.bodyA, context.bodyB, frame.offsetA, frame.offsetB, scaleVec3(normal, impulseDelta));
+  context.result.linearImpulse += Math.abs(impulseDelta);
+  stats.solvedJointCount += 1;
+  stats.jointImpulsesApplied += Math.abs(impulseDelta);
+}
+
+function solvePointToPointLinear(context, frame, deltaTime, baumgarte, allowedStretch, stats) {
+  const joint = context.joint;
+
+  for (const axis of WORLD_AXES) {
+    const axisDirection = createVec3(axis.x, axis.y, axis.z);
+    const effectiveMass = computeLinearEffectiveMass(context.bodyA, context.bodyB, frame.offsetA, frame.offsetB, axisDirection);
+    if (effectiveMass <= 1e-8) {
+      stats.skippedJointCount += 1;
+      continue;
+    }
+
+    const relativeVelocity = getRelativeVelocity(context.bodyA, context.bodyB, frame.offsetA, frame.offsetB);
+    const errorAlongAxis = dotVec3(frame.delta, axisDirection);
+    stats.maxJointError = Math.max(stats.maxJointError, Math.abs(errorAlongAxis));
+    context.result.maxLinearError = Math.max(context.result.maxLinearError, Math.abs(errorAlongAxis));
+    const relativeAxisVelocity = dotVec3(relativeVelocity, axisDirection);
+    const positionBias = Math.abs(errorAlongAxis) > allowedStretch
+      ? (baumgarte * errorAlongAxis) / deltaTime
+      : 0;
+    const impulseDelta = -(relativeAxisVelocity + positionBias) / effectiveMass;
+
+    if (Math.abs(impulseDelta) <= 1e-8) {
+      continue;
+    }
+
+    const impulse = scaleVec3(axisDirection, impulseDelta);
+    joint.accumulatedLinearImpulse = addVec3(joint.accumulatedLinearImpulse ?? createVec3(), impulse);
+    applyLinearImpulse(context.bodyA, context.bodyB, frame.offsetA, frame.offsetB, impulse);
+    context.result.linearImpulse += Math.abs(impulseDelta);
+    stats.solvedJointCount += 1;
+    stats.jointImpulsesApplied += Math.abs(impulseDelta);
+  }
+}
+
+function solveAngularAxisAlignment(context, angularFrame, deltaTime, baumgarte, allowedStretch, stats) {
+  const joint = context.joint;
+  const alignmentError = crossVec3(angularFrame.axisA, angularFrame.axisB);
+  const relativeAngularVelocity = getRelativeAngularVelocity(context.bodyA, context.bodyB);
+
+  for (const tangent of [angularFrame.tangentBasis.tangentA, angularFrame.tangentBasis.tangentB]) {
+    const effectiveMass = computeAngularEffectiveMass(context.bodyA, context.bodyB, tangent);
+    if (effectiveMass <= 1e-8) {
+      stats.skippedJointCount += 1;
+      continue;
+    }
+
+    const errorAlongTangent = dotVec3(alignmentError, tangent);
+    stats.maxJointError = Math.max(stats.maxJointError, Math.abs(errorAlongTangent));
+    context.result.maxAngularError = Math.max(context.result.maxAngularError, Math.abs(errorAlongTangent));
+    const relativeAngularVelocityAlongTangent = dotVec3(relativeAngularVelocity, tangent);
+    const positionBias = Math.abs(errorAlongTangent) > allowedStretch
+      ? (baumgarte * errorAlongTangent) / deltaTime
+      : 0;
+    const impulseDelta = -(relativeAngularVelocityAlongTangent + positionBias) / effectiveMass;
+
+    if (Math.abs(impulseDelta) <= 1e-8) {
+      continue;
+    }
+
+    const impulse = scaleVec3(tangent, impulseDelta);
+    joint.accumulatedAngularImpulse = addVec3(joint.accumulatedAngularImpulse ?? createVec3(), impulse);
+    applyAngularImpulse(context.bodyA, context.bodyB, impulse);
+    context.result.angularImpulse += Math.abs(impulseDelta);
+    stats.solvedJointCount += 1;
+    stats.jointImpulsesApplied += Math.abs(impulseDelta);
+  }
+}
+
+function solveAngularAngleTarget(context, angularFrame, targetAngle, deltaTime, baumgarte, allowedStretch, stats) {
+  const angleError = angularFrame.angularError - targetAngle;
+  stats.maxJointError = Math.max(stats.maxJointError, Math.abs(angleError));
+  context.result.maxAngularError = Math.max(context.result.maxAngularError, Math.abs(angleError));
+
+  if (Math.abs(angleError) <= 1e-8) {
+    return;
+  }
+
+  const effectiveMass = computeAngularEffectiveMass(context.bodyA, context.bodyB, angularFrame.alignmentAxis);
+  if (effectiveMass <= 1e-8) {
+    stats.skippedJointCount += 1;
+    return;
+  }
+
+  const relativeAngularVelocity = getRelativeAngularVelocity(context.bodyA, context.bodyB);
+  const relativeAxisVelocity = dotVec3(relativeAngularVelocity, angularFrame.alignmentAxis);
+  const positionBias = Math.abs(angleError) > allowedStretch
+    ? (baumgarte * angleError) / deltaTime
+    : 0;
+  const impulseDelta = -(relativeAxisVelocity + positionBias) / effectiveMass;
+
+  if (Math.abs(impulseDelta) <= 1e-8) {
+    return;
+  }
+
+  const impulse = scaleVec3(angularFrame.alignmentAxis, impulseDelta);
+  context.joint.accumulatedAngularImpulse = addVec3(context.joint.accumulatedAngularImpulse ?? createVec3(), impulse);
+  applyAngularImpulse(context.bodyA, context.bodyB, impulse);
+  context.result.angularImpulse += Math.abs(impulseDelta);
+  stats.solvedJointCount += 1;
+  stats.jointImpulsesApplied += Math.abs(impulseDelta);
+}
+
+function solveHingeAngularLimits(context, angularFrame, deltaTime, baumgarte, allowedStretch, stats) {
+  const joint = context.joint;
+  const lowerAngle = toOptionalFiniteNumber(joint.lowerAngle);
+  const upperAngle = toOptionalFiniteNumber(joint.upperAngle);
+  if (lowerAngle === null && upperAngle === null) {
+    return;
+  }
+
+  const clampedAngle = clampNumber(
+    angularFrame.angularError,
+    lowerAngle ?? angularFrame.angularError,
+    upperAngle ?? angularFrame.angularError
+  );
+  solveAngularAngleTarget(context, angularFrame, clampedAngle, deltaTime, baumgarte, allowedStretch, stats);
+}
+
+function solveHingeMotor(context, angularFrame, deltaTime, stats) {
+  const joint = context.joint;
+  if (!joint.motorEnabled || Number(joint.maxMotorTorque ?? 0) <= 1e-8) {
+    return;
+  }
+
+  const lowerAngle = toOptionalFiniteNumber(joint.lowerAngle);
+  const upperAngle = toOptionalFiniteNumber(joint.upperAngle);
+  let motorSpeed = Number(joint.motorSpeed ?? 0);
+  if (joint.motorMode === 'servo') {
+    const servoTarget = clampNumber(
+      Number(joint.motorTargetAngle ?? 0),
+      lowerAngle ?? Number(joint.motorTargetAngle ?? 0),
+      upperAngle ?? Number(joint.motorTargetAngle ?? 0)
+    );
+    const servoGain = Math.max(0, Number(joint.motorServoGain ?? 8));
+    const servoMaxSpeed = Math.max(0, Number(joint.motorSpeed ?? 0));
+    const servoSpeed = (servoTarget - angularFrame.angularError) * servoGain;
+    motorSpeed = clampNumber(servoSpeed, -servoMaxSpeed, servoMaxSpeed);
+  }
+
+  if ((upperAngle !== null && angularFrame.angularError >= upperAngle - 1e-4 && motorSpeed > 0) ||
+    (lowerAngle !== null && angularFrame.angularError <= lowerAngle + 1e-4 && motorSpeed < 0)) {
+    return;
+  }
+
+  const effectiveMass = computeAngularEffectiveMass(context.bodyA, context.bodyB, angularFrame.alignmentAxis);
+  if (effectiveMass <= 1e-8) {
+    stats.skippedJointCount += 1;
+    return;
+  }
+
+  const relativeAngularVelocity = getRelativeAngularVelocity(context.bodyA, context.bodyB);
+  const relativeAxisVelocity = dotVec3(relativeAngularVelocity, angularFrame.alignmentAxis);
+  const maxImpulse = Number(joint.maxMotorTorque ?? 0) * deltaTime;
+  const impulseDelta = (motorSpeed - relativeAxisVelocity) / effectiveMass;
+  const nextImpulse = clampNumber(
+    Number(joint.accumulatedMotorImpulse ?? 0) + impulseDelta,
+    -maxImpulse,
+    maxImpulse
+  );
+  const appliedImpulse = nextImpulse - Number(joint.accumulatedMotorImpulse ?? 0);
+
+  if (Math.abs(appliedImpulse) <= 1e-8) {
+    return;
+  }
+
+  joint.accumulatedMotorImpulse = nextImpulse;
+  applyAngularImpulse(context.bodyA, context.bodyB, scaleVec3(angularFrame.alignmentAxis, appliedImpulse));
+  context.result.motorImpulse += Math.abs(appliedImpulse);
+  stats.solvedJointCount += 1;
+  stats.jointImpulsesApplied += Math.abs(appliedImpulse);
+}
+
+function solveHingeAngularDamping(context, angularFrame, deltaTime, stats) {
+  const damping = Math.max(0, Number(context.joint.angularDamping ?? 0));
+  if (damping <= 1e-8) {
+    return;
+  }
+
+  const effectiveMass = computeAngularEffectiveMass(context.bodyA, context.bodyB, angularFrame.alignmentAxis);
+  if (effectiveMass <= 1e-8) {
+    stats.skippedJointCount += 1;
+    return;
+  }
+
+  const relativeAngularVelocity = getRelativeAngularVelocity(context.bodyA, context.bodyB);
+  const relativeAxisVelocity = dotVec3(relativeAngularVelocity, angularFrame.alignmentAxis);
+  const dampingFactor = 1 - Math.exp(-(damping * deltaTime));
+  const impulseDelta = -((relativeAxisVelocity * dampingFactor) / effectiveMass);
+
+  if (Math.abs(impulseDelta) <= 1e-8) {
+    return;
+  }
+
+  const impulse = scaleVec3(angularFrame.alignmentAxis, impulseDelta);
+  context.joint.accumulatedAngularImpulse = addVec3(context.joint.accumulatedAngularImpulse ?? createVec3(), impulse);
+  applyAngularImpulse(context.bodyA, context.bodyB, impulse);
+  context.result.angularImpulse += Math.abs(impulseDelta);
+  stats.solvedJointCount += 1;
+  stats.jointImpulsesApplied += Math.abs(impulseDelta);
+}
+
+function solveFixedJoint(context, frame, deltaTime, baumgarte, allowedStretch, stats) {
+  solvePointToPointLinear(context, frame, deltaTime, baumgarte, allowedStretch, stats);
+  const angularFrame = buildAngularFrame(context);
+  solveAngularAxisAlignment(context, angularFrame, deltaTime, baumgarte, allowedStretch, stats);
+  solveAngularAngleTarget(context, angularFrame, 0, deltaTime, baumgarte, allowedStretch, stats);
+}
+
+function solveHingeJoint(context, frame, deltaTime, baumgarte, allowedStretch, stats) {
+  solvePointToPointLinear(context, frame, deltaTime, baumgarte, allowedStretch, stats);
+  const angularFrame = buildAngularFrame(context);
+  solveAngularAxisAlignment(context, angularFrame, deltaTime, baumgarte, allowedStretch, stats);
+  solveHingeAngularLimits(context, angularFrame, deltaTime, baumgarte, allowedStretch, stats);
+  solveHingeMotor(context, angularFrame, deltaTime, stats);
+  solveHingeAngularDamping(context, angularFrame, deltaTime, stats);
+}
+
+function solveJoint(context, deltaTime, iterations, baumgarte, allowedStretch, stats) {
+  const joint = context.joint;
+  if (!context.bodyA && !context.bodyB) {
+    stats.skippedJointCount += 1;
+    return;
+  }
+
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const frame = refreshJointFrame(context);
+
+    if (joint.type === 'distance-joint') {
+      solveDistanceJoint(context, frame, deltaTime, baumgarte, allowedStretch, stats);
+      continue;
+    }
+
+    if (joint.type === 'point-to-point-joint') {
+      solvePointToPointLinear(context, frame, deltaTime, baumgarte, allowedStretch, stats);
+      continue;
+    }
+
+    if (joint.type === 'hinge-joint') {
+      solveHingeJoint(context, frame, deltaTime, baumgarte, allowedStretch, stats);
+      continue;
+    }
+
+    if (joint.type === 'fixed-joint') {
+      solveFixedJoint(context, frame, deltaTime, baumgarte, allowedStretch, stats);
+      continue;
+    }
+
+    stats.skippedJointCount += 1;
+  }
+}
+function solveJointConstraints(options = {}) {
+  const joints = Array.isArray(options.joints) ? options.joints.filter((joint) => joint?.enabled !== false) : [];
+  const bodyRegistry = options.bodyRegistry;
+  const deltaTime = Math.max(Number(options.deltaTime ?? 0), 1e-8);
+  const iterations = Math.max(1, Math.floor(Number(options.iterations ?? 6)));
+  const baumgarte = Number(options.baumgarte ?? 0.15);
+  const allowedStretch = Math.max(0, Number(options.allowedStretch ?? 0.001));
+  const stats = createEmptyJointSolverStats(iterations);
+  stats.jointCount = joints.length;
+
+  const preparedJoints = joints.map((joint) => prepareJointContext(bodyRegistry, joint));
+
+  for (const context of preparedJoints) {
+    applyWarmStart(context, refreshJointFrame(context), stats);
+  }
+
+  for (const context of preparedJoints) {
+    solveJoint(context, deltaTime, iterations, baumgarte, allowedStretch, stats);
+  }
+
+  stats.jointResults = preparedJoints.map((context) => ({
+    ...context.result
+  }));
+
+  return stats;
+}
+function solveDistanceJointConstraints(options = {}) {
+  return solveJointConstraints({
+    ...options,
+    joints: (Array.isArray(options.joints) ? options.joints : []).filter((joint) => joint?.type === 'distance-joint')
+  });
+}
+
+__exports.solveJointConstraints = solveJointConstraints;
+__exports.solveDistanceJointConstraints = solveDistanceJointConstraints;
+},
+  16: function(__require, __exports) {
 const { createIdentityQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
 const { addScaledVec3, addVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
 const { createTangentBasis } = __require(7);
@@ -2602,7 +4500,7 @@ function getDynamicBody(bodyRegistry, bodyId) {
   }
 
   const body = bodyRegistry.getMutable(bodyId);
-  if (!body || !body.enabled || body.motionType !== 'dynamic') {
+  if (!body || !body.enabled || body.motionType !== 'dynamic' || body.sleeping) {
     return null;
   }
 
@@ -2844,20 +4742,261 @@ function solveNormalContactConstraints(options = {}) {
 
 __exports.solveNormalContactConstraints = solveNormalContactConstraints;
 },
-  15: function(__require, __exports) {
-const { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfExtents, testAabbOverlap, testPointInAabb } = __require(4);
+  17: function(__require, __exports) {
+function shouldIncludeDynamicBody(body) {
+  return Boolean(body && body.enabled && body.motionType === 'dynamic');
+}
+
+function connectBodies(adjacency, bodyAId, bodyBId) {
+  if (!bodyAId || !bodyBId || bodyAId === bodyBId) {
+    return;
+  }
+
+  adjacency.get(bodyAId)?.add(bodyBId);
+  adjacency.get(bodyBId)?.add(bodyAId);
+}
+function cloneRigidBodyIsland(island) {
+  return {
+    id: island.id,
+    bodyIds: [...island.bodyIds],
+    manifoldPairKeys: [...island.manifoldPairKeys],
+    jointIds: [...(island.jointIds ?? [])],
+    manifoldCount: island.manifoldCount,
+    jointCount: island.jointCount ?? 0,
+    constraintCount: island.constraintCount ?? island.manifoldCount,
+    contactCount: island.contactCount,
+    sleepingBodyCount: island.sleepingBodyCount,
+    awakeBodyCount: island.awakeBodyCount,
+    touchesStatic: island.touchesStatic,
+    touchesConstraint: island.touchesConstraint ?? false,
+    canSleep: island.canSleep
+  };
+}
+function cloneRigidBodyIslandGraph(graph) {
+  const source = graph ?? {
+    islands: [],
+    islandCount: 0,
+    bodyCount: 0,
+    sleepingBodyCount: 0,
+    awakeBodyCount: 0
+  };
+
+  return {
+    islands: Array.isArray(source.islands) ? source.islands.map((island) => cloneRigidBodyIsland(island)) : [],
+    islandCount: Number(source.islandCount ?? 0),
+    bodyCount: Number(source.bodyCount ?? 0),
+    sleepingBodyCount: Number(source.sleepingBodyCount ?? 0),
+    awakeBodyCount: Number(source.awakeBodyCount ?? 0)
+  };
+}
+function buildRigidBodyIslandGraph(options = {}) {
+  const bodyRegistry = options.bodyRegistry;
+  const manifolds = Array.isArray(options.manifolds) ? options.manifolds : [];
+  const joints = Array.isArray(options.joints) ? options.joints : [];
+  const bodyIds = [];
+  const bodyStateById = new Map();
+  const adjacency = new Map();
+  const manifoldKeysByBodyId = new Map();
+  const manifoldByPairKey = new Map();
+  const jointIdsByBodyId = new Map();
+  const jointById = new Map();
+
+  bodyRegistry?.forEachMutable((body) => {
+    if (!shouldIncludeDynamicBody(body)) {
+      return;
+    }
+
+    bodyIds.push(body.id);
+    bodyStateById.set(body.id, {
+      sleeping: Boolean(body.sleeping),
+      canSleep: body.canSleep !== false
+    });
+    adjacency.set(body.id, new Set());
+    manifoldKeysByBodyId.set(body.id, new Set());
+    jointIdsByBodyId.set(body.id, new Set());
+  });
+
+  for (const manifold of manifolds) {
+    if (!manifold?.pairKey) {
+      continue;
+    }
+
+    manifoldByPairKey.set(manifold.pairKey, manifold);
+
+    const dynamicBodyIds = [];
+    if (manifold.bodyAId && adjacency.has(manifold.bodyAId)) {
+      dynamicBodyIds.push(manifold.bodyAId);
+      manifoldKeysByBodyId.get(manifold.bodyAId)?.add(manifold.pairKey);
+    }
+
+    if (manifold.bodyBId && adjacency.has(manifold.bodyBId) && manifold.bodyBId !== manifold.bodyAId) {
+      dynamicBodyIds.push(manifold.bodyBId);
+      manifoldKeysByBodyId.get(manifold.bodyBId)?.add(manifold.pairKey);
+    }
+
+    if (dynamicBodyIds.length >= 2) {
+      connectBodies(adjacency, dynamicBodyIds[0], dynamicBodyIds[1]);
+    }
+  }
+
+  for (const joint of joints) {
+    if (!joint?.id || joint.enabled === false) {
+      continue;
+    }
+
+    jointById.set(joint.id, joint);
+    const dynamicBodyIds = [];
+    if (joint.bodyAId && adjacency.has(joint.bodyAId)) {
+      dynamicBodyIds.push(joint.bodyAId);
+      jointIdsByBodyId.get(joint.bodyAId)?.add(joint.id);
+    }
+
+    if (joint.bodyBId && adjacency.has(joint.bodyBId) && joint.bodyBId !== joint.bodyAId) {
+      dynamicBodyIds.push(joint.bodyBId);
+      jointIdsByBodyId.get(joint.bodyBId)?.add(joint.id);
+    }
+
+    if (dynamicBodyIds.length >= 2) {
+      connectBodies(adjacency, dynamicBodyIds[0], dynamicBodyIds[1]);
+    }
+  }
+
+  const islands = [];
+  const visited = new Set();
+  let nextIslandId = 1;
+
+  for (const rootBodyId of bodyIds) {
+    if (visited.has(rootBodyId)) {
+      continue;
+    }
+
+    const queue = [rootBodyId];
+    const islandBodyIds = [];
+    const manifoldPairKeys = new Set();
+    const jointIds = new Set();
+
+    while (queue.length > 0) {
+      const bodyId = queue.shift();
+      if (!bodyId || visited.has(bodyId)) {
+        continue;
+      }
+
+      visited.add(bodyId);
+      islandBodyIds.push(bodyId);
+
+      for (const pairKey of manifoldKeysByBodyId.get(bodyId) ?? []) {
+        manifoldPairKeys.add(pairKey);
+      }
+
+      for (const jointId of jointIdsByBodyId.get(bodyId) ?? []) {
+        jointIds.add(jointId);
+      }
+
+      for (const neighborId of adjacency.get(bodyId) ?? []) {
+        if (!visited.has(neighborId)) {
+          queue.push(neighborId);
+        }
+      }
+    }
+
+    const pairKeyList = Array.from(manifoldPairKeys);
+    const jointIdList = Array.from(jointIds);
+    let contactCount = 0;
+    let touchesStatic = false;
+    let sleepingBodyCount = 0;
+    let awakeBodyCount = 0;
+    let canSleep = true;
+    let touchesConstraint = jointIdList.length > 0;
+
+    for (const bodyId of islandBodyIds) {
+      const state = bodyStateById.get(bodyId);
+      if (!state) {
+        continue;
+      }
+
+      if (state.sleeping) {
+        sleepingBodyCount += 1;
+      } else {
+        awakeBodyCount += 1;
+      }
+
+      canSleep = canSleep && state.canSleep;
+    }
+
+    for (const pairKey of pairKeyList) {
+      const manifold = manifoldByPairKey.get(pairKey);
+      if (!manifold) {
+        continue;
+      }
+
+      contactCount += Number(manifold.contactCount ?? manifold.contacts?.length ?? 0);
+      const dynamicParticipants = [manifold.bodyAId, manifold.bodyBId].filter((bodyId) => bodyId && bodyStateById.has(bodyId));
+      if (dynamicParticipants.length < 2) {
+        touchesStatic = true;
+      }
+    }
+
+    for (const jointId of jointIdList) {
+      const joint = jointById.get(jointId);
+      if (!joint) {
+        continue;
+      }
+
+      const dynamicParticipants = [joint.bodyAId, joint.bodyBId].filter((bodyId) => bodyId && bodyStateById.has(bodyId));
+      if (dynamicParticipants.length < 2) {
+        touchesStatic = true;
+      }
+    }
+
+    islands.push({
+      id: `island-${nextIslandId}`,
+      bodyIds: islandBodyIds,
+      manifoldPairKeys: pairKeyList,
+      jointIds: jointIdList,
+      manifoldCount: pairKeyList.length,
+      jointCount: jointIdList.length,
+      constraintCount: pairKeyList.length + jointIdList.length,
+      contactCount,
+      sleepingBodyCount,
+      awakeBodyCount,
+      touchesStatic,
+      touchesConstraint,
+      canSleep
+    });
+    nextIslandId += 1;
+  }
+
+  return {
+    islands,
+    islandCount: islands.length,
+    bodyCount: bodyIds.length,
+    sleepingBodyCount: islands.reduce((total, island) => total + island.sleepingBodyCount, 0),
+    awakeBodyCount: islands.reduce((total, island) => total + island.awakeBodyCount, 0)
+  };
+}
+
+__exports.cloneRigidBodyIsland = cloneRigidBodyIsland;
+__exports.cloneRigidBodyIslandGraph = cloneRigidBodyIslandGraph;
+__exports.buildRigidBodyIslandGraph = buildRigidBodyIslandGraph;
+},
+  18: function(__require, __exports) {
+const { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfExtents, intersectRayAabb, testAabbOverlap, testPointInAabb } = __require(4);
 const { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } = __require(8);
 const { cloneContactPair, runNarrowphase } = __require(11);
-const { composePoses } = __require(7);
-const { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } = __require(12);
-const { cloneManifold, ManifoldCache } = __require(13);
+const { capsuleCastShape, castConvexShapesWithToi, cloneRaycastResult, cloneShapeCastResult, computeSweptShapeAabb, createRaycastResult, createShapeCastResult, raycastShape, sphereCastShape } = __require(12);
+const { composePoses, createTangentBasis } = __require(7);
+const { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } = __require(13);
+const { cloneManifold, ManifoldCache } = __require(14);
 const { cloneQuat, createIdentityQuat, integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
-const { addScaledVec3, addVec3, cloneVec3, createVec3, lengthSquaredVec3 } = __require(6);
-const { solveNormalContactConstraints } = __require(14);
-const { BodyRegistry } = __require(16);
-const { ColliderRegistry } = __require(18);
-const { MaterialRegistry } = __require(19);
-const { ShapeRegistry } = __require(20);
+const { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
+const { buildRigidBodyIslandGraph, cloneRigidBodyIslandGraph, cloneRigidBodyIsland } = __require(17);
+const { solveJointConstraints } = __require(15);
+const { solveNormalContactConstraints } = __require(16);
+const { BodyRegistry } = __require(19);
+const { ColliderRegistry } = __require(21);
+const { JointRegistry } = __require(22);
+const { MaterialRegistry } = __require(23);
+const { ShapeRegistry } = __require(24);
 const DEFAULT_MATERIAL_ID = 'material-default';
 
 function toPositiveNumber(value, fallback) {
@@ -2868,6 +5007,66 @@ function toPositiveNumber(value, fallback) {
 function toNonNegativeNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function toOptionalNumber(value, fallback = null) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toOptionalNonNegativeNumber(value, fallback = null) {
+  const parsed = toOptionalNumber(value, fallback);
+  return parsed !== null && parsed >= 0 ? parsed : fallback;
+}
+
+function normalizeDistanceLimits(minDistance, maxDistance) {
+  let resolvedMin = toOptionalNonNegativeNumber(minDistance, null);
+  let resolvedMax = toOptionalNonNegativeNumber(maxDistance, null);
+
+  if (resolvedMin !== null && resolvedMax !== null && resolvedMin > resolvedMax) {
+    const temp = resolvedMin;
+    resolvedMin = resolvedMax;
+    resolvedMax = temp;
+  }
+
+  return {
+    minDistance: resolvedMin,
+    maxDistance: resolvedMax
+  };
+}
+
+function clampDistanceToRange(distance, minDistance, maxDistance) {
+  let resolvedDistance = toNonNegativeNumber(distance, 0);
+
+  if (minDistance !== null) {
+    resolvedDistance = Math.max(resolvedDistance, minDistance);
+  }
+
+  if (maxDistance !== null) {
+    resolvedDistance = Math.min(resolvedDistance, maxDistance);
+  }
+
+  return resolvedDistance;
+}
+
+function normalizeAngleLimits(lowerAngle, upperAngle) {
+  let resolvedLower = toOptionalNumber(lowerAngle, null);
+  let resolvedUpper = toOptionalNumber(upperAngle, null);
+
+  if (resolvedLower !== null && resolvedUpper !== null && resolvedLower > resolvedUpper) {
+    const temp = resolvedLower;
+    resolvedLower = resolvedUpper;
+    resolvedUpper = temp;
+  }
+
+  return {
+    lowerAngle: resolvedLower,
+    upperAngle: resolvedUpper
+  };
 }
 
 function cloneCamera(camera) {
@@ -2889,35 +5088,127 @@ function createQueryResult(type, options = {}) {
   };
 }
 
+function createRaycastMiss(options = {}) {
+  const origin = cloneVec3(options.origin ?? createVec3());
+  const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+  const maxDistance = toNonNegativeNumber(options.maxDistance, 0);
+
+  return createRaycastResult({
+    hit: false,
+    origin,
+    direction,
+    maxDistance,
+    proxyCount: options.proxyCount ?? 0,
+    candidateCount: options.candidateCount ?? 0,
+    testedShapeCount: options.testedShapeCount ?? 0
+  });
+}
+
+function createShapeCastMiss(options = {}) {
+  const origin = cloneVec3(options.origin ?? createVec3());
+  const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+  const maxDistance = toNonNegativeNumber(options.maxDistance, 0);
+
+  return createShapeCastResult({
+    castType: options.castType ?? 'shape',
+    hit: false,
+    origin,
+    direction,
+    maxDistance,
+    radius: options.radius ?? 0,
+    halfHeight: options.halfHeight ?? 0,
+    rotation: options.rotation ?? createIdentityQuat(),
+    sampleOrigins: options.sampleOrigins ?? [],
+    sampleEndPoints: options.sampleEndPoints ?? [],
+    proxyCount: options.proxyCount ?? 0,
+    candidateCount: options.candidateCount ?? 0,
+    testedShapeCount: options.testedShapeCount ?? 0
+  });
+}
+
+function cloneOptionalVec3(vector) {
+  return vector ? cloneVec3(vector) : null;
+}
+
+function createCcdEvent(options = {}) {
+  return {
+    bodyId: String(options.bodyId ?? '').trim() || null,
+    colliderId: String(options.colliderId ?? '').trim() || null,
+    castType: String(options.castType ?? 'shape').trim() || 'shape',
+    startPosition: cloneVec3(options.startPosition ?? createVec3()),
+    endPosition: cloneVec3(options.endPosition ?? createVec3()),
+    hitPosition: cloneOptionalVec3(options.hitPosition ?? null),
+    normal: cloneOptionalVec3(options.normal ?? null),
+    targetColliderId: String(options.targetColliderId ?? '').trim() || null,
+    targetBodyId: String(options.targetBodyId ?? '').trim() || null,
+    distance: Number(options.distance ?? 0),
+    algorithm: String(options.algorithm ?? '').trim() || null
+  };
+}
+
+function cloneCcdEvent(event) {
+  return createCcdEvent(event);
+}
+
+function cloneCcdEvents(events) {
+  return Array.isArray(events) ? events.map((event) => cloneCcdEvent(event)) : [];
+}
+
 function createEmptySolverStats(iterations = 0) {
   return {
     iterations,
     manifoldCount: 0,
+    jointCount: 0,
     warmStartedContactCount: 0,
+    warmStartedJointCount: 0,
     solvedContactCount: 0,
     solvedTangentContactCount: 0,
+    solvedJointCount: 0,
     restitutionContactCount: 0,
     skippedContactCount: 0,
+    skippedJointCount: 0,
     impulsesApplied: 0,
     frictionImpulsesApplied: 0,
+    jointImpulsesApplied: 0,
     positionCorrections: 0,
-    maxPenetration: 0
+    maxPenetration: 0,
+    maxJointError: 0
   };
+}
+
+function createEmptyIslandState() {
+  return {
+    islands: [],
+    islandCount: 0,
+    bodyCount: 0,
+    sleepingBodyCount: 0,
+    awakeBodyCount: 0
+  };
+}
+
+function cloneIslandState(islandState) {
+  return cloneRigidBodyIslandGraph(islandState ?? createEmptyIslandState());
 }
 
 function cloneSolverStats(solverStats) {
   return {
-    iterations: solverStats.iterations,
-    manifoldCount: solverStats.manifoldCount,
-    warmStartedContactCount: solverStats.warmStartedContactCount,
-    solvedContactCount: solverStats.solvedContactCount,
-    solvedTangentContactCount: solverStats.solvedTangentContactCount,
-    restitutionContactCount: solverStats.restitutionContactCount,
-    skippedContactCount: solverStats.skippedContactCount,
-    impulsesApplied: solverStats.impulsesApplied,
-    frictionImpulsesApplied: solverStats.frictionImpulsesApplied,
-    positionCorrections: solverStats.positionCorrections,
-    maxPenetration: solverStats.maxPenetration
+    iterations: Number(solverStats.iterations ?? 0),
+    manifoldCount: Number(solverStats.manifoldCount ?? 0),
+    jointCount: Number(solverStats.jointCount ?? 0),
+    warmStartedContactCount: Number(solverStats.warmStartedContactCount ?? 0),
+    warmStartedJointCount: Number(solverStats.warmStartedJointCount ?? 0),
+    solvedContactCount: Number(solverStats.solvedContactCount ?? 0),
+    solvedTangentContactCount: Number(solverStats.solvedTangentContactCount ?? 0),
+    solvedJointCount: Number(solverStats.solvedJointCount ?? 0),
+    restitutionContactCount: Number(solverStats.restitutionContactCount ?? 0),
+    skippedContactCount: Number(solverStats.skippedContactCount ?? 0),
+    skippedJointCount: Number(solverStats.skippedJointCount ?? 0),
+    impulsesApplied: Number(solverStats.impulsesApplied ?? 0),
+    frictionImpulsesApplied: Number(solverStats.frictionImpulsesApplied ?? 0),
+    jointImpulsesApplied: Number(solverStats.jointImpulsesApplied ?? 0),
+    positionCorrections: Number(solverStats.positionCorrections ?? 0),
+    maxPenetration: Number(solverStats.maxPenetration ?? 0),
+    maxJointError: Number(solverStats.maxJointError ?? 0)
   };
 }
 
@@ -2927,12 +5218,18 @@ function createEmptyCollisionState(iterations = 0) {
     broadphasePairs: [],
     contactPairs: [],
     manifolds: [],
+    islands: [],
+    joints: [],
     solverStats: createEmptySolverStats(iterations),
     summary: {
       proxyCount: 0,
       pairCount: 0,
       contactCount: 0,
       manifoldCount: 0,
+      jointCount: 0,
+      islandCount: 0,
+      sleepingBodyCount: 0,
+      awakeBodyCount: 0,
       unsupportedPairCount: 0,
       pairKinds: {},
       algorithms: {}
@@ -2946,6 +5243,10 @@ function cloneCollisionSummary(summary) {
     pairCount: summary.pairCount,
     contactCount: summary.contactCount,
     manifoldCount: summary.manifoldCount,
+    jointCount: Number(summary.jointCount ?? 0),
+    islandCount: summary.islandCount,
+    sleepingBodyCount: summary.sleepingBodyCount,
+    awakeBodyCount: summary.awakeBodyCount,
     unsupportedPairCount: summary.unsupportedPairCount,
     pairKinds: { ...summary.pairKinds },
     algorithms: { ...summary.algorithms }
@@ -2958,6 +5259,29 @@ function cloneCollisionState(collisionState) {
     broadphasePairs: collisionState.broadphasePairs.map((pair) => cloneBroadphasePair(pair)),
     contactPairs: collisionState.contactPairs.map((contactPair) => cloneContactPair(contactPair)),
     manifolds: collisionState.manifolds.map((manifold) => cloneManifold(manifold)),
+    islands: collisionState.islands.map((island) => cloneRigidBodyIsland(island)),
+    joints: Array.isArray(collisionState.joints)
+      ? collisionState.joints.map((joint) => ({
+        ...joint,
+        localAnchorA: cloneVec3(joint.localAnchorA),
+        localAnchorB: cloneVec3(joint.localAnchorB),
+        localAxisA: cloneVec3(joint.localAxisA ?? createVec3(0, 1, 0)),
+        localAxisB: cloneVec3(joint.localAxisB ?? createVec3(0, 1, 0)),
+        localReferenceA: cloneVec3(joint.localReferenceA ?? createVec3(1, 0, 0)),
+        localReferenceB: cloneVec3(joint.localReferenceB ?? createVec3(1, 0, 0)),
+        breakForce: joint.breakForce ?? null,
+        breakTorque: joint.breakTorque ?? null,
+        broken: joint.broken === true,
+        lastAppliedForce: Number(joint.lastAppliedForce ?? 0),
+        lastAppliedTorque: Number(joint.lastAppliedTorque ?? 0),
+        motorMode: joint.motorMode ?? 'speed',
+        motorTargetAngle: Number(joint.motorTargetAngle ?? 0),
+        motorServoGain: Number(joint.motorServoGain ?? 8),
+        accumulatedLinearImpulse: cloneVec3(joint.accumulatedLinearImpulse ?? createVec3()),
+        accumulatedAngularImpulse: cloneVec3(joint.accumulatedAngularImpulse ?? createVec3()),
+        accumulatedMotorImpulse: Number(joint.accumulatedMotorImpulse ?? 0)
+      }))
+      : [],
     solverStats: cloneSolverStats(collisionState.solverStats),
     summary: cloneCollisionSummary(collisionState.summary)
   };
@@ -2971,17 +5295,23 @@ function countByPairKind(pairs) {
 }
 
 function mergeSolverStats(target, source) {
-  target.iterations = Math.max(target.iterations, source.iterations);
-  target.manifoldCount = Math.max(target.manifoldCount, source.manifoldCount);
-  target.warmStartedContactCount += source.warmStartedContactCount;
-  target.solvedContactCount += source.solvedContactCount;
-  target.solvedTangentContactCount += source.solvedTangentContactCount;
-  target.restitutionContactCount += source.restitutionContactCount;
-  target.skippedContactCount += source.skippedContactCount;
-  target.impulsesApplied += source.impulsesApplied;
-  target.frictionImpulsesApplied += source.frictionImpulsesApplied;
-  target.positionCorrections += source.positionCorrections;
-  target.maxPenetration = Math.max(target.maxPenetration, source.maxPenetration);
+  target.iterations = Math.max(Number(target.iterations ?? 0), Number(source.iterations ?? 0));
+  target.manifoldCount = Math.max(Number(target.manifoldCount ?? 0), Number(source.manifoldCount ?? 0));
+  target.jointCount = Math.max(Number(target.jointCount ?? 0), Number(source.jointCount ?? 0));
+  target.warmStartedContactCount = Number(target.warmStartedContactCount ?? 0) + Number(source.warmStartedContactCount ?? 0);
+  target.warmStartedJointCount = Number(target.warmStartedJointCount ?? 0) + Number(source.warmStartedJointCount ?? 0);
+  target.solvedContactCount = Number(target.solvedContactCount ?? 0) + Number(source.solvedContactCount ?? 0);
+  target.solvedTangentContactCount = Number(target.solvedTangentContactCount ?? 0) + Number(source.solvedTangentContactCount ?? 0);
+  target.solvedJointCount = Number(target.solvedJointCount ?? 0) + Number(source.solvedJointCount ?? 0);
+  target.restitutionContactCount = Number(target.restitutionContactCount ?? 0) + Number(source.restitutionContactCount ?? 0);
+  target.skippedContactCount = Number(target.skippedContactCount ?? 0) + Number(source.skippedContactCount ?? 0);
+  target.skippedJointCount = Number(target.skippedJointCount ?? 0) + Number(source.skippedJointCount ?? 0);
+  target.impulsesApplied = Number(target.impulsesApplied ?? 0) + Number(source.impulsesApplied ?? 0);
+  target.frictionImpulsesApplied = Number(target.frictionImpulsesApplied ?? 0) + Number(source.frictionImpulsesApplied ?? 0);
+  target.jointImpulsesApplied = Number(target.jointImpulsesApplied ?? 0) + Number(source.jointImpulsesApplied ?? 0);
+  target.positionCorrections = Number(target.positionCorrections ?? 0) + Number(source.positionCorrections ?? 0);
+  target.maxPenetration = Math.max(Number(target.maxPenetration ?? 0), Number(source.maxPenetration ?? 0));
+  target.maxJointError = Math.max(Number(target.maxJointError ?? 0), Number(source.maxJointError ?? 0));
 }
 
 function combineMaterialProperties(materialA, materialB) {
@@ -3062,23 +5392,83 @@ function computeShapeInertia(shape, mass) {
   return createVec3();
 }
 
+function computeBoundingSphereRadius(shape) {
+  if (!shape) {
+    return 0;
+  }
+
+  if (shape.type === 'sphere') {
+    return Math.abs(Number(shape.geometry.radius ?? 0));
+  }
+
+  if (shape.type === 'capsule') {
+    return Math.abs(Number(shape.geometry.radius ?? 0)) + Math.abs(Number(shape.geometry.halfHeight ?? 0));
+  }
+
+  const localAabb = computeLocalShapeAabb(shape);
+  const halfExtents = localAabb?.halfExtents ?? createVec3();
+  return Math.sqrt(
+    halfExtents.x * halfExtents.x +
+    halfExtents.y * halfExtents.y +
+    halfExtents.z * halfExtents.z
+  );
+}
+
+function buildCastSampleOrigins(castType, origin, halfHeight, rotation) {
+  const resolvedOrigin = cloneVec3(origin);
+  if (castType !== 'capsule' || Math.abs(Number(halfHeight ?? 0)) <= 1e-8) {
+    return [resolvedOrigin];
+  }
+
+  const axisOffset = rotateVec3ByQuat(rotation ?? createIdentityQuat(), createVec3(0, halfHeight, 0));
+  return [
+    resolvedOrigin,
+    addVec3(resolvedOrigin, axisOffset),
+    addScaledVec3(resolvedOrigin, axisOffset, -1)
+  ];
+}
+
 function clearVector(vector) {
   vector.x = 0;
   vector.y = 0;
   vector.z = 0;
+}
+
+function zeroBodyMotion(body) {
+  clearVector(body.linearVelocity);
+  clearVector(body.angularVelocity);
+  clearVector(body.forceAccumulator);
+  clearVector(body.torqueAccumulator);
+}
+
+function resetJointSolverState(joint) {
+  joint.accumulatedImpulse = 0;
+  joint.accumulatedLinearImpulse = createVec3();
+  joint.accumulatedAngularImpulse = createVec3();
+  joint.accumulatedMotorImpulse = 0;
+  joint.lastAppliedForce = 0;
+  joint.lastAppliedTorque = 0;
 }
 class PhysicsWorld {
   constructor(options = {}) {
     this.fixedDeltaTime = toPositiveNumber(options.fixedDeltaTime, 1 / 60);
     this.maxSubsteps = Math.max(1, Math.floor(toPositiveNumber(options.maxSubsteps, 4)));
     this.gravity = cloneVec3(options.gravity ?? createVec3(0, -9.81, 0));
+    this.ccdEnabled = options.ccdEnabled !== false;
+    this.ccdMotionThreshold = toNonNegativeNumber(options.ccdMotionThreshold, 2);
+    this.ccdSafetyMargin = toNonNegativeNumber(options.ccdSafetyMargin, 0.001);
     this.solverIterations = Math.max(1, Math.floor(toPositiveNumber(options.solverIterations, 8)));
     this.solverBaumgarte = toNonNegativeNumber(options.solverBaumgarte, 0.2);
     this.allowedPenetration = toNonNegativeNumber(options.allowedPenetration, 0.01);
     this.positionCorrectionPercent = toNonNegativeNumber(options.positionCorrectionPercent, 0.8);
+    this.sleepEnabled = options.sleepEnabled !== false;
+    this.sleepLinearThreshold = toNonNegativeNumber(options.sleepLinearThreshold, 0.05);
+    this.sleepAngularThreshold = toNonNegativeNumber(options.sleepAngularThreshold, 0.1);
+    this.sleepTimeThreshold = toNonNegativeNumber(options.sleepTimeThreshold, 0.5);
     this.shapeRegistry = new ShapeRegistry();
     this.bodyRegistry = new BodyRegistry();
     this.colliderRegistry = new ColliderRegistry();
+    this.jointRegistry = new JointRegistry();
     this.materialRegistry = new MaterialRegistry();
     this.manifoldCache = new ManifoldCache();
     this.resetRuntimeState();
@@ -3105,9 +5495,14 @@ class PhysicsWorld {
       requestedDeltaSeconds: 0,
       performedSubsteps: 0,
       simulationTick: 0,
-      remainingAccumulatorSeconds: 0
+      remainingAccumulatorSeconds: 0,
+      ccdEventCount: 0
     };
     this.lastSolverStats = createEmptySolverStats(this.solverIterations);
+    this.lastRaycast = null;
+    this.lastShapeCast = null;
+    this.lastCcdEvents = [];
+    this.lastIslandState = createEmptyIslandState();
     this.collisionStateDirty = true;
     this.collisionState = createEmptyCollisionState(this.solverIterations);
     this.manifoldCache.clear();
@@ -3117,6 +5512,7 @@ class PhysicsWorld {
     this.shapeRegistry.clear();
     this.bodyRegistry.clear();
     this.colliderRegistry.clear();
+    this.jointRegistry.clear();
     this.materialRegistry.clear();
     this.bootstrapDefaultMaterials();
     this.resetRuntimeState();
@@ -3193,6 +5589,386 @@ class PhysicsWorld {
     return collider;
   }
 
+  resolveBodyLocalAnchor(bodyId, options = {}) {
+    const body = bodyId ? this.bodyRegistry.get(bodyId) : null;
+    if (!body) {
+      return cloneVec3(options.localAnchor ?? createVec3());
+    }
+
+    if (options.worldAnchor) {
+      const worldOffset = subtractVec3(options.worldAnchor, body.position);
+      return inverseRotateVec3ByQuat(body.rotation ?? createIdentityQuat(), worldOffset);
+    }
+
+    return cloneVec3(options.localAnchor ?? createVec3());
+  }
+
+  resolveBodyLocalAxis(bodyId, options = {}) {
+    const body = bodyId ? this.bodyRegistry.get(bodyId) : null;
+    if (!body) {
+      return normalizeVec3(options.localAxis ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
+    }
+
+    if (options.worldAxis) {
+      return normalizeVec3(
+        inverseRotateVec3ByQuat(body.rotation ?? createIdentityQuat(), normalizeVec3(options.worldAxis, createVec3(0, 1, 0))),
+        createVec3(0, 1, 0)
+      );
+    }
+
+    return normalizeVec3(options.localAxis ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
+  }
+
+  resolveJointBodies(options = {}) {
+    const bodyAId = String(options.bodyAId ?? '').trim() || null;
+    const bodyBId = String(options.bodyBId ?? '').trim() || null;
+    if (!bodyAId || !bodyBId || bodyAId === bodyBId) {
+      return null;
+    }
+
+    const bodyA = this.getBody(bodyAId);
+    const bodyB = this.getBody(bodyBId);
+    if (!bodyA || !bodyB) {
+      return null;
+    }
+
+    return { bodyAId, bodyBId, bodyA, bodyB };
+  }
+
+  createDistanceJoint(options = {}) {
+    const resolvedBodies = this.resolveJointBodies(options);
+    if (!resolvedBodies) {
+      return null;
+    }
+
+    const { bodyAId, bodyBId, bodyA, bodyB } = resolvedBodies;
+
+    const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
+      localAnchor: options.localAnchorA,
+      worldAnchor: options.worldAnchorA
+    });
+    const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
+      localAnchor: options.localAnchorB,
+      worldAnchor: options.worldAnchorB
+    });
+    const poseA = {
+      position: bodyA.position,
+      rotation: bodyA.rotation ?? createIdentityQuat()
+    };
+    const poseB = {
+      position: bodyB.position,
+      rotation: bodyB.rotation ?? createIdentityQuat()
+    };
+    const worldAnchorA = addVec3(poseA.position, rotateVec3ByQuat(poseA.rotation, localAnchorA));
+    const worldAnchorB = addVec3(poseB.position, rotateVec3ByQuat(poseB.rotation, localAnchorB));
+    const limits = normalizeDistanceLimits(options.minDistance, options.maxDistance);
+    const distance = clampDistanceToRange(
+      options.distance ?? Math.sqrt(lengthSquaredVec3(subtractVec3(worldAnchorB, worldAnchorA))),
+      limits.minDistance,
+      limits.maxDistance
+    );
+
+    const joint = this.jointRegistry.createDistanceJoint({
+      ...options,
+      bodyAId,
+      bodyBId,
+      localAnchorA,
+      localAnchorB,
+      distance,
+      minDistance: limits.minDistance,
+      maxDistance: limits.maxDistance
+    });
+
+    this.wakeBodies([bodyAId, bodyBId]);
+    this.markCollisionStateDirty();
+    return joint;
+  }
+
+  createPointToPointJoint(options = {}) {
+    const resolvedBodies = this.resolveJointBodies(options);
+    if (!resolvedBodies) {
+      return null;
+    }
+
+    const { bodyAId, bodyBId, bodyA, bodyB } = resolvedBodies;
+    const sharedWorldAnchor = cloneVec3(options.worldAnchor ?? scaleVec3(addVec3(bodyA.position, bodyB.position), 0.5));
+    const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
+      localAnchor: options.localAnchorA,
+      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+    });
+    const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
+      localAnchor: options.localAnchorB,
+      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+    });
+
+    const joint = this.jointRegistry.createPointToPointJoint({
+      ...options,
+      bodyAId,
+      bodyBId,
+      localAnchorA,
+      localAnchorB
+    });
+
+    this.wakeBodies([bodyAId, bodyBId]);
+    this.markCollisionStateDirty();
+    return joint;
+  }
+
+  createHingeJoint(options = {}) {
+    const resolvedBodies = this.resolveJointBodies(options);
+    if (!resolvedBodies) {
+      return null;
+    }
+
+    const { bodyAId, bodyBId, bodyA, bodyB } = resolvedBodies;
+    const sharedWorldAnchor = cloneVec3(options.worldAnchor ?? scaleVec3(addVec3(bodyA.position, bodyB.position), 0.5));
+    const sharedWorldAxis = normalizeVec3(options.worldAxis ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
+    const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
+      localAnchor: options.localAnchorA,
+      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+    });
+    const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
+      localAnchor: options.localAnchorB,
+      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+    });
+    const localAxisA = this.resolveBodyLocalAxis(bodyAId, {
+      localAxis: options.localAxisA,
+      worldAxis: options.worldAxisA ?? sharedWorldAxis
+    });
+    const localAxisB = this.resolveBodyLocalAxis(bodyBId, {
+      localAxis: options.localAxisB,
+      worldAxis: options.worldAxisB ?? sharedWorldAxis
+    });
+    const tangentBasis = createTangentBasis(sharedWorldAxis);
+    const localReferenceA = this.resolveBodyLocalAxis(bodyAId, {
+      localAxis: options.localReferenceA,
+      worldAxis: options.worldReferenceA ?? tangentBasis.tangentA
+    });
+    const localReferenceB = this.resolveBodyLocalAxis(bodyBId, {
+      localAxis: options.localReferenceB,
+      worldAxis: options.worldReferenceB ?? tangentBasis.tangentA
+    });
+
+    const joint = this.jointRegistry.createHingeJoint({
+      ...options,
+      bodyAId,
+      bodyBId,
+      localAnchorA,
+      localAnchorB,
+      localAxisA,
+      localAxisB,
+      localReferenceA,
+      localReferenceB
+    });
+
+    this.wakeBodies([bodyAId, bodyBId]);
+    this.markCollisionStateDirty();
+    return joint;
+  }
+
+  createFixedJoint(options = {}) {
+    const resolvedBodies = this.resolveJointBodies(options);
+    if (!resolvedBodies) {
+      return null;
+    }
+
+    const { bodyAId, bodyBId, bodyA, bodyB } = resolvedBodies;
+    const sharedWorldAnchor = cloneVec3(options.worldAnchor ?? scaleVec3(addVec3(bodyA.position, bodyB.position), 0.5));
+    const sharedWorldAxis = normalizeVec3(
+      options.worldAxis ?? rotateVec3ByQuat(bodyA.rotation ?? createIdentityQuat(), createVec3(0, 1, 0)),
+      createVec3(0, 1, 0)
+    );
+    const sharedWorldReference = normalizeVec3(
+      options.worldReference ?? rotateVec3ByQuat(bodyA.rotation ?? createIdentityQuat(), createVec3(1, 0, 0)),
+      createVec3(1, 0, 0)
+    );
+    const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
+      localAnchor: options.localAnchorA,
+      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+    });
+    const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
+      localAnchor: options.localAnchorB,
+      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+    });
+    const localAxisA = this.resolveBodyLocalAxis(bodyAId, {
+      localAxis: options.localAxisA,
+      worldAxis: options.worldAxisA ?? sharedWorldAxis
+    });
+    const localAxisB = this.resolveBodyLocalAxis(bodyBId, {
+      localAxis: options.localAxisB,
+      worldAxis: options.worldAxisB ?? sharedWorldAxis
+    });
+    const localReferenceA = this.resolveBodyLocalAxis(bodyAId, {
+      localAxis: options.localReferenceA,
+      worldAxis: options.worldReferenceA ?? sharedWorldReference
+    });
+    const localReferenceB = this.resolveBodyLocalAxis(bodyBId, {
+      localAxis: options.localReferenceB,
+      worldAxis: options.worldReferenceB ?? sharedWorldReference
+    });
+
+    const joint = this.jointRegistry.createFixedJoint({
+      ...options,
+      bodyAId,
+      bodyBId,
+      localAnchorA,
+      localAnchorB,
+      localAxisA,
+      localAxisB,
+      localReferenceA,
+      localReferenceB
+    });
+
+    this.wakeBodies([bodyAId, bodyBId]);
+    this.markCollisionStateDirty();
+    return joint;
+  }
+
+  configureDistanceJoint(jointId, options = {}) {
+    const joint = this.jointRegistry.getMutable(jointId);
+    if (!joint || joint.type !== 'distance-joint') {
+      return null;
+    }
+
+    const limits = normalizeDistanceLimits(
+      options.minDistance ?? joint.minDistance,
+      options.maxDistance ?? joint.maxDistance
+    );
+    joint.minDistance = limits.minDistance;
+    joint.maxDistance = limits.maxDistance;
+
+    if (options.distance !== undefined) {
+      joint.distance = clampDistanceToRange(options.distance, joint.minDistance, joint.maxDistance);
+    } else {
+      joint.distance = clampDistanceToRange(joint.distance, joint.minDistance, joint.maxDistance);
+    }
+
+    if (options.springFrequency !== undefined) {
+      joint.springFrequency = toNonNegativeNumber(options.springFrequency, joint.springFrequency ?? 0);
+    }
+
+    if (options.dampingRatio !== undefined) {
+      joint.dampingRatio = toNonNegativeNumber(options.dampingRatio, joint.dampingRatio ?? 0);
+    }
+
+    resetJointSolverState(joint);
+
+    this.wakeBodies([joint.bodyAId, joint.bodyBId]);
+    this.markCollisionStateDirty();
+    return this.getJoint(joint.id);
+  }
+
+  configureHingeJoint(jointId, options = {}) {
+    const joint = this.jointRegistry.getMutable(jointId);
+    if (!joint || joint.type !== 'hinge-joint') {
+      return null;
+    }
+
+    const limits = normalizeAngleLimits(
+      options.lowerAngle ?? joint.lowerAngle,
+      options.upperAngle ?? joint.upperAngle
+    );
+    joint.lowerAngle = limits.lowerAngle;
+    joint.upperAngle = limits.upperAngle;
+
+    if (options.angularDamping !== undefined) {
+      joint.angularDamping = toNonNegativeNumber(options.angularDamping, joint.angularDamping ?? 0);
+    }
+
+    resetJointSolverState(joint);
+
+    this.wakeBodies([joint.bodyAId, joint.bodyBId]);
+    this.markCollisionStateDirty();
+    return this.getJoint(joint.id);
+  }
+
+  configureFixedJoint(jointId, options = {}) {
+    const joint = this.jointRegistry.getMutable(jointId);
+    if (!joint || joint.type !== 'fixed-joint') {
+      return null;
+    }
+
+    if (options.breakForce !== undefined) {
+      joint.breakForce = toOptionalNonNegativeNumber(options.breakForce, null);
+    }
+
+    if (options.breakTorque !== undefined) {
+      joint.breakTorque = toOptionalNonNegativeNumber(options.breakTorque, null);
+    }
+
+    if (options.enabled !== undefined) {
+      joint.enabled = Boolean(options.enabled);
+    }
+
+    if (options.broken === false) {
+      joint.broken = false;
+    }
+
+    resetJointSolverState(joint);
+
+    this.wakeBodies([joint.bodyAId, joint.bodyBId]);
+    this.markCollisionStateDirty();
+    return this.getJoint(joint.id);
+  }
+
+  configureHingeMotor(jointId, options = {}) {
+    const joint = this.jointRegistry.getMutable(jointId);
+    if (!joint || joint.type !== 'hinge-joint') {
+      return null;
+    }
+
+    if (options.motorSpeed !== undefined) {
+      joint.motorSpeed = Number.isFinite(Number(options.motorSpeed)) ? Number(options.motorSpeed) : (joint.motorSpeed ?? 0);
+    }
+
+    if (options.motorMode !== undefined) {
+      joint.motorMode = options.motorMode === 'servo' ? 'servo' : 'speed';
+    }
+
+    if (options.motorTargetAngle !== undefined) {
+      joint.motorTargetAngle = Number.isFinite(Number(options.motorTargetAngle))
+        ? Number(options.motorTargetAngle)
+        : (joint.motorTargetAngle ?? 0);
+    }
+
+    if (options.motorServoGain !== undefined) {
+      joint.motorServoGain = toNonNegativeNumber(options.motorServoGain, joint.motorServoGain ?? 8);
+    }
+
+    if (options.maxMotorTorque !== undefined) {
+      joint.maxMotorTorque = toNonNegativeNumber(options.maxMotorTorque, joint.maxMotorTorque ?? 0);
+    }
+
+    if (options.motorEnabled !== undefined) {
+      joint.motorEnabled = Boolean(options.motorEnabled) && Number(joint.maxMotorTorque ?? 0) > 0;
+    } else if (options.maxMotorTorque !== undefined) {
+      joint.motorEnabled = Number(joint.maxMotorTorque ?? 0) > 0;
+    }
+
+    joint.broken = false;
+    resetJointSolverState(joint);
+
+    this.wakeBodies([joint.bodyAId, joint.bodyBId]);
+    this.markCollisionStateDirty();
+    return this.getJoint(joint.id);
+  }
+
+  configureHingeServo(jointId, options = {}) {
+    const joint = this.jointRegistry.getMutable(jointId);
+    if (!joint || joint.type !== 'hinge-joint') {
+      return null;
+    }
+
+    return this.configureHingeMotor(jointId, {
+      motorMode: 'servo',
+      motorEnabled: options.motorEnabled ?? true,
+      motorTargetAngle: options.motorTargetAngle ?? joint.motorTargetAngle ?? 0,
+      motorSpeed: options.maxMotorSpeed ?? options.motorSpeed ?? joint.motorSpeed ?? 0,
+      maxMotorTorque: options.maxMotorTorque ?? joint.maxMotorTorque ?? 0,
+      motorServoGain: options.motorServoGain ?? joint.motorServoGain ?? 8
+    });
+  }
+
   updateBodyMassProperties(bodyId) {
     const body = this.bodyRegistry.getMutable(bodyId);
     if (!body) {
@@ -3230,6 +6006,8 @@ class PhysicsWorld {
       linearVelocity: options.linearVelocity ?? createVec3(),
       angularVelocity: options.angularVelocity ?? createVec3(),
       mass: options.mass ?? 1,
+      canSleep: options.canSleep,
+      sleeping: options.sleeping,
       userData: options.bodyUserData ?? null
     });
     const collider = this.createCollider({
@@ -3263,6 +6041,8 @@ class PhysicsWorld {
       linearVelocity: options.linearVelocity ?? createVec3(),
       angularVelocity: options.angularVelocity ?? createVec3(),
       mass: options.mass ?? 1,
+      canSleep: options.canSleep,
+      sleeping: options.sleeping,
       userData: options.bodyUserData ?? null
     });
     const collider = this.createCollider({
@@ -3296,6 +6076,8 @@ class PhysicsWorld {
       linearVelocity: options.linearVelocity ?? createVec3(),
       angularVelocity: options.angularVelocity ?? createVec3(),
       mass: options.mass ?? 1,
+      canSleep: options.canSleep,
+      sleeping: options.sleeping,
       userData: options.bodyUserData ?? null
     });
     const collider = this.createCollider({
@@ -3328,6 +6110,8 @@ class PhysicsWorld {
       linearVelocity: options.linearVelocity ?? createVec3(),
       angularVelocity: options.angularVelocity ?? createVec3(),
       mass: options.mass ?? 1,
+      canSleep: options.canSleep,
+      sleeping: options.sleeping,
       userData: options.bodyUserData ?? null
     });
     const collider = this.createCollider({
@@ -3383,6 +6167,10 @@ class PhysicsWorld {
     return this.colliderRegistry.get(id);
   }
 
+  getJoint(id) {
+    return this.jointRegistry.get(id);
+  }
+
   getMaterial(id) {
     return this.materialRegistry.get(id);
   }
@@ -3407,6 +6195,334 @@ class PhysicsWorld {
       .filter(Boolean);
   }
 
+  getBodyJoints(bodyId) {
+    return this.jointRegistry.list()
+      .filter((joint) => joint.bodyAId === bodyId || joint.bodyBId === bodyId);
+  }
+
+  getJointWorldAnchors(jointId) {
+    const joint = this.getJoint(jointId);
+    if (!joint) {
+      return null;
+    }
+
+    const bodyA = joint.bodyAId ? this.getBody(joint.bodyAId) : null;
+    const bodyB = joint.bodyBId ? this.getBody(joint.bodyBId) : null;
+    const anchorA = bodyA
+      ? addVec3(bodyA.position, rotateVec3ByQuat(bodyA.rotation ?? createIdentityQuat(), joint.localAnchorA))
+      : cloneVec3(joint.localAnchorA);
+    const anchorB = bodyB
+      ? addVec3(bodyB.position, rotateVec3ByQuat(bodyB.rotation ?? createIdentityQuat(), joint.localAnchorB))
+      : cloneVec3(joint.localAnchorB);
+
+    return {
+      joint,
+      anchorA,
+      anchorB
+    };
+  }
+
+  getJointWorldAxes(jointId) {
+    const joint = this.getJoint(jointId);
+    if (!joint) {
+      return null;
+    }
+
+    const bodyA = joint.bodyAId ? this.getBody(joint.bodyAId) : null;
+    const bodyB = joint.bodyBId ? this.getBody(joint.bodyBId) : null;
+    const axisA = normalizeVec3(
+      rotateVec3ByQuat(bodyA?.rotation ?? createIdentityQuat(), joint.localAxisA ?? createVec3(0, 1, 0)),
+      createVec3(0, 1, 0)
+    );
+    const axisB = normalizeVec3(
+      rotateVec3ByQuat(bodyB?.rotation ?? createIdentityQuat(), joint.localAxisB ?? createVec3(0, 1, 0)),
+      createVec3(0, 1, 0)
+    );
+
+    return {
+      joint,
+      axisA,
+      axisB
+    };
+  }
+
+  getJointWorldReferences(jointId) {
+    const joint = this.getJoint(jointId);
+    if (!joint) {
+      return null;
+    }
+
+    const bodyA = joint.bodyAId ? this.getBody(joint.bodyAId) : null;
+    const bodyB = joint.bodyBId ? this.getBody(joint.bodyBId) : null;
+    const referenceA = normalizeVec3(
+      rotateVec3ByQuat(bodyA?.rotation ?? createIdentityQuat(), joint.localReferenceA ?? createVec3(1, 0, 0)),
+      createVec3(1, 0, 0)
+    );
+    const referenceB = normalizeVec3(
+      rotateVec3ByQuat(bodyB?.rotation ?? createIdentityQuat(), joint.localReferenceB ?? createVec3(1, 0, 0)),
+      createVec3(1, 0, 0)
+    );
+
+    return {
+      joint,
+      referenceA,
+      referenceB
+    };
+  }
+
+  getJointAngle(jointId) {
+    const joint = this.getJoint(jointId);
+    if (!joint || (joint.type !== 'hinge-joint' && joint.type !== 'fixed-joint')) {
+      return null;
+    }
+
+    const bodyA = joint.bodyAId ? this.getBody(joint.bodyAId) : null;
+    const bodyB = joint.bodyBId ? this.getBody(joint.bodyBId) : null;
+    const axes = this.getJointWorldAxes(jointId);
+    const hingeAxis = normalizeVec3(addVec3(axes?.axisA ?? createVec3(0, 1, 0), axes?.axisB ?? createVec3(0, 1, 0)), axes?.axisA ?? createVec3(0, 1, 0));
+    const fallbackReference = createTangentBasis(hingeAxis).tangentA;
+    const referenceA = normalizeVec3(
+      rotateVec3ByQuat(bodyA?.rotation ?? createIdentityQuat(), joint.localReferenceA ?? fallbackReference),
+      fallbackReference
+    );
+    const referenceB = normalizeVec3(
+      rotateVec3ByQuat(bodyB?.rotation ?? createIdentityQuat(), joint.localReferenceB ?? fallbackReference),
+      fallbackReference
+    );
+    return Math.atan2(
+      dotVec3(crossVec3(referenceA, referenceB), hingeAxis),
+      dotVec3(referenceA, referenceB)
+    );
+  }
+
+  applyJointBreakThresholds(jointResults, deltaTime) {
+    const brokenJointIds = [];
+    if (!Array.isArray(jointResults) || jointResults.length === 0) {
+      return brokenJointIds;
+    }
+
+    for (const result of jointResults) {
+      const joint = this.jointRegistry.getMutable(result.jointId);
+      if (!joint) {
+        continue;
+      }
+
+      const appliedForce = deltaTime > 1e-8
+        ? Number(result.linearImpulse ?? 0) / deltaTime
+        : 0;
+      const appliedTorque = deltaTime > 1e-8
+        ? (Number(result.angularImpulse ?? 0) + Number(result.motorImpulse ?? 0)) / deltaTime
+        : 0;
+
+      joint.lastAppliedForce = appliedForce;
+      joint.lastAppliedTorque = appliedTorque;
+
+      const breakForce = toOptionalNonNegativeNumber(joint.breakForce, null);
+      const breakTorque = toOptionalNonNegativeNumber(joint.breakTorque, null);
+      const shouldBreak = joint.enabled !== false && (
+        (breakForce !== null && appliedForce >= breakForce - 1e-8) ||
+        (breakTorque !== null && appliedTorque >= breakTorque - 1e-8)
+      );
+
+      if (!shouldBreak) {
+        continue;
+      }
+
+      joint.enabled = false;
+      joint.broken = true;
+      resetJointSolverState(joint);
+      joint.lastAppliedForce = appliedForce;
+      joint.lastAppliedTorque = appliedTorque;
+      brokenJointIds.push(joint.id);
+    }
+
+    if (brokenJointIds.length > 0) {
+      const bodyIds = [];
+      for (const jointId of brokenJointIds) {
+        const joint = this.jointRegistry.get(jointId);
+        if (!joint) {
+          continue;
+        }
+
+        bodyIds.push(joint.bodyAId, joint.bodyBId);
+      }
+
+      this.wakeBodies(bodyIds);
+      this.markCollisionStateDirty();
+    }
+
+    return brokenJointIds;
+  }
+
+  buildIslandState(manifolds) {
+    return buildRigidBodyIslandGraph({
+      bodyRegistry: this.bodyRegistry,
+      manifolds,
+      joints: this.jointRegistry.list()
+    });
+  }
+
+  isBodySleepCandidate(body) {
+    return Boolean(body && body.enabled && body.motionType === 'dynamic' && body.canSleep !== false);
+  }
+
+  isBodyBelowSleepThresholds(body, thresholdScale = 1) {
+    const resolvedScale = Math.max(1, Number(thresholdScale ?? 1));
+    const linearThresholdSquared = (this.sleepLinearThreshold * resolvedScale) * (this.sleepLinearThreshold * resolvedScale);
+    const angularThresholdSquared = (this.sleepAngularThreshold * resolvedScale) * (this.sleepAngularThreshold * resolvedScale);
+    return lengthSquaredVec3(body.linearVelocity) <= linearThresholdSquared &&
+      lengthSquaredVec3(body.angularVelocity) <= angularThresholdSquared;
+  }
+
+  hasPendingWakeActivity(body) {
+    return lengthSquaredVec3(body.forceAccumulator) > 1e-12 ||
+      lengthSquaredVec3(body.torqueAccumulator) > 1e-12 ||
+      !this.isBodyBelowSleepThresholds(body);
+  }
+
+  wakeBody(bodyId) {
+    const body = this.bodyRegistry.getMutable(bodyId);
+    if (!body || body.motionType !== 'dynamic') {
+      return false;
+    }
+
+    const changed = body.sleeping || body.sleepTimer > 0;
+    body.sleeping = false;
+    body.sleepTimer = 0;
+    if (changed) {
+      this.markCollisionStateDirty();
+    }
+
+    return changed;
+  }
+
+  wakeBodies(bodyIds) {
+    let wokeAnyBody = false;
+    for (const bodyId of Array.isArray(bodyIds) ? bodyIds : []) {
+      wokeAnyBody = this.wakeBody(bodyId) || wokeAnyBody;
+    }
+
+    return wokeAnyBody;
+  }
+
+  sleepBodies(bodyIds) {
+    let sleptAnyBody = false;
+    for (const bodyId of Array.isArray(bodyIds) ? bodyIds : []) {
+      const body = this.bodyRegistry.getMutable(bodyId);
+      if (!this.isBodySleepCandidate(body)) {
+        continue;
+      }
+
+      if (!body.sleeping || lengthSquaredVec3(body.linearVelocity) > 1e-12 || lengthSquaredVec3(body.angularVelocity) > 1e-12) {
+        sleptAnyBody = true;
+      }
+
+      body.sleeping = true;
+      body.sleepTimer = this.sleepTimeThreshold;
+      zeroBodyMotion(body);
+    }
+
+    if (sleptAnyBody) {
+      this.markCollisionStateDirty();
+    }
+
+    return sleptAnyBody;
+  }
+
+  wakeBodiesFromExternalActivity() {
+    if (!this.sleepEnabled) {
+      return false;
+    }
+
+    let wokeAnyBody = false;
+    this.bodyRegistry.forEachMutable((body) => {
+      if (!body.sleeping || !this.isBodySleepCandidate(body)) {
+        return;
+      }
+
+      if (this.hasPendingWakeActivity(body)) {
+        body.sleeping = false;
+        body.sleepTimer = 0;
+        wokeAnyBody = true;
+      }
+    });
+
+    if (wokeAnyBody) {
+      this.markCollisionStateDirty();
+    }
+
+    return wokeAnyBody;
+  }
+
+  wakeBodiesFromIslandInteractions(islandState) {
+    if (!this.sleepEnabled) {
+      return false;
+    }
+
+    let wokeAnyBody = false;
+    for (const island of islandState?.islands ?? []) {
+      if (island.sleepingBodyCount > 0 && island.awakeBodyCount > 0) {
+        wokeAnyBody = this.wakeBodies(island.bodyIds) || wokeAnyBody;
+      }
+    }
+
+    return wokeAnyBody;
+  }
+
+  updateSleepingBodies(deltaTime, manifolds) {
+    if (!this.sleepEnabled) {
+      const awakeIslands = this.buildIslandState(manifolds);
+      this.bodyRegistry.forEachMutable((body) => {
+        if (!body || body.motionType !== 'dynamic') {
+          return;
+        }
+
+        body.sleeping = false;
+        body.sleepTimer = 0;
+      });
+      return awakeIslands;
+    }
+
+    const islandState = this.buildIslandState(manifolds);
+
+    for (const island of islandState.islands) {
+      const mutableBodies = island.bodyIds
+        .map((bodyId) => this.bodyRegistry.getMutable(bodyId))
+        .filter(Boolean);
+
+      if (!mutableBodies.length) {
+        continue;
+      }
+
+      const canIslandSleep = island.canSleep && mutableBodies.every((body) => this.isBodySleepCandidate(body));
+      const islandThresholdScale = island.constraintCount > 0 ? 2 : 1;
+      const isIslandQuiet = canIslandSleep && mutableBodies.every((body) => (
+        this.isBodyBelowSleepThresholds(body, islandThresholdScale) &&
+        lengthSquaredVec3(body.forceAccumulator) <= 1e-12 &&
+        lengthSquaredVec3(body.torqueAccumulator) <= 1e-12
+      ));
+
+      if (!isIslandQuiet) {
+        for (const body of mutableBodies) {
+          body.sleepTimer = 0;
+          body.sleeping = false;
+        }
+        continue;
+      }
+
+      for (const body of mutableBodies) {
+        body.sleepTimer += deltaTime;
+      }
+
+      const islandSleepTimer = Math.min(...mutableBodies.map((body) => body.sleepTimer));
+      if (islandSleepTimer + 1e-12 >= this.sleepTimeThreshold) {
+        this.sleepBodies(island.bodyIds);
+      }
+    }
+
+    return this.buildIslandState(manifolds);
+  }
+
   getWorldSummary() {
     const collisionState = this.getCollisionState();
 
@@ -3414,11 +6530,16 @@ class PhysicsWorld {
       bodyCount: this.bodyRegistry.count(),
       shapeCount: this.shapeRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
+      jointCount: this.jointRegistry.count(),
       materialCount: this.materialRegistry.count(),
       broadphaseProxyCount: collisionState.summary.proxyCount,
       broadphasePairCount: collisionState.summary.pairCount,
       contactPairCount: collisionState.summary.contactCount,
       manifoldCount: collisionState.summary.manifoldCount,
+      jointConstraintCount: collisionState.summary.jointCount,
+      islandCount: collisionState.summary.islandCount,
+      sleepingBodyCount: collisionState.summary.sleepingBodyCount,
+      awakeBodyCount: collisionState.summary.awakeBodyCount,
       simulationTick: this.simulationTick,
       renderFrameCount: this.renderFrameCount,
       fixedDeltaTime: this.fixedDeltaTime,
@@ -3437,9 +6558,12 @@ class PhysicsWorld {
     this.accumulatorSeconds += requestedDeltaSeconds;
     let performedSubsteps = 0;
     const aggregatedSolverStats = createEmptySolverStats(this.solverIterations);
+    let ccdEventCount = 0;
 
     while (this.accumulatorSeconds + 1e-12 >= this.fixedDeltaTime && performedSubsteps < this.maxSubsteps) {
-      this.integrateRigidBodies(this.fixedDeltaTime);
+      this.wakeBodiesFromExternalActivity();
+      const ccdEvents = this.integrateRigidBodies(this.fixedDeltaTime);
+      ccdEventCount += ccdEvents.length;
       const solverStats = this.solveRigidContacts(this.fixedDeltaTime, this.simulationTick + 1);
       mergeSolverStats(aggregatedSolverStats, solverStats);
       this.accumulatorSeconds -= this.fixedDeltaTime;
@@ -3460,7 +6584,8 @@ class PhysicsWorld {
       requestedDeltaSeconds,
       performedSubsteps,
       simulationTick: this.simulationTick,
-      remainingAccumulatorSeconds: this.accumulatorSeconds
+      remainingAccumulatorSeconds: this.accumulatorSeconds,
+      ccdEventCount
     };
 
     return {
@@ -3483,19 +6608,116 @@ class PhysicsWorld {
     return rotateVec3ByQuat(rotation, localResult);
   }
 
+  buildContinuousCastSpec(body) {
+    const primaryCollider = body.primaryColliderId ? this.getCollider(body.primaryColliderId) : null;
+    const shape = this.getShape(primaryCollider?.shapeId ?? body.shapeId);
+    if (!shape) {
+      return null;
+    }
+
+    const localPose = primaryCollider?.localPose ?? {
+      position: createVec3(),
+      rotation: createIdentityQuat()
+    };
+    const colliderStartPose = composePoses({
+      position: body.position,
+      rotation: body.rotation ?? createIdentityQuat()
+    }, localPose);
+
+    return {
+      castType: shape.type,
+      queryShape: shape,
+      shape,
+      radius: shape.type === 'sphere' || shape.type === 'capsule' ? Math.abs(Number(shape.geometry.radius ?? 0)) : computeBoundingSphereRadius(shape),
+      halfHeight: shape.type === 'capsule' ? Math.abs(Number(shape.geometry.halfHeight ?? 0)) : 0,
+      origin: colliderStartPose.position,
+      rotation: colliderStartPose.rotation,
+      bodyOffset: rotateVec3ByQuat(body.rotation ?? createIdentityQuat(), localPose.position ?? createVec3())
+    };
+  }
+
+  runBodyContinuousCollision(body, startPosition, deltaTime, broadphaseSnapshot) {
+    if (!this.ccdEnabled) {
+      return null;
+    }
+
+    const motionDistanceSquared = lengthSquaredVec3(body.linearVelocity) * deltaTime * deltaTime;
+    if (motionDistanceSquared <= this.ccdMotionThreshold * this.ccdMotionThreshold) {
+      return null;
+    }
+
+    const castSpec = this.buildContinuousCastSpec(body);
+    if (!castSpec || castSpec.radius <= 0) {
+      return null;
+    }
+
+    const motionDistance = Math.sqrt(motionDistanceSquared);
+    const result = this.shapeCastAgainstWorld({
+      castType: castSpec.castType,
+      queryShape: castSpec.queryShape,
+      origin: castSpec.origin,
+      direction: body.linearVelocity,
+      maxDistance: motionDistance,
+      radius: castSpec.radius,
+      halfHeight: castSpec.halfHeight,
+      rotation: castSpec.rotation,
+      broadphaseProxies: broadphaseSnapshot,
+      excludeBodyId: body.id,
+      excludeColliderIds: body.colliderIds,
+      ignoreDynamicTargets: true,
+      storeResult: false
+    });
+
+    if (!result.hit || !result.normal) {
+      return null;
+    }
+
+    const travelDirection = normalizeVec3(body.linearVelocity, createVec3(1, 0, 0));
+    const safeDistance = Math.max(0, result.distance - this.ccdSafetyMargin);
+    const colliderEndPosition = addScaledVec3(castSpec.origin, travelDirection, safeDistance);
+    const bodyEndPosition = subtractVec3(colliderEndPosition, castSpec.bodyOffset);
+    const inwardSpeed = dotVec3(body.linearVelocity, result.normal);
+    if (inwardSpeed < 0) {
+      body.linearVelocity = addScaledVec3(body.linearVelocity, result.normal, -inwardSpeed);
+    }
+
+    return createCcdEvent({
+      bodyId: body.id,
+      colliderId: body.primaryColliderId ?? null,
+      castType: castSpec.castType,
+      startPosition,
+      endPosition: bodyEndPosition,
+      hitPosition: result.point,
+      normal: result.normal,
+      targetColliderId: result.colliderId,
+      targetBodyId: result.bodyId,
+      distance: result.distance,
+      algorithm: result.algorithm
+    });
+  }
+
   integrateRigidBodies(deltaTime) {
     let movedAnyDynamicBody = false;
+    const ccdEvents = [];
+    const broadphaseSnapshot = this.ccdEnabled ? this.buildBroadphaseProxies() : [];
 
     this.bodyRegistry.forEachMutable((body) => {
       if (!body.enabled || body.sleeping || body.motionType !== 'dynamic') {
         return;
       }
 
+      const startPosition = cloneVec3(body.position);
       const linearAcceleration = addScaledVec3(this.gravity, body.forceAccumulator, body.inverseMass);
       const angularAcceleration = this.applyInverseInertia(body, body.torqueAccumulator);
       body.linearVelocity = addScaledVec3(body.linearVelocity, linearAcceleration, deltaTime);
       body.angularVelocity = addScaledVec3(body.angularVelocity, angularAcceleration, deltaTime);
-      body.position = addScaledVec3(body.position, body.linearVelocity, deltaTime);
+      const ccdEvent = this.runBodyContinuousCollision(body, startPosition, deltaTime, broadphaseSnapshot);
+      if (ccdEvent) {
+        body.position = cloneVec3(ccdEvent.endPosition);
+        ccdEvents.push(ccdEvent);
+      } else {
+        body.position = addScaledVec3(body.position, body.linearVelocity, deltaTime);
+      }
       body.rotation = integrateQuat(body.rotation, body.angularVelocity, deltaTime);
       movedAnyDynamicBody = movedAnyDynamicBody ||
         lengthSquaredVec3(body.linearVelocity) > 1e-12 ||
@@ -3509,11 +6731,16 @@ class PhysicsWorld {
     if (movedAnyDynamicBody) {
       this.markCollisionStateDirty();
     }
+
+    this.lastCcdEvents = cloneCcdEvents(ccdEvents);
+    return cloneCcdEvents(ccdEvents);
   }
 
   solveRigidContacts(deltaTime, simulationTick) {
     const initialResults = this.buildCollisionResults();
     const manifolds = this.manifoldCache.syncFromContactPairs(initialResults.contactPairs, simulationTick);
+    const initialIslandState = this.buildIslandState(manifolds);
+    this.wakeBodiesFromIslandInteractions(initialIslandState);
     const solverStats = solveNormalContactConstraints({
       bodyRegistry: this.bodyRegistry,
       manifolds,
@@ -3523,11 +6750,23 @@ class PhysicsWorld {
       allowedPenetration: this.allowedPenetration,
       positionCorrectionPercent: this.positionCorrectionPercent
     });
+    const jointSolverStats = solveJointConstraints({
+      bodyRegistry: this.bodyRegistry,
+      joints: this.jointRegistry.list().filter((joint) => joint.enabled !== false),
+      deltaTime,
+      iterations: this.solverIterations,
+      baumgarte: this.solverBaumgarte,
+      allowedStretch: this.allowedPenetration
+    });
+    this.applyJointBreakThresholds(jointSolverStats.jointResults, deltaTime);
+    mergeSolverStats(solverStats, jointSolverStats);
 
     this.lastSolverStats = solverStats;
     const finalResults = this.buildCollisionResults();
     const finalManifolds = this.manifoldCache.syncFromContactPairs(finalResults.contactPairs, simulationTick);
-    this.commitCollisionState(finalResults, finalManifolds, solverStats);
+    const finalIslandState = this.updateSleepingBodies(deltaTime, finalManifolds);
+    this.lastIslandState = cloneIslandState(finalIslandState);
+    this.commitCollisionState(finalResults, finalManifolds, solverStats, finalIslandState);
     this.collisionStateDirty = false;
     return cloneSolverStats(solverStats);
   }
@@ -3625,18 +6864,26 @@ class PhysicsWorld {
     };
   }
 
-  commitCollisionState(results, manifolds, solverStats) {
+  commitCollisionState(results, manifolds, solverStats, islandState = this.lastIslandState) {
+    const resolvedIslandState = cloneIslandState(islandState);
+    const joints = this.jointRegistry.list();
     this.collisionState = {
       broadphaseProxies: results.broadphaseProxies,
       broadphasePairs: results.broadphasePairs,
       contactPairs: results.contactPairs,
       manifolds: Array.isArray(manifolds) ? manifolds.map((manifold) => cloneManifold(manifold)) : [],
+      islands: resolvedIslandState.islands,
+      joints,
       solverStats: cloneSolverStats(solverStats ?? this.lastSolverStats),
       summary: {
         proxyCount: results.broadphaseProxies.length,
         pairCount: results.broadphasePairs.length,
         contactCount: results.contactPairs.length,
         manifoldCount: Array.isArray(manifolds) ? manifolds.length : 0,
+        jointCount: joints.length,
+        islandCount: resolvedIslandState.islandCount,
+        sleepingBodyCount: resolvedIslandState.sleepingBodyCount,
+        awakeBodyCount: resolvedIslandState.awakeBodyCount,
         unsupportedPairCount: results.unsupportedPairCount,
         pairKinds: { ...results.pairKinds },
         algorithms: { ...results.algorithms }
@@ -3648,7 +6895,9 @@ class PhysicsWorld {
     if (this.collisionStateDirty) {
       const results = this.buildCollisionResults();
       const manifolds = this.manifoldCache.syncFromContactPairs(results.contactPairs, this.simulationTick);
-      this.commitCollisionState(results, manifolds, this.lastSolverStats);
+      const islandState = this.buildIslandState(manifolds);
+      this.lastIslandState = cloneIslandState(islandState);
+      this.commitCollisionState(results, manifolds, this.lastSolverStats, islandState);
       this.collisionStateDirty = false;
     }
 
@@ -3734,6 +6983,300 @@ class PhysicsWorld {
     });
   }
 
+  shapeCastAgainstWorld(options = {}) {
+    const queryShape = options.queryShape ?? null;
+    const normalizedCastType = String(options.castType ?? 'sphere').trim().toLowerCase();
+    const castType = normalizedCastType === 'capsule'
+      ? 'capsule'
+      : normalizedCastType === 'sphere'
+        ? 'sphere'
+        : normalizedCastType === 'box' || normalizedCastType === 'convex-hull'
+          ? normalizedCastType
+          : queryShape?.type ?? 'shape';
+    const origin = cloneVec3(options.origin ?? createVec3());
+    const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+    const maxDistance = toNonNegativeNumber(options.maxDistance, 100);
+    const radius = toNonNegativeNumber(options.radius, 0.5);
+    const halfHeight = castType === 'capsule' ? toNonNegativeNumber(options.halfHeight, 0.5) : 0;
+    const rotation = cloneQuat(options.rotation ?? createIdentityQuat());
+    const broadphaseProxies = Array.isArray(options.broadphaseProxies)
+      ? options.broadphaseProxies
+      : this.ensureCollisionState().broadphaseProxies;
+    const excludeBodyId = String(options.excludeBodyId ?? '').trim() || null;
+    const excludeColliderIds = new Set(Array.isArray(options.excludeColliderIds) ? options.excludeColliderIds.map((id) => String(id ?? '').trim()) : []);
+    const ignoreDynamicTargets = options.ignoreDynamicTargets === true;
+    const ignoreSensors = options.ignoreSensors !== false;
+    const resolvedQueryShape = queryShape ?? (castType === 'capsule'
+      ? {
+        type: 'capsule',
+        geometry: {
+          radius,
+          halfHeight
+        },
+        localPose: {
+          position: createVec3(),
+          rotation: createIdentityQuat()
+        }
+      }
+      : {
+        type: 'sphere',
+        geometry: {
+          radius
+        },
+        localPose: {
+          position: createVec3(),
+          rotation: createIdentityQuat()
+        }
+      });
+    const sweptAabb = computeSweptShapeAabb({
+      shape: resolvedQueryShape,
+      origin,
+      direction,
+      maxDistance,
+      rotation
+    });
+    const sampleOrigins = buildCastSampleOrigins(castType, origin, halfHeight, rotation);
+    const sampleEndPoints = sampleOrigins.map((sampleOrigin) => addScaledVec3(sampleOrigin, direction, maxDistance));
+    let candidateCount = 0;
+    let testedShapeCount = 0;
+    let nearestHit = null;
+
+    for (const proxy of broadphaseProxies) {
+      if (excludeColliderIds.has(proxy.colliderId)) {
+        continue;
+      }
+
+      if (excludeBodyId && proxy.bodyId === excludeBodyId) {
+        continue;
+      }
+
+      if (ignoreDynamicTargets && proxy.motionType === 'dynamic') {
+        continue;
+      }
+
+      if (ignoreSensors && proxy.isSensor) {
+        continue;
+      }
+
+      if (sweptAabb && !testAabbOverlap(sweptAabb, proxy.aabb)) {
+        continue;
+      }
+
+      candidateCount += 1;
+      const shape = this.getShape(proxy.shapeId);
+      const worldPose = this.getColliderWorldPose(proxy.colliderId);
+      if (!shape || !worldPose) {
+        continue;
+      }
+
+      testedShapeCount += 1;
+      const remainingDistance = nearestHit ? Math.min(maxDistance, nearestHit.distance) : maxDistance;
+      const shapeHit = queryShape
+        ? castConvexShapesWithToi({
+          queryShape: resolvedQueryShape,
+          targetShape: shape,
+          targetPose: worldPose,
+          origin,
+          rotation,
+          direction,
+          maxDistance: remainingDistance
+        })
+        : castType === 'capsule'
+          ? capsuleCastShape({
+            shape,
+            worldPose,
+            origin,
+            direction,
+            maxDistance: remainingDistance,
+            radius,
+            halfHeight,
+            rotation
+          })
+          : sphereCastShape({
+            shape,
+            worldPose,
+            origin,
+            direction,
+            maxDistance: remainingDistance,
+            radius
+          });
+
+      if (!shapeHit) {
+        continue;
+      }
+
+      if (!nearestHit || shapeHit.distance < nearestHit.distance - 1e-8) {
+        nearestHit = {
+          ...shapeHit,
+          colliderId: proxy.colliderId,
+          bodyId: proxy.bodyId,
+          shapeId: proxy.shapeId,
+          materialId: proxy.materialId,
+          shapeType: proxy.shapeType
+        };
+      }
+    }
+
+    const shapeCastResult = nearestHit
+      ? createShapeCastResult({
+        castType,
+        hit: true,
+        origin,
+        direction,
+        maxDistance,
+        radius,
+        halfHeight,
+        rotation,
+        sampleOrigins,
+        sampleEndPoints,
+        distance: nearestHit.distance,
+        point: nearestHit.point,
+        normal: nearestHit.normal,
+        sweepPosition: nearestHit.sweepPosition,
+        colliderId: nearestHit.colliderId,
+        bodyId: nearestHit.bodyId,
+        shapeId: nearestHit.shapeId,
+        materialId: nearestHit.materialId,
+        shapeType: nearestHit.shapeType,
+        algorithm: nearestHit.algorithm,
+        featureId: nearestHit.featureId,
+        sampleId: nearestHit.sampleId,
+        proxyCount: broadphaseProxies.length,
+        candidateCount,
+        testedShapeCount
+      })
+      : createShapeCastMiss({
+        castType,
+        origin,
+        direction,
+        maxDistance,
+        radius,
+        halfHeight,
+        rotation,
+        sampleOrigins,
+        sampleEndPoints,
+        proxyCount: broadphaseProxies.length,
+        candidateCount,
+        testedShapeCount
+      });
+
+    if (options.storeResult !== false) {
+      this.lastShapeCast = shapeCastResult;
+    }
+
+    return cloneShapeCastResult(shapeCastResult);
+  }
+
+  sphereCast(options = {}) {
+    return this.shapeCastAgainstWorld({
+      ...options,
+      castType: 'sphere'
+    });
+  }
+
+  capsuleCast(options = {}) {
+    return this.shapeCastAgainstWorld({
+      ...options,
+      castType: 'capsule'
+    });
+  }
+
+  getLastShapeCast() {
+    return cloneShapeCastResult(this.lastShapeCast);
+  }
+
+  getLastCcdEvents() {
+    return cloneCcdEvents(this.lastCcdEvents);
+  }
+
+  raycast(options = {}) {
+    const origin = cloneVec3(options.origin ?? createVec3());
+    const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
+    const maxDistance = toNonNegativeNumber(options.maxDistance, 100);
+    const collisionState = this.ensureCollisionState();
+    let candidateCount = 0;
+    let testedShapeCount = 0;
+    let nearestHit = null;
+
+    for (const proxy of collisionState.broadphaseProxies) {
+      const broadphaseHit = intersectRayAabb(origin, direction, maxDistance, proxy.aabb);
+      if (!broadphaseHit) {
+        continue;
+      }
+
+      candidateCount += 1;
+      if (nearestHit && broadphaseHit.distance > nearestHit.distance + 1e-8) {
+        continue;
+      }
+
+      const shape = this.getShape(proxy.shapeId);
+      const worldPose = this.getColliderWorldPose(proxy.colliderId);
+      if (!shape || !worldPose) {
+        continue;
+      }
+
+      testedShapeCount += 1;
+      const shapeHit = raycastShape({
+        shape,
+        worldPose,
+        origin,
+        direction,
+        maxDistance: nearestHit ? Math.min(maxDistance, nearestHit.distance) : maxDistance
+      });
+
+      if (!shapeHit) {
+        continue;
+      }
+
+      if (!nearestHit || shapeHit.distance < nearestHit.distance - 1e-8) {
+        nearestHit = {
+          ...shapeHit,
+          colliderId: proxy.colliderId,
+          bodyId: proxy.bodyId,
+          shapeId: proxy.shapeId,
+          materialId: proxy.materialId,
+          shapeType: proxy.shapeType
+        };
+      }
+    }
+
+    const raycastResult = nearestHit
+      ? createRaycastResult({
+        hit: true,
+        origin,
+        direction,
+        maxDistance,
+        distance: nearestHit.distance,
+        point: nearestHit.point,
+        normal: nearestHit.normal,
+        colliderId: nearestHit.colliderId,
+        bodyId: nearestHit.bodyId,
+        shapeId: nearestHit.shapeId,
+        materialId: nearestHit.materialId,
+        shapeType: nearestHit.shapeType,
+        algorithm: nearestHit.algorithm,
+        featureId: nearestHit.featureId,
+        proxyCount: collisionState.broadphaseProxies.length,
+        candidateCount,
+        testedShapeCount
+      })
+      : createRaycastMiss({
+        origin,
+        direction,
+        maxDistance,
+        proxyCount: collisionState.broadphaseProxies.length,
+        candidateCount,
+        testedShapeCount
+      });
+
+    this.lastRaycast = raycastResult;
+    return cloneRaycastResult(raycastResult);
+  }
+
+  getLastRaycast() {
+    return cloneRaycastResult(this.lastRaycast);
+  }
+
   buildDebugFrame() {
     const collisionState = this.ensureCollisionState();
     this.renderFrameCount += 1;
@@ -3795,6 +7338,119 @@ class PhysicsWorld {
       );
     }
 
+    for (const joint of collisionState.joints) {
+      const anchors = this.getJointWorldAnchors(joint.id);
+      if (!anchors) {
+        continue;
+      }
+
+      const debugAxes = (joint.type === 'hinge-joint' || joint.type === 'fixed-joint') ? this.getJointWorldAxes(joint.id) : null;
+
+      const bodyA = joint.bodyAId ? this.getBody(joint.bodyAId) : null;
+      const bodyB = joint.bodyBId ? this.getBody(joint.bodyBId) : null;
+      const sleeping = Boolean(bodyA?.sleeping) && Boolean(bodyB?.sleeping);
+      const jointColor = joint.broken === true
+        ? DEFAULT_DEBUG_COLORS.brokenJoint
+        : joint.type === 'fixed-joint'
+        ? (sleeping ? DEFAULT_DEBUG_COLORS.sleepingFixedJoint : DEFAULT_DEBUG_COLORS.fixedJoint)
+        : joint.type === 'hinge-joint'
+        ? (sleeping ? DEFAULT_DEBUG_COLORS.sleepingHingeJoint : DEFAULT_DEBUG_COLORS.hingeJoint)
+        : joint.type === 'point-to-point-joint'
+          ? (sleeping ? DEFAULT_DEBUG_COLORS.sleepingPointToPointJoint : DEFAULT_DEBUG_COLORS.pointToPointJoint)
+          : (sleeping ? DEFAULT_DEBUG_COLORS.sleepingDistanceJoint : DEFAULT_DEBUG_COLORS.distanceJoint);
+      const source = {
+        jointId: joint.id,
+        bodyAId: joint.bodyAId,
+        bodyBId: joint.bodyBId,
+        distance: joint.distance,
+        jointType: joint.type
+      };
+
+      primitives.push(
+        createDebugLine({
+          id: `${joint.id}:distance-line`,
+          category: joint.type,
+          start: anchors.anchorA,
+          end: anchors.anchorB,
+          color: jointColor,
+          source
+        })
+      );
+
+      primitives.push(
+        createDebugPoint({
+          id: `${joint.id}:anchor-a`,
+          category: `${joint.type}-anchor`,
+          position: anchors.anchorA,
+          color: jointColor,
+          size: 4,
+          source: {
+            ...source,
+            anchor: 'a'
+          }
+        })
+      );
+
+      primitives.push(
+        createDebugPoint({
+          id: `${joint.id}:anchor-b`,
+          category: `${joint.type}-anchor`,
+          position: anchors.anchorB,
+          color: jointColor,
+          size: 4,
+          source: {
+            ...source,
+            anchor: 'b'
+          }
+        })
+      );
+
+      if (debugAxes) {
+        const axisLength = 18;
+        primitives.push(
+          createDebugLine({
+            id: `${joint.id}:axis-a`,
+            category: joint.type === 'hinge-joint' ? 'hinge-axis-a' : 'fixed-axis-a',
+            start: anchors.anchorA,
+            end: addScaledVec3(anchors.anchorA, debugAxes.axisA, axisLength),
+            color: DEFAULT_DEBUG_COLORS.hingeAxisA,
+            source
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${joint.id}:axis-b`,
+            category: joint.type === 'hinge-joint' ? 'hinge-axis-b' : 'fixed-axis-b',
+            start: anchors.anchorB,
+            end: addScaledVec3(anchors.anchorB, debugAxes.axisB, axisLength),
+            color: DEFAULT_DEBUG_COLORS.hingeAxisB,
+            source
+          })
+        );
+
+        if (joint.type === 'hinge-joint' && joint.motorEnabled && Number(joint.maxMotorTorque ?? 0) > 0) {
+          const motorSign = Number(joint.motorSpeed ?? 0) >= 0 ? 1 : -1;
+          primitives.push(
+          createDebugLine({
+            id: `${joint.id}:motor`,
+            category: 'hinge-motor',
+            start: anchors.anchorB,
+            end: addScaledVec3(anchors.anchorB, debugAxes.axisB, axisLength * motorSign),
+            color: DEFAULT_DEBUG_COLORS.hingeMotor,
+            source: {
+              ...source,
+              motorMode: joint.motorMode ?? 'speed',
+              motorTargetAngle: joint.motorTargetAngle ?? 0,
+              motorSpeed: joint.motorSpeed,
+              maxMotorTorque: joint.maxMotorTorque
+            }
+            })
+          );
+        }
+      }
+    }
+
     for (const manifold of collisionState.manifolds) {
       for (const contact of manifold.contacts) {
         const source = {
@@ -3828,6 +7484,156 @@ class PhysicsWorld {
       }
     }
 
+    if (this.lastRaycast) {
+      primitives.push(
+        createDebugLine({
+          id: 'raycast:last:line',
+          category: 'raycast-line',
+          start: this.lastRaycast.origin,
+          end: this.lastRaycast.endPoint,
+          color: this.lastRaycast.hit
+            ? DEFAULT_DEBUG_COLORS.raycastHitLine
+            : DEFAULT_DEBUG_COLORS.raycastMissLine,
+          source: {
+            hit: this.lastRaycast.hit,
+            colliderId: this.lastRaycast.colliderId,
+            bodyId: this.lastRaycast.bodyId,
+            shapeType: this.lastRaycast.shapeType
+          }
+        })
+      );
+
+      if (this.lastRaycast.hit && this.lastRaycast.point && this.lastRaycast.normal) {
+        primitives.push(
+          createDebugPoint({
+            id: 'raycast:last:hit-point',
+            category: 'raycast-hit-point',
+            position: this.lastRaycast.point,
+            color: DEFAULT_DEBUG_COLORS.raycastHitPoint,
+            size: 6,
+            source: {
+              colliderId: this.lastRaycast.colliderId,
+              bodyId: this.lastRaycast.bodyId,
+              distance: this.lastRaycast.distance
+            }
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: 'raycast:last:hit-normal',
+            category: 'raycast-hit-normal',
+            start: this.lastRaycast.point,
+            end: addScaledVec3(this.lastRaycast.point, this.lastRaycast.normal, 16),
+            color: DEFAULT_DEBUG_COLORS.raycastHitNormal,
+            source: {
+              colliderId: this.lastRaycast.colliderId,
+              bodyId: this.lastRaycast.bodyId
+            }
+          })
+        );
+      }
+    }
+
+    if (this.lastShapeCast) {
+      this.lastShapeCast.sampleOrigins.forEach((sampleOrigin, sampleIndex) => {
+        primitives.push(
+          createDebugLine({
+            id: `shape-cast:last:line:${sampleIndex}`,
+            category: 'shape-cast-line',
+            start: sampleOrigin,
+            end: this.lastShapeCast.sampleEndPoints[sampleIndex] ?? addScaledVec3(sampleOrigin, this.lastShapeCast.direction, this.lastShapeCast.maxDistance),
+            color: this.lastShapeCast.hit
+              ? DEFAULT_DEBUG_COLORS.shapeCastHitLine
+              : DEFAULT_DEBUG_COLORS.shapeCastMissLine,
+            source: {
+              castType: this.lastShapeCast.castType,
+              sampleIndex,
+              hit: this.lastShapeCast.hit
+            }
+          })
+        );
+      });
+
+      if (this.lastShapeCast.hit && this.lastShapeCast.point && this.lastShapeCast.normal) {
+        primitives.push(
+          createDebugPoint({
+            id: 'shape-cast:last:hit-point',
+            category: 'shape-cast-hit-point',
+            position: this.lastShapeCast.point,
+            color: DEFAULT_DEBUG_COLORS.shapeCastHitPoint,
+            size: 6,
+            source: {
+              castType: this.lastShapeCast.castType,
+              colliderId: this.lastShapeCast.colliderId,
+              sampleId: this.lastShapeCast.sampleId
+            }
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: 'shape-cast:last:hit-normal',
+            category: 'shape-cast-hit-normal',
+            start: this.lastShapeCast.point,
+            end: addScaledVec3(this.lastShapeCast.point, this.lastShapeCast.normal, 16),
+            color: DEFAULT_DEBUG_COLORS.shapeCastHitNormal,
+            source: {
+              castType: this.lastShapeCast.castType,
+              colliderId: this.lastShapeCast.colliderId
+            }
+          })
+        );
+      }
+    }
+
+    for (const [eventIndex, ccdEvent] of this.lastCcdEvents.entries()) {
+      primitives.push(
+        createDebugLine({
+          id: `ccd:last:path:${eventIndex}`,
+          category: 'ccd-path',
+          start: ccdEvent.startPosition,
+          end: ccdEvent.endPosition,
+          color: DEFAULT_DEBUG_COLORS.ccdPath,
+          source: {
+            bodyId: ccdEvent.bodyId,
+            targetColliderId: ccdEvent.targetColliderId,
+            castType: ccdEvent.castType
+          }
+        })
+      );
+
+      if (ccdEvent.hitPosition && ccdEvent.normal) {
+        primitives.push(
+          createDebugPoint({
+            id: `ccd:last:hit-point:${eventIndex}`,
+            category: 'ccd-hit-point',
+            position: ccdEvent.hitPosition,
+            color: DEFAULT_DEBUG_COLORS.ccdHitPoint,
+            size: 6,
+            source: {
+              bodyId: ccdEvent.bodyId,
+              targetColliderId: ccdEvent.targetColliderId
+            }
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `ccd:last:hit-normal:${eventIndex}`,
+            category: 'ccd-hit-normal',
+            start: ccdEvent.hitPosition,
+            end: addScaledVec3(ccdEvent.hitPosition, ccdEvent.normal, 16),
+            color: DEFAULT_DEBUG_COLORS.ccdHitNormal,
+            source: {
+              bodyId: ccdEvent.bodyId,
+              targetColliderId: ccdEvent.targetColliderId
+            }
+          })
+        );
+      }
+    }
+
     return createDebugFrame({
       frameNumber: this.renderFrameCount,
       simulationTick: this.simulationTick,
@@ -3837,16 +7643,25 @@ class PhysicsWorld {
         bodyCount: this.bodyRegistry.count(),
         shapeCount: this.shapeRegistry.count(),
         colliderCount: this.colliderRegistry.count(),
+        jointCount: this.jointRegistry.count(),
         materialCount: this.materialRegistry.count(),
         broadphaseProxyCount: collisionState.summary.proxyCount,
         broadphasePairCount: collisionState.summary.pairCount,
         contactPairCount: collisionState.summary.contactCount,
         manifoldCount: collisionState.summary.manifoldCount,
+        islandCount: collisionState.summary.islandCount,
+        sleepingBodyCount: collisionState.summary.sleepingBodyCount,
+        awakeBodyCount: collisionState.summary.awakeBodyCount,
         solverIterations: collisionState.solverStats.iterations,
         solvedContactCount: collisionState.solverStats.solvedContactCount,
         solvedTangentContactCount: collisionState.solverStats.solvedTangentContactCount,
         restitutionContactCount: collisionState.solverStats.restitutionContactCount,
         warmStartedContactCount: collisionState.solverStats.warmStartedContactCount,
+        warmStartedJointCount: collisionState.solverStats.warmStartedJointCount,
+        solvedJointCount: collisionState.solverStats.solvedJointCount,
+        raycastHit: this.lastRaycast?.hit ?? false,
+        shapeCastHit: this.lastShapeCast?.hit ?? false,
+        ccdEventCount: this.lastCcdEvents.length,
         fixedDeltaTime: this.fixedDeltaTime,
         performedSubsteps: this.lastStepStats.performedSubsteps
       }
@@ -3861,10 +7676,12 @@ class PhysicsWorld {
       bodyCount: this.bodyRegistry.count(),
       shapeCount: this.shapeRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
+      jointCount: this.jointRegistry.count(),
       materialCount: this.materialRegistry.count(),
       bodies: this.bodyRegistry.list(),
       shapes: this.shapeRegistry.list(),
       colliders: this.colliderRegistry.list(),
+      joints: this.jointRegistry.list(),
       materials: this.materialRegistry.list(),
       collision: collisionState,
       simulationTick: this.simulationTick,
@@ -3872,6 +7689,9 @@ class PhysicsWorld {
       fixedDeltaTime: this.fixedDeltaTime,
       gravity: cloneVec3(this.gravity),
       accumulatorSeconds: this.accumulatorSeconds,
+      lastRaycast: cloneRaycastResult(this.lastRaycast),
+      lastShapeCast: cloneShapeCastResult(this.lastShapeCast),
+      lastCcdEvents: cloneCcdEvents(this.lastCcdEvents),
       lastStepStats: {
         ...this.lastStepStats
       },
@@ -3882,10 +7702,10 @@ class PhysicsWorld {
 
 __exports.PhysicsWorld = PhysicsWorld;
 },
-  16: function(__require, __exports) {
+  19: function(__require, __exports) {
 const { cloneQuat, createIdentityQuat } = __require(5);
 const { cloneVec3, createVec3 } = __require(6);
-const { BaseRegistry } = __require(17);
+const { BaseRegistry } = __require(20);
 function toFiniteNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -3939,7 +7759,9 @@ class BodyRegistry extends BaseRegistry {
       inverseMass: body.inverseMass,
       inertia: cloneVec3(body.inertia),
       inverseInertia: cloneVec3(body.inverseInertia),
+      canSleep: body.canSleep,
       sleeping: body.sleeping,
+      sleepTimer: body.sleepTimer,
       enabled: body.enabled,
       userData: cloneNullableValue(body.userData)
     };
@@ -3966,7 +7788,9 @@ class BodyRegistry extends BaseRegistry {
       inverseMass: mass > 0 ? 1 / mass : 0,
       inertia: cloneVec3(options.inertia ?? createVec3()),
       inverseInertia: cloneVec3(options.inverseInertia ?? createVec3()),
+      canSleep: options.canSleep !== false,
       sleeping: Boolean(options.sleeping),
+      sleepTimer: Math.max(0, toFiniteNumber(options.sleepTimer, 0)),
       enabled: options.enabled !== false,
       userData: cloneNullableValue(options.userData)
     });
@@ -3996,7 +7820,7 @@ class BodyRegistry extends BaseRegistry {
 
 __exports.BodyRegistry = BodyRegistry;
 },
-  17: function(__require, __exports) {
+  20: function(__require, __exports) {
 class BaseRegistry {
   constructor(prefix) {
     this.prefix = prefix;
@@ -4063,10 +7887,10 @@ class BaseRegistry {
 
 __exports.BaseRegistry = BaseRegistry;
 },
-  18: function(__require, __exports) {
+  21: function(__require, __exports) {
 const { cloneQuat, createIdentityQuat } = __require(5);
 const { cloneVec3, createVec3 } = __require(6);
-const { BaseRegistry } = __require(17);
+const { BaseRegistry } = __require(20);
 function createLocalPose(localPose) {
   return {
     position: cloneVec3(localPose?.position ?? createVec3()),
@@ -4109,8 +7933,326 @@ class ColliderRegistry extends BaseRegistry {
 
 __exports.ColliderRegistry = ColliderRegistry;
 },
-  19: function(__require, __exports) {
-const { BaseRegistry } = __require(17);
+  22: function(__require, __exports) {
+const { cloneVec3, createVec3, lengthVec3, normalizeVec3, subtractVec3 } = __require(6);
+const { BaseRegistry } = __require(20);
+function toNonNegativeNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function toOptionalNumber(value, fallback = null) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toOptionalNonNegativeNumber(value, fallback = null) {
+  const parsed = toOptionalNumber(value, fallback);
+  return parsed !== null && parsed >= 0 ? parsed : fallback;
+}
+
+function clampDistanceToRange(distance, minDistance, maxDistance) {
+  let resolvedDistance = toNonNegativeNumber(distance, 0);
+
+  if (minDistance !== null) {
+    resolvedDistance = Math.max(resolvedDistance, minDistance);
+  }
+
+  if (maxDistance !== null) {
+    resolvedDistance = Math.min(resolvedDistance, maxDistance);
+  }
+
+  return resolvedDistance;
+}
+
+function normalizeDistanceLimits(minDistance, maxDistance) {
+  let resolvedMin = toOptionalNumber(minDistance, null);
+  let resolvedMax = toOptionalNumber(maxDistance, null);
+
+  resolvedMin = resolvedMin !== null && resolvedMin >= 0 ? resolvedMin : null;
+  resolvedMax = resolvedMax !== null && resolvedMax >= 0 ? resolvedMax : null;
+
+  if (resolvedMin !== null && resolvedMax !== null && resolvedMin > resolvedMax) {
+    const temp = resolvedMin;
+    resolvedMin = resolvedMax;
+    resolvedMax = temp;
+  }
+
+  return {
+    minDistance: resolvedMin,
+    maxDistance: resolvedMax
+  };
+}
+
+function normalizeAngleLimits(lowerAngle, upperAngle) {
+  let resolvedLower = toOptionalNumber(lowerAngle, null);
+  let resolvedUpper = toOptionalNumber(upperAngle, null);
+
+  if (resolvedLower !== null && resolvedUpper !== null && resolvedLower > resolvedUpper) {
+    const temp = resolvedLower;
+    resolvedLower = resolvedUpper;
+    resolvedUpper = temp;
+  }
+
+  return {
+    lowerAngle: resolvedLower,
+    upperAngle: resolvedUpper
+  };
+}
+
+function cloneNullableValue(value) {
+  if (value === undefined) {
+    return null;
+  }
+
+  return value;
+}
+
+function computeDistance(localAnchorA, localAnchorB) {
+  return lengthVec3(subtractVec3(localAnchorB ?? createVec3(), localAnchorA ?? createVec3()));
+}
+class JointRegistry extends BaseRegistry {
+  constructor() {
+    super('joint');
+  }
+
+  cloneRecord(joint) {
+    return {
+      id: joint.id,
+      type: joint.type,
+      bodyAId: joint.bodyAId,
+      bodyBId: joint.bodyBId,
+      localAnchorA: cloneVec3(joint.localAnchorA),
+      localAnchorB: cloneVec3(joint.localAnchorB),
+      localAxisA: cloneVec3(joint.localAxisA),
+      localAxisB: cloneVec3(joint.localAxisB),
+      localReferenceA: cloneVec3(joint.localReferenceA),
+      localReferenceB: cloneVec3(joint.localReferenceB),
+      distance: joint.distance,
+      minDistance: joint.minDistance,
+      maxDistance: joint.maxDistance,
+      springFrequency: joint.springFrequency,
+      dampingRatio: joint.dampingRatio,
+      lowerAngle: joint.lowerAngle,
+      upperAngle: joint.upperAngle,
+      angularDamping: joint.angularDamping,
+      breakForce: joint.breakForce,
+      breakTorque: joint.breakTorque,
+      broken: joint.broken,
+      lastAppliedForce: joint.lastAppliedForce,
+      lastAppliedTorque: joint.lastAppliedTorque,
+      motorEnabled: joint.motorEnabled,
+      motorMode: joint.motorMode,
+      motorSpeed: joint.motorSpeed,
+      motorTargetAngle: joint.motorTargetAngle,
+      motorServoGain: joint.motorServoGain,
+      maxMotorTorque: joint.maxMotorTorque,
+      accumulatedImpulse: joint.accumulatedImpulse,
+      accumulatedLinearImpulse: cloneVec3(joint.accumulatedLinearImpulse),
+      accumulatedAngularImpulse: cloneVec3(joint.accumulatedAngularImpulse),
+      accumulatedMotorImpulse: joint.accumulatedMotorImpulse,
+      enabled: joint.enabled,
+      userData: cloneNullableValue(joint.userData)
+    };
+  }
+
+  createDistanceJoint(options = {}) {
+    const localAnchorA = cloneVec3(options.localAnchorA ?? createVec3());
+    const localAnchorB = cloneVec3(options.localAnchorB ?? createVec3());
+    const fallbackDistance = computeDistance(localAnchorA, localAnchorB);
+    const { minDistance, maxDistance } = normalizeDistanceLimits(options.minDistance, options.maxDistance);
+    const distance = clampDistanceToRange(
+      toNonNegativeNumber(options.distance, fallbackDistance),
+      minDistance,
+      maxDistance
+    );
+
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'distance-joint',
+      bodyAId: String(options.bodyAId ?? '').trim() || null,
+      bodyBId: String(options.bodyBId ?? '').trim() || null,
+      localAnchorA,
+      localAnchorB,
+      localAxisA: createVec3(0, 1, 0),
+      localAxisB: createVec3(0, 1, 0),
+      localReferenceA: createVec3(1, 0, 0),
+      localReferenceB: createVec3(1, 0, 0),
+      distance,
+      minDistance,
+      maxDistance,
+      springFrequency: toNonNegativeNumber(options.springFrequency, 0),
+      dampingRatio: toNonNegativeNumber(options.dampingRatio, 0),
+      lowerAngle: null,
+      upperAngle: null,
+      angularDamping: 0,
+      breakForce: null,
+      breakTorque: null,
+      broken: false,
+      lastAppliedForce: 0,
+      lastAppliedTorque: 0,
+      motorEnabled: false,
+      motorMode: 'speed',
+      motorSpeed: 0,
+      motorTargetAngle: 0,
+      motorServoGain: 8,
+      maxMotorTorque: 0,
+      accumulatedImpulse: Number.isFinite(Number(options.accumulatedImpulse))
+        ? Number(options.accumulatedImpulse)
+        : 0,
+      accumulatedLinearImpulse: cloneVec3(options.accumulatedLinearImpulse ?? createVec3()),
+      accumulatedAngularImpulse: cloneVec3(options.accumulatedAngularImpulse ?? createVec3()),
+      accumulatedMotorImpulse: 0,
+      enabled: options.enabled !== false,
+      userData: cloneNullableValue(options.userData)
+    });
+  }
+
+  createPointToPointJoint(options = {}) {
+    const localAnchorA = cloneVec3(options.localAnchorA ?? createVec3());
+    const localAnchorB = cloneVec3(options.localAnchorB ?? createVec3());
+
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'point-to-point-joint',
+      bodyAId: String(options.bodyAId ?? '').trim() || null,
+      bodyBId: String(options.bodyBId ?? '').trim() || null,
+      localAnchorA,
+      localAnchorB,
+      localAxisA: createVec3(0, 1, 0),
+      localAxisB: createVec3(0, 1, 0),
+      localReferenceA: createVec3(1, 0, 0),
+      localReferenceB: createVec3(1, 0, 0),
+      distance: 0,
+      minDistance: null,
+      maxDistance: null,
+      springFrequency: 0,
+      dampingRatio: 0,
+      lowerAngle: null,
+      upperAngle: null,
+      angularDamping: 0,
+      breakForce: null,
+      breakTorque: null,
+      broken: false,
+      lastAppliedForce: 0,
+      lastAppliedTorque: 0,
+      motorEnabled: false,
+      motorMode: 'speed',
+      motorSpeed: 0,
+      motorTargetAngle: 0,
+      motorServoGain: 8,
+      maxMotorTorque: 0,
+      accumulatedImpulse: 0,
+      accumulatedLinearImpulse: cloneVec3(options.accumulatedLinearImpulse ?? createVec3()),
+      accumulatedAngularImpulse: cloneVec3(options.accumulatedAngularImpulse ?? createVec3()),
+      accumulatedMotorImpulse: 0,
+      enabled: options.enabled !== false,
+      userData: cloneNullableValue(options.userData)
+    });
+  }
+
+  createHingeJoint(options = {}) {
+    const localAnchorA = cloneVec3(options.localAnchorA ?? createVec3());
+    const localAnchorB = cloneVec3(options.localAnchorB ?? createVec3());
+    const localAxisA = normalizeVec3(options.localAxisA ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
+    const localAxisB = normalizeVec3(options.localAxisB ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
+    const { lowerAngle, upperAngle } = normalizeAngleLimits(options.lowerAngle, options.upperAngle);
+
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'hinge-joint',
+      bodyAId: String(options.bodyAId ?? '').trim() || null,
+      bodyBId: String(options.bodyBId ?? '').trim() || null,
+      localAnchorA,
+      localAnchorB,
+      localAxisA,
+      localAxisB,
+      localReferenceA: normalizeVec3(options.localReferenceA ?? createVec3(1, 0, 0), createVec3(1, 0, 0)),
+      localReferenceB: normalizeVec3(options.localReferenceB ?? createVec3(1, 0, 0), createVec3(1, 0, 0)),
+      distance: 0,
+      minDistance: null,
+      maxDistance: null,
+      springFrequency: 0,
+      dampingRatio: 0,
+      lowerAngle,
+      upperAngle,
+      angularDamping: toNonNegativeNumber(options.angularDamping, 0),
+      breakForce: null,
+      breakTorque: null,
+      broken: false,
+      lastAppliedForce: 0,
+      lastAppliedTorque: 0,
+      motorEnabled: options.motorEnabled === true && toNonNegativeNumber(options.maxMotorTorque, 0) > 0,
+      motorMode: options.motorMode === 'servo' ? 'servo' : 'speed',
+      motorSpeed: Number.isFinite(Number(options.motorSpeed)) ? Number(options.motorSpeed) : 0,
+      motorTargetAngle: Number.isFinite(Number(options.motorTargetAngle)) ? Number(options.motorTargetAngle) : 0,
+      motorServoGain: toNonNegativeNumber(options.motorServoGain, 8),
+      maxMotorTorque: toNonNegativeNumber(options.maxMotorTorque, 0),
+      accumulatedImpulse: 0,
+      accumulatedLinearImpulse: cloneVec3(options.accumulatedLinearImpulse ?? createVec3()),
+      accumulatedAngularImpulse: cloneVec3(options.accumulatedAngularImpulse ?? createVec3()),
+      accumulatedMotorImpulse: Number.isFinite(Number(options.accumulatedMotorImpulse))
+        ? Number(options.accumulatedMotorImpulse)
+        : 0,
+      enabled: options.enabled !== false,
+      userData: cloneNullableValue(options.userData)
+    });
+  }
+
+  createFixedJoint(options = {}) {
+    const localAnchorA = cloneVec3(options.localAnchorA ?? createVec3());
+    const localAnchorB = cloneVec3(options.localAnchorB ?? createVec3());
+    const localAxisA = normalizeVec3(options.localAxisA ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
+    const localAxisB = normalizeVec3(options.localAxisB ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
+
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'fixed-joint',
+      bodyAId: String(options.bodyAId ?? '').trim() || null,
+      bodyBId: String(options.bodyBId ?? '').trim() || null,
+      localAnchorA,
+      localAnchorB,
+      localAxisA,
+      localAxisB,
+      localReferenceA: normalizeVec3(options.localReferenceA ?? createVec3(1, 0, 0), createVec3(1, 0, 0)),
+      localReferenceB: normalizeVec3(options.localReferenceB ?? createVec3(1, 0, 0), createVec3(1, 0, 0)),
+      distance: 0,
+      minDistance: null,
+      maxDistance: null,
+      springFrequency: 0,
+      dampingRatio: 0,
+      lowerAngle: null,
+      upperAngle: null,
+      angularDamping: 0,
+      breakForce: toOptionalNonNegativeNumber(options.breakForce, null),
+      breakTorque: toOptionalNonNegativeNumber(options.breakTorque, null),
+      broken: false,
+      lastAppliedForce: 0,
+      lastAppliedTorque: 0,
+      motorEnabled: false,
+      motorMode: 'speed',
+      motorSpeed: 0,
+      motorTargetAngle: 0,
+      motorServoGain: 8,
+      maxMotorTorque: 0,
+      accumulatedImpulse: 0,
+      accumulatedLinearImpulse: cloneVec3(options.accumulatedLinearImpulse ?? createVec3()),
+      accumulatedAngularImpulse: cloneVec3(options.accumulatedAngularImpulse ?? createVec3()),
+      accumulatedMotorImpulse: 0,
+      enabled: options.enabled !== false,
+      userData: cloneNullableValue(options.userData)
+    });
+  }
+}
+
+__exports.JointRegistry = JointRegistry;
+},
+  23: function(__require, __exports) {
+const { BaseRegistry } = __require(20);
 function toNonNegativeNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -4143,10 +8285,10 @@ class MaterialRegistry extends BaseRegistry {
 
 __exports.MaterialRegistry = MaterialRegistry;
 },
-  20: function(__require, __exports) {
+  24: function(__require, __exports) {
 const { cloneQuat, createIdentityQuat } = __require(5);
 const { cloneVec3, createVec3 } = __require(6);
-const { BaseRegistry } = __require(17);
+const { BaseRegistry } = __require(20);
 function toPositiveNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -4259,7 +8401,7 @@ class ShapeRegistry extends BaseRegistry {
 
 __exports.ShapeRegistry = ShapeRegistry;
 },
-  21: function(__require, __exports) {
+  25: function(__require, __exports) {
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -4273,7 +8415,7 @@ function toString(value, fallback = '') {
 __exports.toNumber = toNumber;
 __exports.toString = toString;
 },
-  22: function(__require, __exports) {
+  26: function(__require, __exports) {
 const EXTENSION_ID = 'engine3d';
 const GANDI_EXTENSION_METADATA = {
   name: 'engine3d.meta.name',
@@ -4364,11 +8506,163 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createDistanceJoint',
+        blockType: 'command',
+        text: 'create distance joint [ID] body a:[BODY_A] body b:[BODY_B] length:[LENGTH]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-1' },
+          BODY_A: { type: 'string', defaultValue: 'body-1' },
+          BODY_B: { type: 'string', defaultValue: 'body-2' },
+          LENGTH: { type: 'number', defaultValue: 100 }
+        }
+      },
+      {
+        opcode: 'createPointToPointJoint',
+        blockType: 'command',
+        text: 'create point-to-point joint [ID] body a:[BODY_A] body b:[BODY_B] anchor x:[X] y:[Y] z:[Z]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-2' },
+          BODY_A: { type: 'string', defaultValue: 'body-1' },
+          BODY_B: { type: 'string', defaultValue: 'body-2' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'createHingeJoint',
+        blockType: 'command',
+        text: 'create hinge joint [ID] body a:[BODY_A] body b:[BODY_B] anchor x:[X] y:[Y] z:[Z] axis x:[AX] y:[AY] z:[AZ]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-3' },
+          BODY_A: { type: 'string', defaultValue: 'body-1' },
+          BODY_B: { type: 'string', defaultValue: 'body-2' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          AX: { type: 'number', defaultValue: 0 },
+          AY: { type: 'number', defaultValue: 1 },
+          AZ: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'createFixedJoint',
+        blockType: 'command',
+        text: 'create fixed joint [ID] body a:[BODY_A] body b:[BODY_B] anchor x:[X] y:[Y] z:[Z]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-4' },
+          BODY_A: { type: 'string', defaultValue: 'body-1' },
+          BODY_B: { type: 'string', defaultValue: 'body-2' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'configureDistanceJoint',
+        blockType: 'command',
+        text: 'configure distance joint [ID] min:[MIN] max:[MAX] spring:[SPRING] damping:[DAMPING]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-1' },
+          MIN: { type: 'number', defaultValue: 50 },
+          MAX: { type: 'number', defaultValue: 150 },
+          SPRING: { type: 'number', defaultValue: 0 },
+          DAMPING: { type: 'number', defaultValue: 0.5 }
+        }
+      },
+      {
+        opcode: 'configureHingeJoint',
+        blockType: 'command',
+        text: 'configure hinge joint [ID] lower:[LOWER] upper:[UPPER] damping:[DAMPING]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-3' },
+          LOWER: { type: 'number', defaultValue: -45 },
+          UPPER: { type: 'number', defaultValue: 45 },
+          DAMPING: { type: 'number', defaultValue: 4 }
+        }
+      },
+      {
+        opcode: 'configureFixedJoint',
+        blockType: 'command',
+        text: 'configure fixed joint [ID] break force:[BREAK_FORCE] break torque:[BREAK_TORQUE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-4' },
+          BREAK_FORCE: { type: 'number', defaultValue: 0 },
+          BREAK_TORQUE: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'configureHingeMotor',
+        blockType: 'command',
+        text: 'configure hinge motor [ID] speed:[SPEED] max torque:[MAX_TORQUE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-3' },
+          SPEED: { type: 'number', defaultValue: 180 },
+          MAX_TORQUE: { type: 'number', defaultValue: 20 }
+        }
+      },
+      {
+        opcode: 'configureHingeServo',
+        blockType: 'command',
+        text: 'configure hinge servo [ID] target angle:[TARGET] max speed:[MAX_SPEED] max torque:[MAX_TORQUE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-3' },
+          TARGET: { type: 'number', defaultValue: 45 },
+          MAX_SPEED: { type: 'number', defaultValue: 180 },
+          MAX_TORQUE: { type: 'number', defaultValue: 20 }
+        }
+      },
+      {
         opcode: 'stepWorld',
         blockType: 'command',
         text: 'step physics world by [SECONDS] seconds',
         arguments: {
           SECONDS: { type: 'number', defaultValue: 0.016666666666666666 }
+        }
+      },
+      {
+        opcode: 'sphereCast',
+        blockType: 'command',
+        text: 'sphere cast from x:[X] y:[Y] z:[Z] radius:[RADIUS] dir x:[DX] y:[DY] z:[DZ] length:[LENGTH]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 120 },
+          Z: { type: 'number', defaultValue: 0 },
+          RADIUS: { type: 'number', defaultValue: 25 },
+          DX: { type: 'number', defaultValue: 0 },
+          DY: { type: 'number', defaultValue: -1 },
+          DZ: { type: 'number', defaultValue: 0 },
+          LENGTH: { type: 'number', defaultValue: 300 }
+        }
+      },
+      {
+        opcode: 'capsuleCast',
+        blockType: 'command',
+        text: 'capsule cast from x:[X] y:[Y] z:[Z] radius:[RADIUS] half height:[HALF_HEIGHT] dir x:[DX] y:[DY] z:[DZ] length:[LENGTH]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 120 },
+          Z: { type: 'number', defaultValue: 0 },
+          RADIUS: { type: 'number', defaultValue: 20 },
+          HALF_HEIGHT: { type: 'number', defaultValue: 40 },
+          DX: { type: 'number', defaultValue: 0 },
+          DY: { type: 'number', defaultValue: -1 },
+          DZ: { type: 'number', defaultValue: 0 },
+          LENGTH: { type: 'number', defaultValue: 300 }
+        }
+      },
+      {
+        opcode: 'raycast',
+        blockType: 'command',
+        text: 'raycast from x:[X] y:[Y] z:[Z] dir x:[DX] y:[DY] z:[DZ] length:[LENGTH]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 100 },
+          Z: { type: 'number', defaultValue: 0 },
+          DX: { type: 'number', defaultValue: 0 },
+          DY: { type: 'number', defaultValue: -1 },
+          DZ: { type: 'number', defaultValue: 0 },
+          LENGTH: { type: 'number', defaultValue: 300 }
         }
       },
       {
@@ -4416,6 +8710,14 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'jointSummary',
+        blockType: 'reporter',
+        text: 'joint [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'joint-1' }
+        }
+      },
+      {
         opcode: 'queryPointBodies',
         blockType: 'reporter',
         text: 'bodies at point x:[X] y:[Y] z:[Z]',
@@ -4460,6 +8762,21 @@ function createExtensionInfo() {
           HY: { type: 'number', defaultValue: 50 },
           HZ: { type: 'number', defaultValue: 50 }
         }
+      },
+      {
+        opcode: 'raycastSummary',
+        blockType: 'reporter',
+        text: 'last raycast summary'
+      },
+      {
+        opcode: 'shapeCastSummary',
+        blockType: 'reporter',
+        text: 'last shape cast summary'
+      },
+      {
+        opcode: 'ccdSummary',
+        blockType: 'reporter',
+        text: 'ccd summary'
       },
       {
         opcode: 'debugFrameSummary',
@@ -4516,8 +8833,8 @@ __exports.EXTENSION_ID = EXTENSION_ID;
 __exports.GANDI_EXTENSION_METADATA = GANDI_EXTENSION_METADATA;
 __exports.GANDI_L10N = GANDI_L10N;
 },
-  23: function(__require, __exports) {
-const { createDebugOverlay } = __require(24);
+  27: function(__require, __exports) {
+const { createDebugOverlay } = __require(28);
 function createHost(displayName, runtime, renderer, sandbox) {
   const overlay = createDebugOverlay(displayName);
 
@@ -4562,7 +8879,7 @@ function createGandiRemoteHost() {
 __exports.createGandiApprovedHost = createGandiApprovedHost;
 __exports.createGandiRemoteHost = createGandiRemoteHost;
 },
-  24: function(__require, __exports) {
+  28: function(__require, __exports) {
 const { rotateVec3ByQuat } = __require(5);
 const { addVec3, createVec3, crossVec3, dotVec3, normalizeVec3, subtractVec3 } = __require(6);
 function rgba(color) {

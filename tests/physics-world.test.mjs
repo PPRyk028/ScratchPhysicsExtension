@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEBUG_FRAME_SCHEMA_VERSION, DEBUG_PRIMITIVE_TYPES, PhysicsWorld, rotateVec3ByQuat } from '../src/physics/index.js';
+import { DEBUG_FRAME_SCHEMA_VERSION, DEBUG_PRIMITIVE_TYPES, PhysicsWorld, createQuatFromAxisAngle, dotVec3, rotateVec3ByQuat } from '../src/physics/index.js';
 
 test('PhysicsWorld creates box bodies with matching shape, body, collider, and default material records', () => {
   const world = new PhysicsWorld();
@@ -181,7 +181,7 @@ test('PhysicsWorld sphere restitution produces a bounce against a floor box', ()
   });
 
   let observedBounce = false;
-  for (let stepIndex = 0; stepIndex < 240; stepIndex += 1) {
+  for (let stepIndex = 0; stepIndex < 480; stepIndex += 1) {
     world.step(1 / 120);
     if (world.getBody('ball').linearVelocity.y > 0.5) {
       observedBounce = true;
@@ -521,6 +521,226 @@ test('PhysicsWorld exposes collider world poses, body collider lookup, and world
   assert.equal(summary.gravity.y, -3);
 });
 
+test('PhysicsWorld raycast returns the nearest hit collider and stores the query snapshot', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'near-floor',
+    position: { x: 0, y: -5, z: 0 },
+    size: 2
+  });
+  world.createStaticBoxCollider({
+    id: 'far-floor',
+    position: { x: 0, y: -15, z: 0 },
+    size: 2
+  });
+
+  const result = world.raycast({
+    origin: { x: 0, y: 10, z: 0 },
+    direction: { x: 0, y: -1, z: 0 },
+    maxDistance: 40
+  });
+  const snapshot = world.getSnapshot();
+
+  assert.equal(result.hit, true);
+  assert.equal(result.colliderId, 'near-floor:collider');
+  assert.equal(result.bodyId, null);
+  assert.equal(result.shapeType, 'box');
+  assert.equal(result.algorithm, 'box-raycast-v1');
+  assert.ok(Math.abs(result.distance - 14) < 1e-6, `expected hit distance near 14, got ${result.distance}`);
+  assert.equal(result.normal.y, 1);
+  assert.equal(result.candidateCount, 2);
+  assert.equal(snapshot.lastRaycast.hit, true);
+  assert.equal(snapshot.lastRaycast.colliderId, 'near-floor:collider');
+});
+
+test('PhysicsWorld debug frame visualizes the last successful raycast', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+
+  world.raycast({
+    origin: { x: 0, y: 5, z: 0 },
+    direction: { x: 0, y: -1, z: 0 },
+    maxDistance: 10
+  });
+
+  const frame = world.buildDebugFrame();
+  const categories = new Set(frame.primitives.map((primitive) => primitive.category));
+
+  assert.equal(frame.stats.raycastHit, true);
+  assert.ok(categories.has('raycast-line'));
+  assert.ok(categories.has('raycast-hit-point'));
+  assert.ok(categories.has('raycast-hit-normal'));
+  assert.ok(frame.stats.byType[DEBUG_PRIMITIVE_TYPES.LINE] >= 2);
+  assert.ok(frame.stats.byType[DEBUG_PRIMITIVE_TYPES.POINT] >= 2);
+});
+
+test('PhysicsWorld raycast miss keeps only the query line in the debug frame', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+
+  const result = world.raycast({
+    origin: { x: 0, y: 5, z: 0 },
+    direction: { x: 1, y: 0, z: 0 },
+    maxDistance: 10
+  });
+  const frame = world.buildDebugFrame();
+  const categories = frame.primitives.map((primitive) => primitive.category);
+
+  assert.equal(result.hit, false);
+  assert.equal(frame.stats.raycastHit, false);
+  assert.ok(categories.includes('raycast-line'));
+  assert.equal(categories.includes('raycast-hit-point'), false);
+  assert.equal(categories.includes('raycast-hit-normal'), false);
+});
+
+test('PhysicsWorld sphere cast hits the nearest collider and records the sweep pose', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -5, z: 0 },
+    size: 2
+  });
+
+  const result = world.sphereCast({
+    origin: { x: 0, y: 10, z: 0 },
+    radius: 1,
+    direction: { x: 0, y: -1, z: 0 },
+    maxDistance: 30
+  });
+
+  assert.equal(result.hit, true);
+  assert.equal(result.castType, 'sphere');
+  assert.equal(result.colliderId, 'floor:collider');
+  assert.equal(result.algorithm, 'convex-toi-v1');
+  assert.ok(Math.abs(result.distance - 13) < 0.01, `expected sphere cast distance near 13, got ${result.distance}`);
+  assert.ok(Math.abs(result.sweepPosition.y - (-3)) < 0.01, `expected sweep center near -3, got ${result.sweepPosition.y}`);
+  assert.equal(result.sampleOrigins.length, 1);
+});
+
+test('PhysicsWorld capsule cast returns a hit and exposes sample sweep lines', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 6, y: 0, z: 0 },
+    size: 2
+  });
+
+  const result = world.capsuleCast({
+    origin: { x: 0, y: 0, z: 0 },
+    radius: 0.5,
+    halfHeight: 1,
+    direction: { x: 1, y: 0, z: 0 },
+    maxDistance: 10
+  });
+  const frame = world.buildDebugFrame();
+  const categories = frame.primitives.map((primitive) => primitive.category);
+
+  assert.equal(result.hit, true);
+  assert.equal(result.castType, 'capsule');
+  assert.equal(result.algorithm, 'convex-toi-v1');
+  assert.equal(result.sampleOrigins.length, 3);
+  assert.ok(categories.includes('shape-cast-line'));
+  assert.ok(categories.includes('shape-cast-hit-point'));
+  assert.ok(categories.includes('shape-cast-hit-normal'));
+});
+
+test('PhysicsWorld sphere cast uses convex TOI against a convex hull target', () => {
+  const world = new PhysicsWorld();
+  world.createConvexHullBody({
+    id: 'hull',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    vertices: [
+      { x: -1, y: -1, z: -1 },
+      { x: 1, y: -1, z: -1 },
+      { x: 1, y: -1, z: 1 },
+      { x: -1, y: -1, z: 1 },
+      { x: 0, y: 1, z: 0 }
+    ]
+  });
+
+  const result = world.sphereCast({
+    origin: { x: 0, y: 4, z: 0 },
+    radius: 0.5,
+    direction: { x: 0, y: -1, z: 0 },
+    maxDistance: 10
+  });
+
+  assert.equal(result.hit, true);
+  assert.equal(result.algorithm, 'convex-toi-v1');
+  assert.equal(result.colliderId, 'hull:collider');
+});
+
+test('PhysicsWorld first-pass CCD prevents a fast sphere from tunneling through a thin wall', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 0.1,
+    gravity: { x: 0, y: 0, z: 0 },
+    ccdMotionThreshold: 0.5
+  });
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 0, y: 0, z: 0 },
+    size: 1
+  });
+  world.createSphereBody({
+    id: 'fast-ball',
+    position: { x: -5, y: 0, z: 0 },
+    radius: 0.5,
+    mass: 1,
+    linearVelocity: { x: 100, y: 0, z: 0 }
+  });
+
+  world.step(0.1);
+  const ball = world.getBody('fast-ball');
+  const ccdEvents = world.getLastCcdEvents();
+  const frame = world.buildDebugFrame();
+  const categories = frame.primitives.map((primitive) => primitive.category);
+
+  assert.ok(ball.position.x < 0.1, `expected CCD to stop sphere before wall, got ${ball.position.x}`);
+  assert.equal(ccdEvents.length, 1);
+  assert.equal(ccdEvents[0].bodyId, 'fast-ball');
+  assert.equal(ccdEvents[0].targetColliderId, 'wall:collider');
+  assert.ok(categories.includes('ccd-path'));
+  assert.ok(categories.includes('ccd-hit-point'));
+  assert.ok(categories.includes('ccd-hit-normal'));
+});
+
+test('PhysicsWorld CCD uses convex TOI for a fast box against a thin wall', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 0.1,
+    gravity: { x: 0, y: 0, z: 0 },
+    ccdMotionThreshold: 0.5
+  });
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 0, y: 0, z: 0 },
+    size: 1
+  });
+  world.createBoxBody({
+    id: 'fast-box',
+    position: { x: -5, y: 0, z: 0 },
+    size: 1,
+    mass: 1,
+    linearVelocity: { x: 100, y: 0, z: 0 }
+  });
+
+  world.step(0.1);
+  const body = world.getBody('fast-box');
+  const ccdEvents = world.getLastCcdEvents();
+
+  assert.ok(body.position.x < 0.1, `expected CCD to stop box before wall, got ${body.position.x}`);
+  assert.equal(ccdEvents.length, 1);
+  assert.equal(ccdEvents[0].algorithm, 'convex-toi-v1');
+});
+
 test('PhysicsWorld broadphase filters static-static pairs and same-body collider pairs', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({
@@ -592,4 +812,834 @@ test('PhysicsWorld reset clears registries and restores the default material', (
   assert.equal(snapshot.renderFrameCount, 0);
   assert.equal(frame.frameNumber, 1);
   assert.equal(frame.primitives.length, 0);
+});
+
+test('PhysicsWorld builds contact islands for touching stacks and isolated bodies', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'bottom',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'top',
+    position: { x: 0, y: 1.9, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'lone',
+    position: { x: 8, y: 0, z: 0 },
+    size: 2
+  });
+
+  const collisionState = world.getCollisionState();
+  const stackIsland = collisionState.islands.find((island) => island.bodyIds.includes('bottom') && island.bodyIds.includes('top'));
+  const loneIsland = collisionState.islands.find((island) => island.bodyIds.length === 1 && island.bodyIds[0] === 'lone');
+
+  assert.equal(collisionState.summary.islandCount, 2);
+  assert.equal(collisionState.summary.sleepingBodyCount, 0);
+  assert.equal(collisionState.summary.awakeBodyCount, 3);
+  assert.ok(stackIsland);
+  assert.equal(stackIsland.bodyIds.length, 2);
+  assert.ok(stackIsland.manifoldCount >= 1);
+  assert.ok(loneIsland);
+});
+
+test('PhysicsWorld puts a quiet resting body to sleep and exposes sleep stats', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12,
+    sleepTimeThreshold: 0.25
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'sleep-box',
+    position: { x: 0, y: 3, z: 0 },
+    size: 2,
+    mass: 1
+  });
+
+  for (let stepIndex = 0; stepIndex < 360; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  const body = world.getBody('sleep-box');
+  const summary = world.getWorldSummary();
+  const collisionState = world.getCollisionState();
+  const frame = world.buildDebugFrame();
+
+  assert.equal(body.sleeping, true);
+  assert.ok(body.sleepTimer >= 0.25);
+  assert.ok(Math.abs(body.linearVelocity.y) < 1e-8, `expected zeroed linear velocity, got ${body.linearVelocity.y}`);
+  assert.ok(Math.abs(body.angularVelocity.x) < 1e-8, `expected zeroed angular velocity, got ${body.angularVelocity.x}`);
+  assert.equal(summary.islandCount, 1);
+  assert.equal(summary.sleepingBodyCount, 1);
+  assert.equal(summary.awakeBodyCount, 0);
+  assert.equal(collisionState.islands[0].sleepingBodyCount, 1);
+  assert.equal(frame.stats.sleepingBodyCount, 1);
+});
+
+test('PhysicsWorld sleeps an entire resting stack as one island', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12,
+    sleepTimeThreshold: 0.25
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'bottom-box',
+    position: { x: 0, y: 1.2, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'top-box',
+    position: { x: 0, y: 3.4, z: 0 },
+    size: 2,
+    mass: 1
+  });
+
+  for (let stepIndex = 0; stepIndex < 600; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  const bottomBox = world.getBody('bottom-box');
+  const topBox = world.getBody('top-box');
+  const collisionState = world.getCollisionState();
+  const stackIsland = collisionState.islands.find((island) => island.bodyIds.includes('bottom-box') && island.bodyIds.includes('top-box'));
+
+  assert.equal(bottomBox.sleeping, true);
+  assert.equal(topBox.sleeping, true);
+  assert.equal(collisionState.summary.islandCount, 1);
+  assert.equal(collisionState.summary.sleepingBodyCount, 2);
+  assert.equal(collisionState.summary.awakeBodyCount, 0);
+  assert.ok(stackIsland);
+  assert.equal(stackIsland.bodyIds.length, 2);
+  assert.equal(stackIsland.sleepingBodyCount, 2);
+});
+
+test('PhysicsWorld wakes a sleeping body island when hit by an active body', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12,
+    gravity: { x: 0, y: 0, z: 0 },
+    sleepTimeThreshold: 0.2
+  });
+  world.createBoxBody({
+    id: 'target',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+
+  for (let stepIndex = 0; stepIndex < 60; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  assert.equal(world.getBody('target').sleeping, true);
+
+  world.createBoxBody({
+    id: 'hitter',
+    position: { x: -4, y: 0, z: 0 },
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 8, y: 0, z: 0 }
+  });
+
+  let observedWake = false;
+  for (let stepIndex = 0; stepIndex < 120; stepIndex += 1) {
+    world.step(1 / 120);
+    if (!world.getBody('target').sleeping) {
+      observedWake = true;
+      break;
+    }
+  }
+
+  const target = world.getBody('target');
+  const collisionState = world.getCollisionState();
+
+  assert.equal(observedWake, true);
+  assert.equal(target.sleeping, false);
+  assert.ok(collisionState.summary.awakeBodyCount >= 1);
+});
+
+test('PhysicsWorld distance joint keeps two bodies in one constraint island and exposes joint state', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'joint-a',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'joint-b',
+    position: { x: 3, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'joint-lone',
+    position: { x: 12, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  const joint = world.createDistanceJoint({
+    id: 'rope',
+    bodyAId: 'joint-a',
+    bodyBId: 'joint-b'
+  });
+
+  const summary = world.getWorldSummary();
+  const anchors = world.getJointWorldAnchors('rope');
+  const collisionState = world.getCollisionState();
+  const ropeIsland = collisionState.islands.find((island) => island.jointIds.includes('rope'));
+
+  assert.ok(joint);
+  assert.equal(summary.jointCount, 1);
+  assert.equal(summary.jointConstraintCount, 1);
+  assert.equal(collisionState.summary.islandCount, 2);
+  assert.ok(anchors);
+  assert.ok(Math.abs(anchors.anchorA.x - 0) < 1e-6);
+  assert.ok(Math.abs(anchors.anchorB.x - 3) < 1e-6);
+  assert.ok(ropeIsland);
+  assert.equal(ropeIsland.bodyIds.length, 2);
+  assert.equal(ropeIsland.jointCount, 1);
+  assert.equal(ropeIsland.constraintCount, 1);
+});
+
+test('PhysicsWorld distance joint transmits motion and limits separation drift', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 16,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'lead',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 6, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'trail',
+    position: { x: 3, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createDistanceJoint({
+    id: 'link',
+    bodyAId: 'lead',
+    bodyBId: 'trail',
+    distance: 3
+  });
+
+  let maxSolvedJointCount = 0;
+  let maxJointImpulse = 0;
+  for (let stepIndex = 0; stepIndex < 120; stepIndex += 1) {
+    world.step(1 / 120);
+    const solverStats = world.getSnapshot().lastSolverStats;
+    maxSolvedJointCount = Math.max(maxSolvedJointCount, solverStats.solvedJointCount);
+    maxJointImpulse = Math.max(maxJointImpulse, solverStats.jointImpulsesApplied);
+  }
+
+  const lead = world.getBody('lead');
+  const trail = world.getBody('trail');
+  const separation = Math.sqrt(
+    (trail.position.x - lead.position.x) ** 2 +
+    (trail.position.y - lead.position.y) ** 2 +
+    (trail.position.z - lead.position.z) ** 2
+  );
+  assert.ok(trail.linearVelocity.x > 0.5, `expected joint to pull trailing body, got ${trail.linearVelocity.x}`);
+  assert.ok(Math.abs(separation - 3) < 0.3, `expected distance to stay near 3, got ${separation}`);
+  assert.ok(maxSolvedJointCount > 0);
+  assert.ok(maxJointImpulse > 0);
+});
+
+test('PhysicsWorld distance-jointed resting pair sleeps together and draws joint debug primitives', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12,
+    gravity: { x: 0, y: 0, z: 0 },
+    sleepTimeThreshold: 0.2
+  });
+  world.createBoxBody({
+    id: 'sleep-a',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'sleep-b',
+    position: { x: 3, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createDistanceJoint({
+    id: 'sleep-link',
+    bodyAId: 'sleep-a',
+    bodyBId: 'sleep-b',
+    distance: 3
+  });
+
+  for (let stepIndex = 0; stepIndex < 80; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  const collisionState = world.getCollisionState();
+  const frame = world.buildDebugFrame();
+
+  assert.equal(world.getBody('sleep-a').sleeping, true);
+  assert.equal(world.getBody('sleep-b').sleeping, true);
+  assert.equal(collisionState.summary.sleepingBodyCount, 2);
+  assert.equal(collisionState.summary.islandCount, 1);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'distance-joint'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'distance-joint-anchor'));
+});
+
+test('PhysicsWorld waking one body in a sleeping distance-joint island wakes the connected body', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 12,
+    gravity: { x: 0, y: 0, z: 0 },
+    sleepTimeThreshold: 0.2
+  });
+  world.createBoxBody({
+    id: 'driver',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'follower',
+    position: { x: 3, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createDistanceJoint({
+    id: 'wake-link',
+    bodyAId: 'driver',
+    bodyBId: 'follower',
+    distance: 3
+  });
+
+  for (let stepIndex = 0; stepIndex < 80; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  assert.equal(world.getBody('driver').sleeping, true);
+  assert.equal(world.getBody('follower').sleeping, true);
+
+  const driver = world.bodyRegistry.getMutable('driver');
+  driver.linearVelocity.x = 5;
+  world.wakeBody('driver');
+
+  let followerWoke = false;
+  for (let stepIndex = 0; stepIndex < 20; stepIndex += 1) {
+    world.step(1 / 120);
+    if (!world.getBody('follower').sleeping) {
+      followerWoke = true;
+      break;
+    }
+  }
+
+  assert.equal(followerWoke, true);
+  assert.equal(world.getBody('driver').sleeping, false);
+  assert.equal(world.getBody('follower').sleeping, false);
+});
+
+test('PhysicsWorld point-to-point joint keeps shared anchors together and forms one island', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 16,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'ball-a',
+    position: { x: -1, y: 0, z: 0 },
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 4, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'ball-b',
+    position: { x: 3, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createPointToPointJoint({
+    id: 'ball-socket',
+    bodyAId: 'ball-a',
+    bodyBId: 'ball-b',
+    worldAnchor: { x: 1, y: 0, z: 0 }
+  });
+
+  let maxSolvedJointCount = 0;
+  for (let stepIndex = 0; stepIndex < 120; stepIndex += 1) {
+    world.step(1 / 120);
+    maxSolvedJointCount = Math.max(maxSolvedJointCount, world.getSnapshot().lastSolverStats.solvedJointCount);
+  }
+
+  const anchors = world.getJointWorldAnchors('ball-socket');
+  const anchorError = Math.sqrt(
+    (anchors.anchorB.x - anchors.anchorA.x) ** 2 +
+    (anchors.anchorB.y - anchors.anchorA.y) ** 2 +
+    (anchors.anchorB.z - anchors.anchorA.z) ** 2
+  );
+  const collisionState = world.getCollisionState();
+  const island = collisionState.islands.find((entry) => entry.jointIds.includes('ball-socket'));
+
+  assert.ok(anchorError < 0.2, `expected point-to-point anchors to stay close, got ${anchorError}`);
+  assert.ok(world.getBody('ball-b').linearVelocity.x > 0.5, `expected second body to be dragged, got ${world.getBody('ball-b').linearVelocity.x}`);
+  assert.ok(maxSolvedJointCount > 0);
+  assert.ok(island);
+  assert.equal(island.bodyIds.length, 2);
+});
+
+test('PhysicsWorld hinge joint keeps its pivot near the frame anchor and exposes hinge axes', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 20,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'frame',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'door',
+    position: { x: 2, y: 0, z: 0 },
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 0, y: 0, z: 6 }
+  });
+  world.createHingeJoint({
+    id: 'door-hinge',
+    bodyAId: 'frame',
+    bodyBId: 'door',
+    worldAnchor: { x: 1, y: 0, z: 0 },
+    worldAxis: { x: 0, y: 1, z: 0 }
+  });
+
+  let maxSolvedJointCount = 0;
+  for (let stepIndex = 0; stepIndex < 180; stepIndex += 1) {
+    world.step(1 / 120);
+    maxSolvedJointCount = Math.max(maxSolvedJointCount, world.getSnapshot().lastSolverStats.solvedJointCount);
+  }
+
+  const anchors = world.getJointWorldAnchors('door-hinge');
+  const axes = world.getJointWorldAxes('door-hinge');
+  const anchorError = Math.sqrt(
+    (anchors.anchorB.x - anchors.anchorA.x) ** 2 +
+    (anchors.anchorB.y - anchors.anchorA.y) ** 2 +
+    (anchors.anchorB.z - anchors.anchorA.z) ** 2
+  );
+  const axisAlignment = axes.axisA.x * axes.axisB.x + axes.axisA.y * axes.axisB.y + axes.axisA.z * axes.axisB.z;
+  const frame = world.buildDebugFrame();
+
+  assert.ok(anchorError < 0.25, `expected hinge pivot to stay together, got ${anchorError}`);
+  assert.ok(axisAlignment > 0.95, `expected hinge axes to stay aligned, got ${axisAlignment}`);
+  assert.ok(Math.abs(world.getBody('door').position.x - 1) < 1.3, `expected door to orbit near hinge radius, got ${world.getBody('door').position.x}`);
+  assert.ok(maxSolvedJointCount > 0);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'hinge-axis-a'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'hinge-axis-b'));
+});
+
+test('PhysicsWorld hinge-connected sleeping island wakes through the hinge link', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 14,
+    gravity: { x: 0, y: 0, z: 0 },
+    sleepTimeThreshold: 0.2
+  });
+  world.createBoxBody({
+    id: 'hinge-frame',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'hinge-door',
+    position: { x: 2, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createHingeJoint({
+    id: 'sleep-hinge',
+    bodyAId: 'hinge-frame',
+    bodyBId: 'hinge-door',
+    worldAnchor: { x: 1, y: 0, z: 0 },
+    worldAxis: { x: 0, y: 1, z: 0 }
+  });
+
+  for (let stepIndex = 0; stepIndex < 80; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  assert.equal(world.getBody('hinge-door').sleeping, true);
+
+  const door = world.bodyRegistry.getMutable('hinge-door');
+  door.linearVelocity.z = 4;
+  world.wakeBody('hinge-door');
+  world.step(1 / 120);
+
+  assert.equal(world.getBody('hinge-door').sleeping, false);
+  assert.ok(world.getSnapshot().lastSolverStats.solvedJointCount > 0);
+});
+
+test('PhysicsWorld distance joint spring and limits pull a stretched body toward its rest range', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 18,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'spring-anchor',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'spring-bob',
+    position: { x: 8, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createDistanceJoint({
+    id: 'spring-link',
+    bodyAId: 'spring-anchor',
+    bodyBId: 'spring-bob',
+    distance: 4
+  });
+  world.configureDistanceJoint('spring-link', {
+    minDistance: 3.5,
+    maxDistance: 4.5,
+    springFrequency: 3,
+    dampingRatio: 1
+  });
+
+  let minSeparation = Infinity;
+  let maxSolvedJointCount = 0;
+  for (let stepIndex = 0; stepIndex < 240; stepIndex += 1) {
+    world.step(1 / 120);
+    const bob = world.getBody('spring-bob');
+    minSeparation = Math.min(minSeparation, Math.abs(bob.position.x));
+    maxSolvedJointCount = Math.max(maxSolvedJointCount, world.getSnapshot().lastSolverStats.solvedJointCount);
+  }
+
+  const joint = world.getJoint('spring-link');
+  const bob = world.getBody('spring-bob');
+  const separation = Math.sqrt((bob.position.x ** 2) + (bob.position.y ** 2) + (bob.position.z ** 2));
+
+  assert.ok(minSeparation < 5.25, `expected spring to pull the body inward, got ${minSeparation}`);
+  assert.ok(separation >= 3.2 && separation <= 4.8, `expected final separation to stay near the configured range, got ${separation}`);
+  assert.equal(joint.minDistance, 3.5);
+  assert.equal(joint.maxDistance, 4.5);
+  assert.equal(joint.springFrequency, 3);
+  assert.equal(joint.dampingRatio, 1);
+  assert.ok(maxSolvedJointCount > 0);
+});
+
+test('PhysicsWorld hinge joint angular limits push an over-rotated door back toward the allowed range', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 24,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'limit-frame',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'limit-door',
+    position: { x: 2, y: 0, z: 0 },
+    rotation: createQuatFromAxisAngle({ x: 0, y: 1, z: 0 }, 1.1),
+    size: 2,
+    mass: 1
+  });
+  world.createHingeJoint({
+    id: 'limit-hinge',
+    bodyAId: 'limit-frame',
+    bodyBId: 'limit-door',
+    worldAnchor: { x: 1, y: 0, z: 0 },
+    worldAxis: { x: 0, y: 1, z: 0 }
+  });
+  world.configureHingeJoint('limit-hinge', {
+    lowerAngle: -0.3,
+    upperAngle: 0.3,
+    angularDamping: 6
+  });
+
+  let maxSolvedJointCount = 0;
+  for (let stepIndex = 0; stepIndex < 480; stepIndex += 1) {
+    world.step(1 / 120);
+    maxSolvedJointCount = Math.max(maxSolvedJointCount, world.getSnapshot().lastSolverStats.solvedJointCount);
+  }
+
+  const hingeAngle = world.getJointAngle('limit-hinge');
+  const joint = world.getJoint('limit-hinge');
+
+  assert.ok(Math.abs(hingeAngle) < 0.45, `expected hinge limit to reduce the angle, got ${hingeAngle}`);
+  assert.equal(joint.lowerAngle, -0.3);
+  assert.equal(joint.upperAngle, 0.3);
+  assert.ok(maxSolvedJointCount > 0);
+});
+
+test('PhysicsWorld hinge joint angular damping reduces spin around the hinge axis', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 16,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'damping-frame',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'damping-door',
+    position: { x: 2, y: 0, z: 0 },
+    size: 2,
+    mass: 1,
+    angularVelocity: { x: 0, y: 10, z: 0 }
+  });
+  world.createHingeJoint({
+    id: 'damping-hinge',
+    bodyAId: 'damping-frame',
+    bodyBId: 'damping-door',
+    worldAnchor: { x: 1, y: 0, z: 0 },
+    worldAxis: { x: 0, y: 1, z: 0 }
+  });
+  world.configureHingeJoint('damping-hinge', {
+    lowerAngle: -Math.PI,
+    upperAngle: Math.PI,
+    angularDamping: 10
+  });
+
+  const initialSpin = Math.abs(world.getBody('damping-door').angularVelocity.y);
+  for (let stepIndex = 0; stepIndex < 120; stepIndex += 1) {
+    world.step(1 / 120);
+  }
+
+  const finalSpin = Math.abs(world.getBody('damping-door').angularVelocity.y);
+  assert.ok(finalSpin < initialSpin * 0.65, `expected hinge damping to reduce spin, got ${finalSpin} from ${initialSpin}`);
+});
+
+test('PhysicsWorld fixed joint keeps anchors and orientation frames aligned', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 22,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'fixed-frame',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'fixed-child',
+    position: { x: 2, y: 0, z: 0 },
+    rotation: createQuatFromAxisAngle({ x: 0, y: 0, z: 1 }, 0.45),
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 0, y: 0, z: 4 },
+    angularVelocity: { x: 0, y: 2, z: 0 }
+  });
+  world.createFixedJoint({
+    id: 'fixed-link',
+    bodyAId: 'fixed-frame',
+    bodyBId: 'fixed-child',
+    worldAnchor: { x: 1, y: 0, z: 0 }
+  });
+
+  let maxSolvedJointCount = 0;
+  for (let stepIndex = 0; stepIndex < 180; stepIndex += 1) {
+    world.step(1 / 120);
+    maxSolvedJointCount = Math.max(maxSolvedJointCount, world.getSnapshot().lastSolverStats.solvedJointCount);
+  }
+
+  const anchors = world.getJointWorldAnchors('fixed-link');
+  const axes = world.getJointWorldAxes('fixed-link');
+  const references = world.getJointWorldReferences('fixed-link');
+  const anchorError = Math.sqrt(
+    (anchors.anchorB.x - anchors.anchorA.x) ** 2 +
+    (anchors.anchorB.y - anchors.anchorA.y) ** 2 +
+    (anchors.anchorB.z - anchors.anchorA.z) ** 2
+  );
+  const axisAlignment = dotVec3(axes.axisA, axes.axisB);
+  const referenceAlignment = dotVec3(references.referenceA, references.referenceB);
+  const collisionState = world.getCollisionState();
+  const island = collisionState.islands.find((entry) => entry.jointIds.includes('fixed-link'));
+  const frame = world.buildDebugFrame();
+
+  assert.ok(anchorError < 0.4, `expected fixed joint anchors to stay together, got ${anchorError}`);
+  assert.ok(axisAlignment > 0.95, `expected fixed joint axes to align, got ${axisAlignment}`);
+  assert.ok(referenceAlignment > 0.95, `expected fixed joint references to align, got ${referenceAlignment}`);
+  assert.ok(island);
+  assert.ok(island.bodyIds.includes('fixed-child'));
+  assert.ok(island.jointIds.includes('fixed-link'));
+  assert.ok(maxSolvedJointCount > 0);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'fixed-joint'));
+});
+
+test('PhysicsWorld hinge motor drives angular motion about the hinge axis', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 18,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'motor-frame',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'motor-door',
+    position: { x: 2, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createHingeJoint({
+    id: 'motor-hinge',
+    bodyAId: 'motor-frame',
+    bodyBId: 'motor-door',
+    worldAnchor: { x: 1, y: 0, z: 0 },
+    worldAxis: { x: 0, y: 1, z: 0 }
+  });
+  world.configureHingeMotor('motor-hinge', {
+    motorEnabled: true,
+    motorSpeed: Math.PI * 2,
+    maxMotorTorque: 80
+  });
+
+  let maxSolvedJointCount = 0;
+  for (let stepIndex = 0; stepIndex < 240; stepIndex += 1) {
+    world.step(1 / 120);
+    maxSolvedJointCount = Math.max(maxSolvedJointCount, world.getSnapshot().lastSolverStats.solvedJointCount);
+  }
+
+  const hingeAngle = world.getJointAngle('motor-hinge');
+  const joint = world.getJoint('motor-hinge');
+  const door = world.getBody('motor-door');
+  const frame = world.buildDebugFrame();
+
+  assert.ok(hingeAngle > 0.12, `expected hinge motor to rotate the door, got angle ${hingeAngle}`);
+  assert.ok(Math.abs(door.angularVelocity.y) > 0.1, `expected hinge motor to affect angular velocity, got ${door.angularVelocity.y}`);
+  assert.equal(joint.motorEnabled, true);
+  assert.ok(maxSolvedJointCount > 0);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'hinge-motor'));
+});
+
+test('PhysicsWorld fixed joint break thresholds disable the joint under high load', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 20,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'break-frame',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'break-child',
+    position: { x: 2, y: 0, z: 0 },
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 0, y: 0, z: 16 }
+  });
+  world.createFixedJoint({
+    id: 'break-link',
+    bodyAId: 'break-frame',
+    bodyBId: 'break-child',
+    worldAnchor: { x: 1, y: 0, z: 0 }
+  });
+  world.configureFixedJoint('break-link', {
+    breakForce: 200,
+    breakTorque: 120
+  });
+
+  let observedBreak = false;
+  for (let stepIndex = 0; stepIndex < 60; stepIndex += 1) {
+    world.step(1 / 120);
+    if (world.getJoint('break-link').broken) {
+      observedBreak = true;
+      break;
+    }
+  }
+
+  const joint = world.getJoint('break-link');
+
+  assert.equal(observedBreak, true);
+  assert.equal(joint.enabled, false);
+  assert.equal(joint.broken, true);
+  assert.ok(joint.lastAppliedForce > 0 || joint.lastAppliedTorque > 0, `expected a recorded breaking load, got ${joint.lastAppliedForce}/${joint.lastAppliedTorque}`);
+});
+
+test('PhysicsWorld hinge servo drives the joint toward a target angle', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    solverIterations: 20,
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'servo-frame',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'servo-door',
+    position: { x: 2, y: 0, z: 0 },
+    size: 2,
+    mass: 1
+  });
+  world.createHingeJoint({
+    id: 'servo-hinge',
+    bodyAId: 'servo-frame',
+    bodyBId: 'servo-door',
+    worldAnchor: { x: 1, y: 0, z: 0 },
+    worldAxis: { x: 0, y: 1, z: 0 }
+  });
+  world.configureHingeServo('servo-hinge', {
+    motorEnabled: true,
+    motorTargetAngle: Math.PI / 4,
+    maxMotorSpeed: Math.PI * 8,
+    maxMotorTorque: 400
+  });
+
+  let maxSolvedJointCount = 0;
+  for (let stepIndex = 0; stepIndex < 240; stepIndex += 1) {
+    world.step(1 / 120);
+    maxSolvedJointCount = Math.max(maxSolvedJointCount, world.getSnapshot().lastSolverStats.solvedJointCount);
+  }
+
+  const joint = world.getJoint('servo-hinge');
+  const hingeAngle = world.getJointAngle('servo-hinge');
+  const frame = world.buildDebugFrame();
+
+  assert.equal(joint.motorMode, 'servo');
+  assert.ok(hingeAngle > 0.25, `expected servo to rotate toward the target, got ${hingeAngle}`);
+  assert.ok(Math.abs(hingeAngle - (Math.PI / 4)) < 0.5, `expected servo angle near target, got ${hingeAngle}`);
+  assert.ok(maxSolvedJointCount > 0);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'hinge-motor'));
 });
