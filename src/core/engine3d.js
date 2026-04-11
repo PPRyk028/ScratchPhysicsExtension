@@ -113,6 +113,18 @@ export class Engine3D {
     return this.lastFrame;
   }
 
+  showDebugOverlay() {
+    if (typeof this.hostBridge.showDebugOverlay === 'function') {
+      this.hostBridge.showDebugOverlay();
+    }
+  }
+
+  hideDebugOverlay() {
+    if (typeof this.hostBridge.hideDebugOverlay === 'function') {
+      this.hostBridge.hideDebugOverlay();
+    }
+  }
+
   getSceneSummary() {
     return summarizeSnapshot(this.world.getSnapshot());
   }
@@ -183,6 +195,14 @@ export class Engine3D {
     }
 
     return this.lastFrame.summary;
+  }
+
+  getDebugOverlaySummary() {
+    if (typeof this.hostBridge.getDebugOverlaySummary !== 'function') {
+      return 'debug overlay unavailable';
+    }
+
+    return this.hostBridge.getDebugOverlaySummary();
   }
 
   getHostSummary() {

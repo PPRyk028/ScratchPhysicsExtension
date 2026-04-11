@@ -21,6 +21,8 @@ const REQUIRED_OPCODES = [
   'createStaticBoxCollider',
   'stepWorld',
   'renderDebugFrame',
+  'showDebugOverlay',
+  'hideDebugOverlay',
   'worldSummary',
   'rigidBodySummary',
   'colliderSummary',
@@ -30,6 +32,7 @@ const REQUIRED_OPCODES = [
   'queryAabbBodies',
   'queryAabbColliders',
   'debugFrameSummary',
+  'debugOverlaySummary',
   'hostSummary',
   'resetScene',
   'addCube',
@@ -148,15 +151,18 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.setCameraPosition({ X: 10, Y: 20, Z: 300 });
   extension.createStaticBoxCollider({ ID: 'floor', X: 0, Y: -10, Z: 0, SIZE: 100, MATERIAL: 'ice' });
   extension.createBoxRigidBody({ ID: 'probe', X: 5, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
+  extension.showDebugOverlay();
   assert.match(extension.queryPointBodies({ X: 5, Y: 6, Z: 7 }), /1 bodies/);
   assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /2 colliders/);
   extension.stepWorld({ SECONDS: 1 / 60 });
   extension.renderDebugFrame();
+  extension.hideDebugOverlay();
 
   assert.match(extension.worldSummary(), /1 bodies/);
   assert.match(extension.colliderSummary({ ID: 'floor:collider' }), /body:static/);
   assert.match(extension.materialSummary({ ID: 'ice' }), /friction:0.05/);
   assert.match(extension.debugFrameSummary(), /TurboWarp frame 1/);
+  assert.match(extension.debugOverlaySummary(), /overlay/);
   assert.match(extension.hostSummary(), /TurboWarp/);
   assert.match(extension.hostSummary(), /runtime:yes/);
   assert.match(extension.hostSummary(), /renderer:yes/);
@@ -201,11 +207,14 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.resetWorld();
   extension.createStaticBoxCollider({ ID: 'remote-floor', X: 0, Y: -5, Z: 0, SIZE: 10, MATERIAL: 'material-default' });
   extension.createBoxRigidBody({ ID: 'remote-probe', X: 0, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
+  extension.showDebugOverlay();
   extension.renderDebugFrame();
+  extension.hideDebugOverlay();
 
   assert.match(extension.worldSummary(), /1 bodies/);
   assert.match(extension.queryPointColliders({ X: 0, Y: 0, Z: 0 }), /2 colliders/);
   assert.match(extension.debugFrameSummary(), /Gandi Remote frame 1/);
+  assert.match(extension.debugOverlaySummary(), /overlay/);
   assert.match(extension.hostSummary(), /Gandi Remote/);
   assert.match(extension.hostSummary(), /sandbox:yes/);
 });
@@ -229,13 +238,16 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.createStaticBoxCollider({ ID: 'gandi-floor', X: 1, Y: -10, Z: 3, SIZE: 64, MATERIAL: 'rubber' });
   extension.createBoxRigidBody({ ID: 'gandi-probe', X: 1, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
   assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 40, HY: 40, HZ: 40 }), /2 colliders/);
+  extension.showDebugOverlay();
   extension.stepWorld({ SECONDS: 1 / 30 });
   extension.renderDebugFrame();
+  extension.hideDebugOverlay();
 
   assert.match(extension.worldSummary(), /1 bodies/);
   assert.match(extension.rigidBodySummary({ ID: 'gandi-probe' }), /gandi-probe/);
   assert.match(extension.materialSummary({ ID: 'rubber' }), /restitution:0.8/);
   assert.match(extension.debugFrameSummary(), /Gandi Approved frame 1/);
+  assert.match(extension.debugOverlaySummary(), /overlay/);
   assert.match(extension.hostSummary(), /Gandi Approved/);
   assert.match(extension.hostSummary(), /runtime:yes/);
   assert.match(extension.hostSummary(), /renderer:yes/);

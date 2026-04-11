@@ -104,6 +104,16 @@ export function createExtensionInfo() {
         text: 'render debug frame'
       },
       {
+        opcode: 'showDebugOverlay',
+        blockType: 'command',
+        text: 'show debug overlay'
+      },
+      {
+        opcode: 'hideDebugOverlay',
+        blockType: 'command',
+        text: 'hide debug overlay'
+      },
+      {
         opcode: 'worldSummary',
         blockType: 'reporter',
         text: 'physics world summary'
@@ -182,6 +192,11 @@ export function createExtensionInfo() {
         opcode: 'debugFrameSummary',
         blockType: 'reporter',
         text: 'debug frame summary'
+      },
+      {
+        opcode: 'debugOverlaySummary',
+        blockType: 'reporter',
+        text: 'debug overlay summary'
       },
       {
         opcode: 'hostSummary',

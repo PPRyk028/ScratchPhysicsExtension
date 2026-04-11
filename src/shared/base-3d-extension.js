@@ -88,6 +88,14 @@ export class Base3DExtension {
     this.engine.renderDebugFrame();
   }
 
+  showDebugOverlay() {
+    this.engine.showDebugOverlay();
+  }
+
+  hideDebugOverlay() {
+    this.engine.hideDebugOverlay();
+  }
+
   sceneSummary() {
     return this.engine.getSceneSummary();
   }
@@ -154,6 +162,10 @@ export class Base3DExtension {
 
   debugFrameSummary() {
     return this.engine.getLastFrameSummary();
+  }
+
+  debugOverlaySummary() {
+    return this.engine.getDebugOverlaySummary();
   }
 
   lastFrameSummary() {
