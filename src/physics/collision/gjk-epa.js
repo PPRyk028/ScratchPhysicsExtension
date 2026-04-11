@@ -1,6 +1,6 @@
 import { rotateVec3ByQuat } from '../math/quat.js';
 import { addScaledVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } from '../math/vec3.js';
-import { createTangentBasis, getShapeSupportFeature, getShapeSupportPolygon, getShapeWorldCenter, getShapeWorldPose, transformPointByPose } from './support.js';
+import { createTangentBasis, getShapeSupportFeature, getShapeSupportPolygon, getShapeWorldCenter, getShapeWorldPose, getSupportMappedPenetration, transformPointByPose } from './support.js';
 
 const GJK_MAX_ITERATIONS = 24;
 const EPA_MAX_ITERATIONS = 32;
@@ -9,6 +9,8 @@ const MANIFOLD_CLIP_EPSILON = 1e-5;
 const FACE_CLIP_EPSILON = 1e-4;
 const REFERENCE_FACE_SWITCH_EPSILON = 1e-3;
 const FACE_SUPPORT_PLANE_EPSILON = 0.25;
+const MANIFOLD_PENETRATION_ABSOLUTE_TOLERANCE = 0.25;
+const MANIFOLD_PENETRATION_RELATIVE_TOLERANCE = 0.5;
 
 function createSupportVertex(shapeA, poseA, shapeB, poseB, direction) {
   const supportFeatureA = getShapeSupportFeature(shapeA, poseA, direction);
@@ -869,12 +871,18 @@ function getFaceClipConfiguration(shapeA, poseA, shapeB, poseB, normal) {
     return null;
   }
 
-  const supportA = getShapeSupportPolygon(shapeA, poseA, normal);
-  const supportB = getShapeSupportPolygon(shapeB, poseB, negateVec3(normal));
   const bestA = findBestFacingFace(facesA, normal);
-  if (bestA?.face && isWorldFaceNearSupportPlane(bestA.face, normal, supportA.planeOffset)) {
-    const bestB = findBestFacingFace(facesB, negateVec3(bestA.face.normal));
-    if (bestB?.face && isWorldFaceNearSupportPlane(bestB.face, negateVec3(bestA.face.normal), supportB.planeOffset)) {
+  if (bestA?.face) {
+    const referenceDirection = bestA.face.normal;
+    const supportA = getShapeSupportPolygon(shapeA, poseA, referenceDirection);
+    if (!isWorldFaceNearSupportPlane(bestA.face, referenceDirection, supportA.planeOffset)) {
+      return null;
+    }
+
+    const incidentDirection = negateVec3(referenceDirection);
+    const bestB = findBestFacingFace(facesB, incidentDirection);
+    const supportB = getShapeSupportPolygon(shapeB, poseB, incidentDirection);
+    if (bestB?.face && isWorldFaceNearSupportPlane(bestB.face, incidentDirection, supportB.planeOffset)) {
       return {
         referenceFace: bestA.face,
         incidentFace: bestB.face
@@ -887,13 +895,17 @@ function getFaceClipConfiguration(shapeA, poseA, shapeB, poseB, normal) {
     return null;
   }
 
-  const flippedReference = flipWorldFace(bestB.face);
-  const incident = findBestFacingFace(facesA, negateVec3(flippedReference.normal));
-  if (!isWorldFaceNearSupportPlane(bestB.face, negateVec3(normal), supportB.planeOffset)) {
+  const supportB = getShapeSupportPolygon(shapeB, poseB, bestB.face.normal);
+  if (!isWorldFaceNearSupportPlane(bestB.face, bestB.face.normal, supportB.planeOffset)) {
     return null;
   }
 
-  if (!incident?.face || !isWorldFaceNearSupportPlane(incident.face, negateVec3(flippedReference.normal), supportA.planeOffset)) {
+  const flippedReference = flipWorldFace(bestB.face);
+  const incidentDirection = negateVec3(flippedReference.normal);
+  const incident = findBestFacingFace(facesA, negateVec3(flippedReference.normal));
+  const supportA = getShapeSupportPolygon(shapeA, poseA, incidentDirection);
+
+  if (!incident?.face || !isWorldFaceNearSupportPlane(incident.face, incidentDirection, supportA.planeOffset)) {
     return null;
   }
 
@@ -1161,6 +1173,30 @@ function buildSupportPolygonClippedCandidates(shapeA, poseA, shapeB, poseB, norm
   });
 }
 
+function computeMaximumConsistentPenetration(shapeA, poseA, shapeB, poseB, normal, epaResult) {
+  const epaPenetration = Math.max(Number(epaResult?.penetration ?? 0), 0);
+  const supportPenetration = Math.max(
+    Number(getSupportMappedPenetration(shapeA, poseA, shapeB, poseB, normal)?.penetration ?? 0),
+    0
+  );
+  const referencePenetration = Math.min(
+    Math.max(epaPenetration, supportPenetration),
+    epaPenetration + Math.max(MANIFOLD_PENETRATION_ABSOLUTE_TOLERANCE, epaPenetration * MANIFOLD_PENETRATION_RELATIVE_TOLERANCE)
+  );
+
+  return referencePenetration + Math.max(
+    MANIFOLD_PENETRATION_ABSOLUTE_TOLERANCE,
+    referencePenetration * MANIFOLD_PENETRATION_RELATIVE_TOLERANCE
+  );
+}
+
+function filterConsistentManifoldCandidates(candidates, shapeA, poseA, shapeB, poseB, normal, epaResult) {
+  const maximumConsistentPenetration = computeMaximumConsistentPenetration(shapeA, poseA, shapeB, poseB, normal, epaResult);
+  return (Array.isArray(candidates) ? candidates : [])
+    .filter((candidate) => Number(candidate?.penetration ?? 0) > 0)
+    .filter((candidate) => Number(candidate.penetration ?? 0) <= maximumConsistentPenetration);
+}
+
 export function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResult) {
   if (!epaResult || epaResult.penetration <= 0) {
     return {
@@ -1175,7 +1211,15 @@ export function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResu
     ? (buildBoxBoxFaceManifoldCandidates(shapeA, poseA, shapeB, poseB, boxFaceAxis.normal)
       ?? buildFaceClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal))
     : buildFaceClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal);
-  const polygonalCandidates = polygonalResult?.candidates?.filter((candidate) => candidate.penetration > 0) ?? [];
+  const polygonalCandidates = filterConsistentManifoldCandidates(
+    polygonalResult?.candidates ?? [],
+    shapeA,
+    poseA,
+    shapeB,
+    poseB,
+    polygonalResult?.normal ?? manifoldNormal,
+    epaResult
+  );
   if (polygonalCandidates.length > 0) {
     return {
       normal: polygonalResult.normal,
@@ -1183,8 +1227,15 @@ export function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResu
     };
   }
 
-  const clippedCandidates = buildSupportPolygonClippedCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal)
-    .filter((candidate) => candidate.penetration > 0);
+  const clippedCandidates = filterConsistentManifoldCandidates(
+    buildSupportPolygonClippedCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal),
+    shapeA,
+    poseA,
+    shapeB,
+    poseB,
+    manifoldNormal,
+    epaResult
+  );
   if (clippedCandidates.length > 0) {
     return {
       normal: manifoldNormal,
@@ -1197,7 +1248,8 @@ export function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResu
   const deepestPenetration = Math.max(epaResult.penetration, 1e-6);
   const minimumPenetration = Math.max(1e-5, deepestPenetration * 0.2);
   const filteredCandidates = [...faceCandidates, ...sampledCandidates]
-    .filter((candidate) => candidate.penetration >= minimumPenetration);
+    .filter((candidate) => candidate.penetration >= minimumPenetration)
+    .filter((candidate) => candidate.penetration <= computeMaximumConsistentPenetration(shapeA, poseA, shapeB, poseB, manifoldNormal, epaResult));
 
   return {
     normal: manifoldNormal,

@@ -447,10 +447,14 @@ test('PhysicsWorld unsupported box on a static convex ledge tips and keeps conta
 
   let firstContactPair = null;
   let maxTilt = 0;
+  let maxPenetration = 0;
+  let maxUpwardVelocity = 0;
   for (let stepIndex = 0; stepIndex < 480; stepIndex += 1) {
     world.step(1 / 120);
     const body = world.getBody('box');
     maxTilt = Math.max(maxTilt, Math.abs(body.rotation.x), Math.abs(body.rotation.z));
+    maxPenetration = Math.max(maxPenetration, world.getCollisionState().solverStats.maxPenetration);
+    maxUpwardVelocity = Math.max(maxUpwardVelocity, body.linearVelocity.y);
     const contactPair = world.getCollisionState().contactPairs.find((pair) => pair.pairKey === 'box:collider|ledge:collider' || pair.pairKey === 'ledge:collider|box:collider');
     if (contactPair && !firstContactPair) {
       firstContactPair = contactPair;
@@ -462,6 +466,8 @@ test('PhysicsWorld unsupported box on a static convex ledge tips and keeps conta
     assert.ok(contact.position.x >= -10.1 && contact.position.x <= 0.1, `expected clipped contact x to stay on the ledge support region, got ${contact.position.x}`);
   }
   assert.ok(maxTilt > 0.2, `expected unsupported box to tip, got max tilt ${maxTilt}`);
+  assert.ok(maxPenetration < 1, `expected ledge tip to stay shallow, got max penetration ${maxPenetration}`);
+  assert.ok(maxUpwardVelocity < 5, `expected ledge tip to avoid catapulting upward, got max upward velocity ${maxUpwardVelocity}`);
 });
 
 test('PhysicsWorld convex hull on a static ramp keeps first manifold contacts on the actual support plane', () => {
@@ -495,8 +501,13 @@ test('PhysicsWorld convex hull on a static ramp keeps first manifold contacts on
   });
 
   let firstContactPair = null;
+  let maxPenetration = 0;
+  let maxUpwardVelocity = 0;
   for (let stepIndex = 0; stepIndex < 720; stepIndex += 1) {
     world.step(1 / 120);
+    const body = world.getBody('hull');
+    maxPenetration = Math.max(maxPenetration, world.getCollisionState().solverStats.maxPenetration);
+    maxUpwardVelocity = Math.max(maxUpwardVelocity, body.linearVelocity.y);
     const contactPair = world.getCollisionState().contactPairs.find((pair) => pair.colliderAId === 'ramp:collider' && pair.colliderBId === 'hull:collider');
     if (contactPair) {
       firstContactPair = contactPair;
@@ -516,6 +527,8 @@ test('PhysicsWorld convex hull on a static ramp keeps first manifold contacts on
       `expected ramp contact to stay close to the support plane, got signed distance ${signedDistance} for penetration ${contact.penetration}`
     );
   }
+  assert.ok(maxPenetration < 1, `expected ramp contact to avoid deep false penetration, got ${maxPenetration}`);
+  assert.ok(maxUpwardVelocity < 20, `expected ramp tip to avoid catapulting upward, got ${maxUpwardVelocity}`);
 });
 
 test('PhysicsWorld capsule-box pairs use the GJK/EPA manifold path', () => {
