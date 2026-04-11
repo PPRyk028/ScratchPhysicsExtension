@@ -3,7 +3,7 @@
 const __modules = {
   0: function(__require, __exports) {
 const { Base3DExtension } = __require(1);
-const { createGandiRemoteHost } = __require(8);
+const { createGandiRemoteHost } = __require(23);
 const ScratchApi = globalThis.Scratch;
 
 if (!ScratchApi) {
@@ -22,8 +22,8 @@ ScratchApi.extensions.register(new GandiRemote3DExtension());
 },
   1: function(__require, __exports) {
 const { Engine3D } = __require(2);
-const { toNumber, toString } = __require(6);
-const { createExtensionInfo } = __require(7);
+const { toNumber, toString } = __require(21);
+const { createExtensionInfo } = __require(22);
 class Base3DExtension {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
@@ -38,11 +38,32 @@ class Base3DExtension {
     this.engine.resetScene();
   }
 
+  resetWorld() {
+    this.engine.resetWorld();
+  }
+
   setCameraPosition(args) {
     this.engine.setCameraPosition(
       toNumber(args.X),
       toNumber(args.Y),
       toNumber(args.Z, 400)
+    );
+  }
+
+  setGravity(args) {
+    this.engine.setGravity(
+      toNumber(args.X),
+      toNumber(args.Y, -9.81),
+      toNumber(args.Z)
+    );
+  }
+
+  createMaterial(args) {
+    this.engine.createMaterial(
+      toString(args.ID, 'material-1'),
+      toNumber(args.FRICTION, 0.5),
+      toNumber(args.RESTITUTION, 0),
+      toNumber(args.DENSITY, 1)
     );
   }
 
@@ -56,12 +77,105 @@ class Base3DExtension {
     );
   }
 
+  createBoxRigidBody(args) {
+    this.engine.createBoxRigidBody(
+      toString(args.ID, 'body'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SIZE, 100),
+      toNumber(args.MASS, 1),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  createStaticBoxCollider(args) {
+    this.engine.createStaticBoxCollider(
+      toString(args.ID, 'collider'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SIZE, 100),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  stepWorld(args) {
+    this.engine.stepWorld(
+      toNumber(args.SECONDS, 1 / 60)
+    );
+  }
+
   renderDebugFrame() {
     this.engine.renderDebugFrame();
   }
 
   sceneSummary() {
     return this.engine.getSceneSummary();
+  }
+
+  worldSummary() {
+    return this.engine.getWorldSummary();
+  }
+
+  rigidBodySummary(args) {
+    return this.engine.getRigidBodySummary(
+      toString(args.ID, 'body')
+    );
+  }
+
+  colliderSummary(args) {
+    return this.engine.getColliderSummary(
+      toString(args.ID, 'collider')
+    );
+  }
+
+  materialSummary(args) {
+    return this.engine.getMaterialSummary(
+      toString(args.ID, 'material-1')
+    );
+  }
+
+  queryPointBodies(args) {
+    return this.engine.queryPointBodies(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z)
+    );
+  }
+
+  queryPointColliders(args) {
+    return this.engine.queryPointColliders(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z)
+    );
+  }
+
+  queryAabbBodies(args) {
+    return this.engine.queryAabbBodies(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.HX, 0.5),
+      toNumber(args.HY, 0.5),
+      toNumber(args.HZ, 0.5)
+    );
+  }
+
+  queryAabbColliders(args) {
+    return this.engine.queryAabbColliders(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.HX, 0.5),
+      toNumber(args.HY, 0.5),
+      toNumber(args.HZ, 0.5)
+    );
+  }
+
+  debugFrameSummary() {
+    return this.engine.getLastFrameSummary();
   }
 
   lastFrameSummary() {
@@ -73,63 +187,116 @@ class Base3DExtension {
   }
 }
 
-
 __exports.Base3DExtension = Base3DExtension;
 },
   2: function(__require, __exports) {
-const { buildCubeModelMatrix } = __require(3);
-const { createVec3 } = __require(4);
-const { Scene3D } = __require(5);
+const { PhysicsWorld, createVec3 } = __require(3);
 function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
 }
 
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.objectCount} objects | camera ${formatVector(snapshot.camera.position)} | frames ${snapshot.frameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} | frames ${snapshot.renderFrameCount}`;
+}
+
+function joinIds(records) {
+  if (!records.length) {
+    return 'none';
+  }
+
+  return records.map((record) => record.id).join(', ');
 }
 class Engine3D {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
-    this.scene = new Scene3D();
+    this.world = new PhysicsWorld();
     this.lastFrame = null;
   }
 
   resetScene() {
-    this.scene.reset();
+    this.world.reset();
     this.lastFrame = null;
     this.hostBridge.log('Scene reset');
   }
 
+  resetWorld() {
+    this.resetScene();
+  }
+
   setCameraPosition(x, y, z) {
-    this.scene.setCameraPosition(createVec3(x, y, z));
+    this.world.setDebugCameraPosition(createVec3(x, y, z));
     this.hostBridge.log(`Camera moved to ${x}, ${y}, ${z}`);
   }
 
+  setGravity(x, y, z) {
+    this.world.setGravity(createVec3(x, y, z));
+    this.hostBridge.log(`Gravity set to ${x}, ${y}, ${z}`);
+  }
+
+  createMaterial(id, friction, restitution, density) {
+    const material = this.world.createMaterial({
+      id,
+      friction,
+      restitution,
+      density
+    });
+
+    this.hostBridge.log(`Material ${material.id} registered`);
+    return material;
+  }
+
   addCube(id, x, y, z, size) {
-    const cube = this.scene.addCube({
+    const { body } = this.world.createBoxBody({
       id,
       position: createVec3(x, y, z),
       size
     });
 
-    this.hostBridge.log(`Cube ${cube.id} registered`);
-    return cube;
+    this.hostBridge.log(`Cube ${body.id} registered`);
+    return body;
+  }
+
+  createBoxRigidBody(id, x, y, z, size, mass, materialId = '') {
+    const { body, collider } = this.world.createBoxBody({
+      id,
+      position: createVec3(x, y, z),
+      size,
+      mass,
+      materialId
+    });
+
+    this.hostBridge.log(`Rigid body ${body.id} registered with collider ${collider.id}`);
+    return body;
+  }
+
+  createStaticBoxCollider(id, x, y, z, size, materialId = '') {
+    const { collider } = this.world.createStaticBoxCollider({
+      id,
+      position: createVec3(x, y, z),
+      size,
+      materialId
+    });
+
+    this.hostBridge.log(`Static collider ${collider.id} registered`);
+    return collider;
+  }
+
+  stepWorld(seconds) {
+    const stats = this.world.step(seconds);
+    this.hostBridge.log(`Physics world stepped ${stats.performedSubsteps} substeps`);
+    return stats;
   }
 
   renderDebugFrame() {
-    const frameNumber = this.scene.nextFrame();
-    const snapshot = this.scene.snapshot();
-    const plannedDrawCalls = snapshot.objects.map((object) => ({
-      id: object.id,
-      kind: object.kind,
-      modelMatrix: buildCubeModelMatrix(object.position, object.size)
-    }));
+    const debugFrame = this.world.buildDebugFrame();
+    const snapshot = this.world.getSnapshot();
 
     this.lastFrame = {
-      frameNumber,
-      plannedDrawCalls,
+      frameNumber: debugFrame.frameNumber,
+      debugFrame,
+      plannedDrawCalls: debugFrame.primitives,
       snapshot,
-      summary: `${this.hostBridge.getDisplayName()} frame ${frameNumber} | ${plannedDrawCalls.length} draw calls`
+      summary: `${this.hostBridge.getDisplayName()} frame ${debugFrame.frameNumber} | ${debugFrame.primitives.length} debug primitives | ${debugFrame.stats.broadphasePairCount} pairs | ${debugFrame.stats.contactPairCount} contacts`
     };
 
     this.hostBridge.emitFrame(this.lastFrame);
@@ -137,7 +304,67 @@ class Engine3D {
   }
 
   getSceneSummary() {
-    return summarizeSnapshot(this.scene.snapshot());
+    return summarizeSnapshot(this.world.getSnapshot());
+  }
+
+  getWorldSummary() {
+    return summarizeSnapshot(this.world.getSnapshot());
+  }
+
+  getRigidBodySummary(id) {
+    const body = this.world.getBody(id);
+    if (!body) {
+      return `Rigid body ${id} not found`;
+    }
+
+    return `${body.id} | motion:${body.motionType} | position ${formatVector(body.position)} | velocity ${formatVector(body.linearVelocity)} | colliders ${body.colliderIds.length}`;
+  }
+
+  getColliderSummary(id) {
+    const collider = this.world.getCollider(id);
+    if (!collider) {
+      return `Collider ${id} not found`;
+    }
+
+    const pose = this.world.getColliderWorldPose(id);
+    return `${collider.id} | body:${collider.bodyId || 'static'} | shape:${collider.shapeId} | material:${collider.materialId} | position ${formatVector(pose.position)}`;
+  }
+
+  getMaterialSummary(id) {
+    const material = this.world.getMaterial(id);
+    if (!material) {
+      return `Material ${id} not found`;
+    }
+
+    return `${material.id} | friction:${material.friction} | restitution:${material.restitution} | density:${material.density}`;
+  }
+
+  queryPointBodies(x, y, z) {
+    const result = this.world.queryPoint(createVec3(x, y, z));
+    return `${result.count.bodies} bodies at point ${x}, ${y}, ${z} | ${joinIds(result.bodies)}`;
+  }
+
+  queryPointColliders(x, y, z) {
+    const result = this.world.queryPoint(createVec3(x, y, z));
+    return `${result.count.colliders} colliders at point ${x}, ${y}, ${z} | ${joinIds(result.colliders)}`;
+  }
+
+  queryAabbBodies(x, y, z, hx, hy, hz) {
+    const result = this.world.queryAabb({
+      center: createVec3(x, y, z),
+      halfExtents: createVec3(hx, hy, hz)
+    });
+
+    return `${result.count.bodies} bodies in AABB ${x}, ${y}, ${z} | ${joinIds(result.bodies)}`;
+  }
+
+  queryAabbColliders(x, y, z, hx, hy, hz) {
+    const result = this.world.queryAabb({
+      center: createVec3(x, y, z),
+      halfExtents: createVec3(hx, hy, hz)
+    });
+
+    return `${result.count.colliders} colliders in AABB ${x}, ${y}, ${z} | ${joinIds(result.colliders)}`;
   }
 
   getLastFrameSummary() {
@@ -154,163 +381,3853 @@ class Engine3D {
   }
 }
 
-
 __exports.Engine3D = Engine3D;
 },
   3: function(__require, __exports) {
-const { createVec3 } = __require(4);
-function createIdentityMat4() {
-  return [
-    1, 0, 0, 0,
-    0, 1, 0, 0,
-    0, 0, 1, 0,
-    0, 0, 0, 1
-  ];
-}
-function createTranslationMat4(position) {
-  const value = createIdentityMat4();
-  value[12] = position.x;
-  value[13] = position.y;
-  value[14] = position.z;
-  return value;
-}
-function createUniformScaleMat4(scale) {
-  const size = Number.isFinite(Number(scale)) ? Number(scale) : 1;
-  return [
-    size, 0, 0, 0,
-    0, size, 0, 0,
-    0, 0, size, 0,
-    0, 0, 0, 1
-  ];
-}
-function multiplyMat4(left, right) {
-  const result = new Array(16).fill(0);
-  for (let row = 0; row < 4; row += 1) {
-    for (let column = 0; column < 4; column += 1) {
-      for (let index = 0; index < 4; index += 1) {
-        result[row * 4 + column] += left[row * 4 + index] * right[index * 4 + column];
-      }
-    }
-  }
-  return result;
-}
-function buildCubeModelMatrix(position, size) {
-  const resolvedPosition = createVec3(position.x, position.y, position.z);
-  return multiplyMat4(
-    createTranslationMat4(resolvedPosition),
-    createUniformScaleMat4(size)
-  );
-}
+const { createAabbFromCenterHalfExtents, createAabbFromMinMax, cloneAabb, computeLocalShapeAabb, computeShapeWorldAabb, getAabbOverlap, testAabbOverlap, testPointInAabb } = __require(4);
+const { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphasePair, createBroadphaseProxy } = __require(8);
+const { collideBoxPair } = __require(9);
+const { buildConvexContactManifold, collideConvexPairWithGjkEpa, runEpa, runGjk } = __require(10);
+const { cloneContactPair, createContactPair, runNarrowphase } = __require(11);
+const { clampPointToAabb, composePoses, createTangentBasis, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportFeature, getShapeSupportPoint, getShapeWorldCenter, getShapeWorldPose, getSupportMappedPenetration, transformPointByPose } = __require(7);
+const { DEBUG_FRAME_SCHEMA_VERSION, DEBUG_PRIMITIVE_TYPES, DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox, countDebugPrimitivesByType } = __require(12);
+const { cloneManifold, cloneManifoldContact, ManifoldCache } = __require(13);
+const { cloneQuat, conjugateQuat, createIdentityQuat, createQuat, integrateQuat, inverseRotateVec3ByQuat, lengthSquaredQuat, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
+const { createVec3, cloneVec3, zeroVec3, scaleVec3, addVec3, addScaledVec3, subtractVec3, minVec3, maxVec3, dotVec3, lengthSquaredVec3, lengthVec3, negateVec3, normalizeVec3, crossVec3 } = __require(6);
+const { solveNormalContactConstraints } = __require(14);
+const { PhysicsWorld } = __require(15);
+const { ShapeRegistry } = __require(20);
+const { BodyRegistry } = __require(16);
+const { ColliderRegistry } = __require(18);
+const { MaterialRegistry } = __require(19);
 
-
-__exports.createIdentityMat4 = createIdentityMat4;
-__exports.createTranslationMat4 = createTranslationMat4;
-__exports.createUniformScaleMat4 = createUniformScaleMat4;
-__exports.multiplyMat4 = multiplyMat4;
-__exports.buildCubeModelMatrix = buildCubeModelMatrix;
+__exports.createAabbFromCenterHalfExtents = createAabbFromCenterHalfExtents;
+__exports.createAabbFromMinMax = createAabbFromMinMax;
+__exports.cloneAabb = cloneAabb;
+__exports.computeLocalShapeAabb = computeLocalShapeAabb;
+__exports.computeShapeWorldAabb = computeShapeWorldAabb;
+__exports.getAabbOverlap = getAabbOverlap;
+__exports.testAabbOverlap = testAabbOverlap;
+__exports.testPointInAabb = testPointInAabb;
+__exports.buildBroadphasePairs = buildBroadphasePairs;
+__exports.cloneBroadphasePair = cloneBroadphasePair;
+__exports.cloneBroadphaseProxy = cloneBroadphaseProxy;
+__exports.createBroadphasePair = createBroadphasePair;
+__exports.createBroadphaseProxy = createBroadphaseProxy;
+__exports.collideBoxPair = collideBoxPair;
+__exports.runGjk = runGjk;
+__exports.runEpa = runEpa;
+__exports.collideConvexPairWithGjkEpa = collideConvexPairWithGjkEpa;
+__exports.buildConvexContactManifold = buildConvexContactManifold;
+__exports.cloneContactPair = cloneContactPair;
+__exports.createContactPair = createContactPair;
+__exports.runNarrowphase = runNarrowphase;
+__exports.clampPointToAabb = clampPointToAabb;
+__exports.composePoses = composePoses;
+__exports.createTangentBasis = createTangentBasis;
+__exports.getCapsuleSegmentEndpoints = getCapsuleSegmentEndpoints;
+__exports.getClosestPointOnSegment = getClosestPointOnSegment;
+__exports.getShapeSupportFeature = getShapeSupportFeature;
+__exports.getShapeSupportPoint = getShapeSupportPoint;
+__exports.getShapeWorldCenter = getShapeWorldCenter;
+__exports.getShapeWorldPose = getShapeWorldPose;
+__exports.getSupportMappedPenetration = getSupportMappedPenetration;
+__exports.transformPointByPose = transformPointByPose;
+__exports.DEBUG_FRAME_SCHEMA_VERSION = DEBUG_FRAME_SCHEMA_VERSION;
+__exports.DEBUG_PRIMITIVE_TYPES = DEBUG_PRIMITIVE_TYPES;
+__exports.DEFAULT_DEBUG_COLORS = DEFAULT_DEBUG_COLORS;
+__exports.createDebugFrame = createDebugFrame;
+__exports.createDebugLine = createDebugLine;
+__exports.createDebugPoint = createDebugPoint;
+__exports.createDebugWireBox = createDebugWireBox;
+__exports.countDebugPrimitivesByType = countDebugPrimitivesByType;
+__exports.cloneManifold = cloneManifold;
+__exports.cloneManifoldContact = cloneManifoldContact;
+__exports.ManifoldCache = ManifoldCache;
+__exports.createQuat = createQuat;
+__exports.createIdentityQuat = createIdentityQuat;
+__exports.cloneQuat = cloneQuat;
+__exports.lengthSquaredQuat = lengthSquaredQuat;
+__exports.normalizeQuat = normalizeQuat;
+__exports.conjugateQuat = conjugateQuat;
+__exports.multiplyQuat = multiplyQuat;
+__exports.rotateVec3ByQuat = rotateVec3ByQuat;
+__exports.inverseRotateVec3ByQuat = inverseRotateVec3ByQuat;
+__exports.integrateQuat = integrateQuat;
+__exports.createVec3 = createVec3;
+__exports.cloneVec3 = cloneVec3;
+__exports.zeroVec3 = zeroVec3;
+__exports.scaleVec3 = scaleVec3;
+__exports.addVec3 = addVec3;
+__exports.addScaledVec3 = addScaledVec3;
+__exports.subtractVec3 = subtractVec3;
+__exports.minVec3 = minVec3;
+__exports.maxVec3 = maxVec3;
+__exports.dotVec3 = dotVec3;
+__exports.lengthSquaredVec3 = lengthSquaredVec3;
+__exports.lengthVec3 = lengthVec3;
+__exports.negateVec3 = negateVec3;
+__exports.normalizeVec3 = normalizeVec3;
+__exports.crossVec3 = crossVec3;
+__exports.solveNormalContactConstraints = solveNormalContactConstraints;
+__exports.PhysicsWorld = PhysicsWorld;
+__exports.ShapeRegistry = ShapeRegistry;
+__exports.BodyRegistry = BodyRegistry;
+__exports.ColliderRegistry = ColliderRegistry;
+__exports.MaterialRegistry = MaterialRegistry;
 },
   4: function(__require, __exports) {
+const { createIdentityQuat } = __require(5);
+const { addVec3, cloneVec3, createVec3, maxVec3, minVec3 } = __require(6);
+const { getConvexHullBounds, getShapeSupportPoint, getShapeWorldPose } = __require(7);
+function toNonNegativeNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function absoluteHalfExtents(halfExtents) {
+  return createVec3(
+    Math.abs(toNonNegativeNumber(halfExtents?.x, 0)),
+    Math.abs(toNonNegativeNumber(halfExtents?.y, 0)),
+    Math.abs(toNonNegativeNumber(halfExtents?.z, 0))
+  );
+}
+function createAabbFromCenterHalfExtents(center, halfExtents) {
+  const resolvedCenter = cloneVec3(center);
+  const resolvedHalfExtents = absoluteHalfExtents(halfExtents);
+
+  return {
+    center: resolvedCenter,
+    halfExtents: resolvedHalfExtents,
+    min: createVec3(
+      resolvedCenter.x - resolvedHalfExtents.x,
+      resolvedCenter.y - resolvedHalfExtents.y,
+      resolvedCenter.z - resolvedHalfExtents.z
+    ),
+    max: createVec3(
+      resolvedCenter.x + resolvedHalfExtents.x,
+      resolvedCenter.y + resolvedHalfExtents.y,
+      resolvedCenter.z + resolvedHalfExtents.z
+    )
+  };
+}
+function createAabbFromMinMax(min, max) {
+  const resolvedMin = minVec3(min, max);
+  const resolvedMax = maxVec3(min, max);
+
+  return createAabbFromCenterHalfExtents(
+    createVec3(
+      (resolvedMin.x + resolvedMax.x) / 2,
+      (resolvedMin.y + resolvedMax.y) / 2,
+      (resolvedMin.z + resolvedMax.z) / 2
+    ),
+    createVec3(
+      (resolvedMax.x - resolvedMin.x) / 2,
+      (resolvedMax.y - resolvedMin.y) / 2,
+      (resolvedMax.z - resolvedMin.z) / 2
+    )
+  );
+}
+function cloneAabb(aabb) {
+  return createAabbFromCenterHalfExtents(
+    aabb?.center ?? createVec3(),
+    aabb?.halfExtents ?? createVec3()
+  );
+}
+function testPointInAabb(point, aabb) {
+  if (!aabb) {
+    return false;
+  }
+
+  const resolvedPoint = cloneVec3(point);
+  return (
+    resolvedPoint.x >= aabb.min.x &&
+    resolvedPoint.x <= aabb.max.x &&
+    resolvedPoint.y >= aabb.min.y &&
+    resolvedPoint.y <= aabb.max.y &&
+    resolvedPoint.z >= aabb.min.z &&
+    resolvedPoint.z <= aabb.max.z
+  );
+}
+function testAabbOverlap(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return !(
+    left.max.x < right.min.x ||
+    left.min.x > right.max.x ||
+    left.max.y < right.min.y ||
+    left.min.y > right.max.y ||
+    left.max.z < right.min.z ||
+    left.min.z > right.max.z
+  );
+}
+function getAabbOverlap(left, right) {
+  if (!testAabbOverlap(left, right)) {
+    return null;
+  }
+
+  return createVec3(
+    Math.min(left.max.x, right.max.x) - Math.max(left.min.x, right.min.x),
+    Math.min(left.max.y, right.max.y) - Math.max(left.min.y, right.min.y),
+    Math.min(left.max.z, right.max.z) - Math.max(left.min.z, right.min.z)
+  );
+}
+function computeLocalShapeAabb(shape) {
+  return computeShapeWorldAabb(shape, {
+    position: createVec3(),
+    rotation: createIdentityQuat()
+  });
+}
+function computeShapeWorldAabb(shape, worldPose) {
+  if (!shape) {
+    return null;
+  }
+
+  if (shape.type === 'convex-hull') {
+    const bounds = getConvexHullBounds(shape, worldPose);
+    return createAabbFromMinMax(bounds.min, bounds.max);
+  }
+
+  const supportPose = getShapeWorldPose(shape, worldPose);
+  const min = createVec3(
+    getShapeSupportPoint(shape, worldPose, createVec3(-1, 0, 0)).x,
+    getShapeSupportPoint(shape, worldPose, createVec3(0, -1, 0)).y,
+    getShapeSupportPoint(shape, worldPose, createVec3(0, 0, -1)).z
+  );
+  const max = createVec3(
+    getShapeSupportPoint(shape, worldPose, createVec3(1, 0, 0)).x,
+    getShapeSupportPoint(shape, worldPose, createVec3(0, 1, 0)).y,
+    getShapeSupportPoint(shape, worldPose, createVec3(0, 0, 1)).z
+  );
+
+  if (shape.type === 'sphere') {
+    return createAabbFromCenterHalfExtents(
+      supportPose.position,
+      createVec3(shape.geometry.radius, shape.geometry.radius, shape.geometry.radius)
+    );
+  }
+
+  return createAabbFromMinMax(min, max);
+}
+
+__exports.createAabbFromCenterHalfExtents = createAabbFromCenterHalfExtents;
+__exports.createAabbFromMinMax = createAabbFromMinMax;
+__exports.cloneAabb = cloneAabb;
+__exports.testPointInAabb = testPointInAabb;
+__exports.testAabbOverlap = testAabbOverlap;
+__exports.getAabbOverlap = getAabbOverlap;
+__exports.computeLocalShapeAabb = computeLocalShapeAabb;
+__exports.computeShapeWorldAabb = computeShapeWorldAabb;
+},
+  5: function(__require, __exports) {
+const { addScaledVec3, createVec3, crossVec3 } = __require(6);
+function toFiniteNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+function createQuat(x = 0, y = 0, z = 0, w = 1) {
+  return {
+    x: toFiniteNumber(x, 0),
+    y: toFiniteNumber(y, 0),
+    z: toFiniteNumber(z, 0),
+    w: toFiniteNumber(w, 1)
+  };
+}
+function createIdentityQuat() {
+  return createQuat(0, 0, 0, 1);
+}
+function cloneQuat(quaternion) {
+  return createQuat(quaternion?.x, quaternion?.y, quaternion?.z, quaternion?.w);
+}
+function lengthSquaredQuat(quaternion) {
+  return (
+    toFiniteNumber(quaternion?.x, 0) * toFiniteNumber(quaternion?.x, 0) +
+    toFiniteNumber(quaternion?.y, 0) * toFiniteNumber(quaternion?.y, 0) +
+    toFiniteNumber(quaternion?.z, 0) * toFiniteNumber(quaternion?.z, 0) +
+    toFiniteNumber(quaternion?.w, 1) * toFiniteNumber(quaternion?.w, 1)
+  );
+}
+function normalizeQuat(quaternion, fallback = createIdentityQuat()) {
+  const lengthSquared = lengthSquaredQuat(quaternion);
+  if (lengthSquared <= 1e-12) {
+    return cloneQuat(fallback);
+  }
+
+  const inverseLength = 1 / Math.sqrt(lengthSquared);
+  return createQuat(
+    quaternion.x * inverseLength,
+    quaternion.y * inverseLength,
+    quaternion.z * inverseLength,
+    quaternion.w * inverseLength
+  );
+}
+function conjugateQuat(quaternion) {
+  return createQuat(
+    -toFiniteNumber(quaternion?.x, 0),
+    -toFiniteNumber(quaternion?.y, 0),
+    -toFiniteNumber(quaternion?.z, 0),
+    toFiniteNumber(quaternion?.w, 1)
+  );
+}
+function multiplyQuat(left, right) {
+  const a = cloneQuat(left);
+  const b = cloneQuat(right);
+
+  return createQuat(
+    a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+    a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+  );
+}
+function rotateVec3ByQuat(quaternion, vector) {
+  const unitQuat = normalizeQuat(quaternion);
+  const qVector = createVec3(unitQuat.x, unitQuat.y, unitQuat.z);
+  const doubledCross = addScaledVec3(createVec3(), crossVec3(qVector, vector), 2);
+  return addScaledVec3(
+    addScaledVec3(vector, doubledCross, unitQuat.w),
+    crossVec3(qVector, doubledCross),
+    1
+  );
+}
+function inverseRotateVec3ByQuat(quaternion, vector) {
+  return rotateVec3ByQuat(conjugateQuat(quaternion), vector);
+}
+function integrateQuat(quaternion, angularVelocity, deltaTime) {
+  const unitQuat = normalizeQuat(quaternion);
+  const omegaQuat = createQuat(angularVelocity?.x, angularVelocity?.y, angularVelocity?.z, 0);
+  const derivative = multiplyQuat(omegaQuat, unitQuat);
+  return normalizeQuat(createQuat(
+    unitQuat.x + derivative.x * 0.5 * deltaTime,
+    unitQuat.y + derivative.y * 0.5 * deltaTime,
+    unitQuat.z + derivative.z * 0.5 * deltaTime,
+    unitQuat.w + derivative.w * 0.5 * deltaTime
+  ));
+}
+
+__exports.createQuat = createQuat;
+__exports.createIdentityQuat = createIdentityQuat;
+__exports.cloneQuat = cloneQuat;
+__exports.lengthSquaredQuat = lengthSquaredQuat;
+__exports.normalizeQuat = normalizeQuat;
+__exports.conjugateQuat = conjugateQuat;
+__exports.multiplyQuat = multiplyQuat;
+__exports.rotateVec3ByQuat = rotateVec3ByQuat;
+__exports.inverseRotateVec3ByQuat = inverseRotateVec3ByQuat;
+__exports.integrateQuat = integrateQuat;
+},
+  6: function(__require, __exports) {
+function toFiniteNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 function createVec3(x = 0, y = 0, z = 0) {
   return {
-    x: Number.isFinite(Number(x)) ? Number(x) : 0,
-    y: Number.isFinite(Number(y)) ? Number(y) : 0,
-    z: Number.isFinite(Number(z)) ? Number(z) : 0
+    x: toFiniteNumber(x),
+    y: toFiniteNumber(y),
+    z: toFiniteNumber(z)
   };
 }
 function cloneVec3(vector) {
-  return createVec3(vector.x, vector.y, vector.z);
+  return createVec3(vector?.x, vector?.y, vector?.z);
+}
+function zeroVec3() {
+  return createVec3(0, 0, 0);
 }
 function scaleVec3(vector, scalar) {
-  return createVec3(vector.x * scalar, vector.y * scalar, vector.z * scalar);
+  return createVec3(
+    toFiniteNumber(vector?.x) * toFiniteNumber(scalar, 1),
+    toFiniteNumber(vector?.y) * toFiniteNumber(scalar, 1),
+    toFiniteNumber(vector?.z) * toFiniteNumber(scalar, 1)
+  );
 }
-function vec3ToObject(vector) {
-  return {
-    x: vector.x,
-    y: vector.y,
-    z: vector.z
-  };
+function addVec3(left, right) {
+  return createVec3(
+    toFiniteNumber(left?.x) + toFiniteNumber(right?.x),
+    toFiniteNumber(left?.y) + toFiniteNumber(right?.y),
+    toFiniteNumber(left?.z) + toFiniteNumber(right?.z)
+  );
 }
+function addScaledVec3(base, delta, scale) {
+  return addVec3(base, scaleVec3(delta, scale));
+}
+function subtractVec3(left, right) {
+  return createVec3(
+    toFiniteNumber(left?.x) - toFiniteNumber(right?.x),
+    toFiniteNumber(left?.y) - toFiniteNumber(right?.y),
+    toFiniteNumber(left?.z) - toFiniteNumber(right?.z)
+  );
+}
+function minVec3(left, right) {
+  return createVec3(
+    Math.min(toFiniteNumber(left?.x), toFiniteNumber(right?.x)),
+    Math.min(toFiniteNumber(left?.y), toFiniteNumber(right?.y)),
+    Math.min(toFiniteNumber(left?.z), toFiniteNumber(right?.z))
+  );
+}
+function maxVec3(left, right) {
+  return createVec3(
+    Math.max(toFiniteNumber(left?.x), toFiniteNumber(right?.x)),
+    Math.max(toFiniteNumber(left?.y), toFiniteNumber(right?.y)),
+    Math.max(toFiniteNumber(left?.z), toFiniteNumber(right?.z))
+  );
+}
+function dotVec3(left, right) {
+  return (
+    toFiniteNumber(left?.x) * toFiniteNumber(right?.x) +
+    toFiniteNumber(left?.y) * toFiniteNumber(right?.y) +
+    toFiniteNumber(left?.z) * toFiniteNumber(right?.z)
+  );
+}
+function lengthSquaredVec3(vector) {
+  return dotVec3(vector, vector);
+}
+function lengthVec3(vector) {
+  return Math.sqrt(lengthSquaredVec3(vector));
+}
+function negateVec3(vector) {
+  return createVec3(
+    -toFiniteNumber(vector?.x),
+    -toFiniteNumber(vector?.y),
+    -toFiniteNumber(vector?.z)
+  );
+}
+function normalizeVec3(vector, fallback = createVec3(1, 0, 0)) {
+  const length = lengthVec3(vector);
+  if (length <= 1e-12) {
+    return cloneVec3(fallback);
+  }
 
+  return scaleVec3(vector, 1 / length);
+}
+function crossVec3(left, right) {
+  return createVec3(
+    toFiniteNumber(left?.y) * toFiniteNumber(right?.z) - toFiniteNumber(left?.z) * toFiniteNumber(right?.y),
+    toFiniteNumber(left?.z) * toFiniteNumber(right?.x) - toFiniteNumber(left?.x) * toFiniteNumber(right?.z),
+    toFiniteNumber(left?.x) * toFiniteNumber(right?.y) - toFiniteNumber(left?.y) * toFiniteNumber(right?.x)
+  );
+}
 
 __exports.createVec3 = createVec3;
 __exports.cloneVec3 = cloneVec3;
+__exports.zeroVec3 = zeroVec3;
 __exports.scaleVec3 = scaleVec3;
-__exports.vec3ToObject = vec3ToObject;
+__exports.addVec3 = addVec3;
+__exports.addScaledVec3 = addScaledVec3;
+__exports.subtractVec3 = subtractVec3;
+__exports.minVec3 = minVec3;
+__exports.maxVec3 = maxVec3;
+__exports.dotVec3 = dotVec3;
+__exports.lengthSquaredVec3 = lengthSquaredVec3;
+__exports.lengthVec3 = lengthVec3;
+__exports.negateVec3 = negateVec3;
+__exports.normalizeVec3 = normalizeVec3;
+__exports.crossVec3 = crossVec3;
 },
-  5: function(__require, __exports) {
-const { cloneVec3, createVec3, vec3ToObject } = __require(4);
-function createDefaultCamera() {
+  7: function(__require, __exports) {
+const { cloneQuat, createIdentityQuat, inverseRotateVec3ByQuat, multiplyQuat, rotateVec3ByQuat } = __require(5);
+const { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, maxVec3, minVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
+function clampNumber(value, minValue, maxValue) {
+  return Math.max(minValue, Math.min(maxValue, value));
+}
+function getShapeWorldCenter(shape, worldPose) {
+  return getShapeWorldPose(shape, worldPose).position;
+}
+function composePoses(parentPose, localPose) {
+  const parentRotation = cloneQuat(parentPose?.rotation ?? createIdentityQuat());
+  const localRotation = cloneQuat(localPose?.rotation ?? createIdentityQuat());
+  const localPosition = cloneVec3(localPose?.position ?? createVec3());
+
   return {
-    position: createVec3(0, 0, 400),
-    rotation: createVec3(0, 0, 0),
-    fov: 60
+    position: addVec3(parentPose?.position ?? createVec3(), rotateVec3ByQuat(parentRotation, localPosition)),
+    rotation: multiplyQuat(parentRotation, localRotation)
+  };
+}
+function transformPointByPose(pose, point) {
+  return addVec3(pose?.position ?? createVec3(), rotateVec3ByQuat(pose?.rotation ?? createIdentityQuat(), point));
+}
+function getShapeWorldPose(shape, worldPose) {
+  return composePoses(worldPose, shape?.localPose ?? {
+    position: createVec3(),
+    rotation: createIdentityQuat()
+  });
+}
+function getShapeSupportFeature(shape, worldPose, direction) {
+  const shapeWorldPose = getShapeWorldPose(shape, worldPose);
+  const dir = normalizeVec3(direction, createVec3(1, 0, 0));
+  const localDirection = inverseRotateVec3ByQuat(shapeWorldPose.rotation, dir);
+
+  if (shape?.type === 'box') {
+    const localPoint = createVec3(
+      localDirection.x >= 0 ? shape.geometry.halfExtents.x : -shape.geometry.halfExtents.x,
+      localDirection.y >= 0 ? shape.geometry.halfExtents.y : -shape.geometry.halfExtents.y,
+      localDirection.z >= 0 ? shape.geometry.halfExtents.z : -shape.geometry.halfExtents.z
+    );
+    return {
+      worldPoint: transformPointByPose(shapeWorldPose, localPoint),
+      localPoint,
+      featureId: `corner:${localPoint.x >= 0 ? '+' : '-'}${localPoint.y >= 0 ? '+' : '-'}${localPoint.z >= 0 ? '+' : '-'}`,
+      featureType: 'vertex'
+    };
+  }
+
+  if (shape?.type === 'sphere') {
+    const localPoint = scaleVec3(localDirection, shape.geometry.radius);
+    return {
+      worldPoint: addScaledVec3(shapeWorldPose.position, dir, shape.geometry.radius),
+      localPoint,
+      featureId: 'sphere:surface',
+      featureType: 'surface'
+    };
+  }
+
+  if (shape?.type === 'capsule') {
+    const axisOffset = createVec3(0, localDirection.y >= 0 ? shape.geometry.halfHeight : -shape.geometry.halfHeight, 0);
+    const localPoint = addScaledVec3(axisOffset, localDirection, shape.geometry.radius);
+    return {
+      worldPoint: addScaledVec3(transformPointByPose(shapeWorldPose, axisOffset), dir, shape.geometry.radius),
+      localPoint,
+      featureId: `capsule:${axisOffset.y >= 0 ? 'top' : 'bottom'}`,
+      featureType: 'capsule-cap'
+    };
+  }
+
+  if (shape?.type === 'convex-hull') {
+    if (!Array.isArray(shape.geometry.vertices) || shape.geometry.vertices.length === 0) {
+      return {
+        worldPoint: shapeWorldPose.position,
+        localPoint: createVec3(),
+        featureId: 'vertex:empty',
+        featureType: 'vertex'
+      };
+    }
+
+    let bestIndex = 0;
+    let bestLocalPoint = cloneVec3(shape.geometry.vertices[0]);
+    let bestWorldPoint = transformPointByPose(shapeWorldPose, bestLocalPoint);
+    let bestDot = dotVec3(bestWorldPoint, dir);
+
+    for (let index = 1; index < shape.geometry.vertices.length; index += 1) {
+      const candidateLocalPoint = shape.geometry.vertices[index];
+      const candidateWorldPoint = transformPointByPose(shapeWorldPose, candidateLocalPoint);
+      const candidateDot = dotVec3(candidateWorldPoint, dir);
+      if (candidateDot > bestDot + 1e-8) {
+        bestDot = candidateDot;
+        bestIndex = index;
+        bestLocalPoint = cloneVec3(candidateLocalPoint);
+        bestWorldPoint = candidateWorldPoint;
+      }
+    }
+
+    return {
+      worldPoint: bestWorldPoint,
+      localPoint: bestLocalPoint,
+      featureId: `vertex:${bestIndex}`,
+      featureType: 'vertex'
+    };
+  }
+
+  return {
+    worldPoint: shapeWorldPose.position,
+    localPoint: createVec3(),
+    featureId: 'shape:center',
+    featureType: 'point'
+  };
+}
+function getShapeSupportPoint(shape, worldPose, direction) {
+  return getShapeSupportFeature(shape, worldPose, direction).worldPoint;
+}
+function clampPointToAabb(point, aabb) {
+  return createVec3(
+    clampNumber(point.x, aabb.min.x, aabb.max.x),
+    clampNumber(point.y, aabb.min.y, aabb.max.y),
+    clampNumber(point.z, aabb.min.z, aabb.max.z)
+  );
+}
+function getClosestPointOnSegment(point, segmentStart, segmentEnd) {
+  const segment = subtractVec3(segmentEnd, segmentStart);
+  const lengthSquared = lengthSquaredVec3(segment);
+  if (lengthSquared <= 1e-12) {
+    return cloneVec3(segmentStart);
+  }
+
+  const t = clampNumber(dotVec3(subtractVec3(point, segmentStart), segment) / lengthSquared, 0, 1);
+  return addScaledVec3(segmentStart, segment, t);
+}
+function getCapsuleSegmentEndpoints(shape, worldPose) {
+  const shapeWorldPose = getShapeWorldPose(shape, worldPose);
+  const axis = rotateVec3ByQuat(shapeWorldPose.rotation, createVec3(0, 1, 0));
+  return {
+    start: addScaledVec3(shapeWorldPose.position, axis, -shape.geometry.halfHeight),
+    end: addScaledVec3(shapeWorldPose.position, axis, shape.geometry.halfHeight)
+  };
+}
+function createTangentBasis(normal) {
+  const unitNormal = normalizeVec3(normal, createVec3(0, 1, 0));
+  const helperAxis = Math.abs(unitNormal.y) < 0.9 ? createVec3(0, 1, 0) : createVec3(1, 0, 0);
+  const tangentA = normalizeVec3(crossVec3(helperAxis, unitNormal), createVec3(1, 0, 0));
+  const tangentB = normalizeVec3(crossVec3(unitNormal, tangentA), createVec3(0, 0, 1));
+
+  return {
+    normal: unitNormal,
+    tangentA,
+    tangentB
+  };
+}
+function getSupportMappedPenetration(shapeA, poseA, shapeB, poseB, normal) {
+  const unitNormal = normalizeVec3(normal, createVec3(0, 1, 0));
+  const supportA = getShapeSupportPoint(shapeA, poseA, unitNormal);
+  const supportB = getShapeSupportPoint(shapeB, poseB, negateVec3(unitNormal));
+  const signedSeparation = dotVec3(subtractVec3(supportB, supportA), unitNormal);
+
+  return {
+    supportA,
+    supportB,
+    signedSeparation,
+    penetration: Math.max(0, -signedSeparation)
+  };
+}
+function getConvexHullBounds(shape, worldPose) {
+  const shapeWorldPose = getShapeWorldPose(shape, worldPose);
+  if (!Array.isArray(shape?.geometry?.vertices) || shape.geometry.vertices.length === 0) {
+    return {
+      min: shapeWorldPose.position,
+      max: shapeWorldPose.position
+    };
+  }
+
+  let minPoint = transformPointByPose(shapeWorldPose, shape.geometry.vertices[0]);
+  let maxPoint = cloneVec3(minPoint);
+
+  for (let index = 1; index < shape.geometry.vertices.length; index += 1) {
+    const worldVertex = transformPointByPose(shapeWorldPose, shape.geometry.vertices[index]);
+    minPoint = minVec3(minPoint, worldVertex);
+    maxPoint = maxVec3(maxPoint, worldVertex);
+  }
+
+  return {
+    min: minPoint,
+    max: maxPoint
   };
 }
 
-function normalizeObjectId(rawId, objectCount) {
-  const stringId = String(rawId || '').trim();
-  if (stringId) {
-    return stringId;
+__exports.getShapeWorldCenter = getShapeWorldCenter;
+__exports.composePoses = composePoses;
+__exports.transformPointByPose = transformPointByPose;
+__exports.getShapeWorldPose = getShapeWorldPose;
+__exports.getShapeSupportFeature = getShapeSupportFeature;
+__exports.getShapeSupportPoint = getShapeSupportPoint;
+__exports.clampPointToAabb = clampPointToAabb;
+__exports.getClosestPointOnSegment = getClosestPointOnSegment;
+__exports.getCapsuleSegmentEndpoints = getCapsuleSegmentEndpoints;
+__exports.createTangentBasis = createTangentBasis;
+__exports.getSupportMappedPenetration = getSupportMappedPenetration;
+__exports.getConvexHullBounds = getConvexHullBounds;
+},
+  8: function(__require, __exports) {
+const { cloneAabb, testAabbOverlap } = __require(4);
+function canonicalMotionType(motionType, hasBody) {
+  if (!hasBody) {
+    return 'static';
   }
 
-  return `cube-${objectCount + 1}`;
+  const resolved = String(motionType ?? '').trim().toLowerCase();
+  if (resolved === 'static' || resolved === 'kinematic') {
+    return resolved;
+  }
+
+  return 'dynamic';
 }
-class Scene3D {
+
+function motionTypeRank(motionType) {
+  if (motionType === 'dynamic') {
+    return 0;
+  }
+
+  if (motionType === 'kinematic') {
+    return 1;
+  }
+
+  return 2;
+}
+
+function sortMotionTypes(left, right) {
+  if (motionTypeRank(left) <= motionTypeRank(right)) {
+    return [left, right];
+  }
+
+  return [right, left];
+}
+
+function createPairKey(leftColliderId, rightColliderId) {
+  return [leftColliderId, rightColliderId].sort().join('|');
+}
+
+function resolvePairKind(left, right) {
+  const [leftType, rightType] = sortMotionTypes(left.motionType, right.motionType);
+  return `${leftType}-${rightType}`;
+}
+
+function cloneNullableId(value) {
+  return value ? String(value) : null;
+}
+
+function compareProxiesBySweepAxis(left, right) {
+  if (left.aabb.min.x !== right.aabb.min.x) {
+    return left.aabb.min.x - right.aabb.min.x;
+  }
+
+  if (left.aabb.min.y !== right.aabb.min.y) {
+    return left.aabb.min.y - right.aabb.min.y;
+  }
+
+  if (left.aabb.min.z !== right.aabb.min.z) {
+    return left.aabb.min.z - right.aabb.min.z;
+  }
+
+  return left.colliderId.localeCompare(right.colliderId);
+}
+function createBroadphaseProxy(options = {}) {
+  const motionType = canonicalMotionType(options.motionType, Boolean(options.bodyId));
+
+  return {
+    id: String(options.id ?? options.colliderId ?? '').trim() || String(options.colliderId ?? '').trim(),
+    colliderId: String(options.colliderId ?? '').trim() || null,
+    bodyId: cloneNullableId(options.bodyId),
+    shapeId: cloneNullableId(options.shapeId),
+    materialId: cloneNullableId(options.materialId),
+    shapeType: String(options.shapeType ?? '').trim() || 'unknown',
+    motionType,
+    isStatic: motionType === 'static',
+    isDynamic: motionType === 'dynamic',
+    isKinematic: motionType === 'kinematic',
+    isSensor: Boolean(options.isSensor),
+    aabb: cloneAabb(options.aabb)
+  };
+}
+function cloneBroadphaseProxy(proxy) {
+  return createBroadphaseProxy(proxy);
+}
+function createBroadphasePair(options = {}) {
+  return {
+    id: String(options.id ?? options.pairKey ?? '').trim() || createPairKey(options.colliderAId, options.colliderBId),
+    pairKey: String(options.pairKey ?? '').trim() || createPairKey(options.colliderAId, options.colliderBId),
+    type: 'potential-collision-pair',
+    pairKind: String(options.pairKind ?? '').trim() || 'dynamic-dynamic',
+    colliderAId: cloneNullableId(options.colliderAId),
+    colliderBId: cloneNullableId(options.colliderBId),
+    bodyAId: cloneNullableId(options.bodyAId),
+    bodyBId: cloneNullableId(options.bodyBId),
+    shapeAId: cloneNullableId(options.shapeAId),
+    shapeBId: cloneNullableId(options.shapeBId),
+    materialAId: cloneNullableId(options.materialAId),
+    materialBId: cloneNullableId(options.materialBId),
+    shapeAType: String(options.shapeAType ?? '').trim() || 'unknown',
+    shapeBType: String(options.shapeBType ?? '').trim() || 'unknown',
+    motionTypeA: canonicalMotionType(options.motionTypeA, Boolean(options.bodyAId)),
+    motionTypeB: canonicalMotionType(options.motionTypeB, Boolean(options.bodyBId)),
+    aabbA: cloneAabb(options.aabbA),
+    aabbB: cloneAabb(options.aabbB)
+  };
+}
+function cloneBroadphasePair(pair) {
+  return createBroadphasePair(pair);
+}
+function shouldGenerateBroadphasePair(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (!left.colliderId || !right.colliderId || left.colliderId === right.colliderId) {
+    return false;
+  }
+
+  if (left.isSensor || right.isSensor) {
+    return false;
+  }
+
+  if (left.bodyId && right.bodyId && left.bodyId === right.bodyId) {
+    return false;
+  }
+
+  if (left.isStatic && right.isStatic) {
+    return false;
+  }
+
+  return testAabbOverlap(left.aabb, right.aabb);
+}
+function buildBroadphasePairs(proxies) {
+  const sortedProxies = Array.isArray(proxies)
+    ? proxies.map((proxy) => cloneBroadphaseProxy(proxy)).sort(compareProxiesBySweepAxis)
+    : [];
+  const pairs = [];
+
+  for (let leftIndex = 0; leftIndex < sortedProxies.length; leftIndex += 1) {
+    const left = sortedProxies[leftIndex];
+
+    for (let rightIndex = leftIndex + 1; rightIndex < sortedProxies.length; rightIndex += 1) {
+      const right = sortedProxies[rightIndex];
+
+      if (right.aabb.min.x > left.aabb.max.x) {
+        break;
+      }
+
+      if (!shouldGenerateBroadphasePair(left, right)) {
+        continue;
+      }
+
+      pairs.push(createBroadphasePair({
+        pairKey: createPairKey(left.colliderId, right.colliderId),
+        pairKind: resolvePairKind(left, right),
+        colliderAId: left.colliderId,
+        colliderBId: right.colliderId,
+        bodyAId: left.bodyId,
+        bodyBId: right.bodyId,
+        shapeAId: left.shapeId,
+        shapeBId: right.shapeId,
+        materialAId: left.materialId,
+        materialBId: right.materialId,
+        shapeAType: left.shapeType,
+        shapeBType: right.shapeType,
+        motionTypeA: left.motionType,
+        motionTypeB: right.motionType,
+        aabbA: left.aabb,
+        aabbB: right.aabb
+      }));
+    }
+  }
+
+  return pairs;
+}
+
+__exports.createBroadphaseProxy = createBroadphaseProxy;
+__exports.cloneBroadphaseProxy = cloneBroadphaseProxy;
+__exports.createBroadphasePair = createBroadphasePair;
+__exports.cloneBroadphasePair = cloneBroadphasePair;
+__exports.shouldGenerateBroadphasePair = shouldGenerateBroadphasePair;
+__exports.buildBroadphasePairs = buildBroadphasePairs;
+},
+  9: function(__require, __exports) {
+const { createVec3 } = __require(6);
+const { getAabbOverlap } = __require(4);
+function midpoint(minValue, maxValue) {
+  return (minValue + maxValue) / 2;
+}
+
+function chooseContactAxis(pair, overlap) {
+  const axes = ['x', 'y', 'z'];
+  let bestAxis = axes[0];
+  let bestOverlap = overlap[bestAxis];
+  let bestDelta = Math.abs(pair.aabbB.center[bestAxis] - pair.aabbA.center[bestAxis]);
+
+  for (let index = 1; index < axes.length; index += 1) {
+    const axis = axes[index];
+    const candidateOverlap = overlap[axis];
+    const candidateDelta = Math.abs(pair.aabbB.center[axis] - pair.aabbA.center[axis]);
+
+    if (candidateOverlap < bestOverlap - 1e-8) {
+      bestAxis = axis;
+      bestOverlap = candidateOverlap;
+      bestDelta = candidateDelta;
+      continue;
+    }
+
+    if (Math.abs(candidateOverlap - bestOverlap) <= 1e-8 && candidateDelta > bestDelta + 1e-8) {
+      bestAxis = axis;
+      bestOverlap = candidateOverlap;
+      bestDelta = candidateDelta;
+    }
+  }
+
+  return bestAxis;
+}
+
+function createAxisNormal(axis, sign) {
+  if (axis === 'x') {
+    return createVec3(sign, 0, 0);
+  }
+
+  if (axis === 'y') {
+    return createVec3(0, sign, 0);
+  }
+
+  return createVec3(0, 0, sign);
+}
+
+function getFaceCoordinate(pair, axis, normalSign) {
+  if (normalSign >= 0) {
+    if (axis === 'x') {
+      return midpoint(pair.aabbA.max.x, pair.aabbB.min.x);
+    }
+
+    if (axis === 'y') {
+      return midpoint(pair.aabbA.max.y, pair.aabbB.min.y);
+    }
+
+    return midpoint(pair.aabbA.max.z, pair.aabbB.min.z);
+  }
+
+  if (axis === 'x') {
+    return midpoint(pair.aabbA.min.x, pair.aabbB.max.x);
+  }
+
+  if (axis === 'y') {
+    return midpoint(pair.aabbA.min.y, pair.aabbB.max.y);
+  }
+
+  return midpoint(pair.aabbA.min.z, pair.aabbB.max.z);
+}
+
+function getAxisRange(pair, axis) {
+  return {
+    min: Math.max(pair.aabbA.min[axis], pair.aabbB.min[axis]),
+    max: Math.min(pair.aabbA.max[axis], pair.aabbB.max[axis])
+  };
+}
+
+function dedupeContactPoints(points) {
+  const uniquePoints = [];
+  const seenKeys = new Set();
+
+  for (const point of points) {
+    const key = `${point.x.toFixed(6)}|${point.y.toFixed(6)}|${point.z.toFixed(6)}`;
+    if (seenKeys.has(key)) {
+      continue;
+    }
+
+    seenKeys.add(key);
+    uniquePoints.push(point);
+  }
+
+  return uniquePoints;
+}
+
+function createFaceContactPoints(pair, axis, normalSign) {
+  const contactPlane = getFaceCoordinate(pair, axis, normalSign);
+  const tangentAxes = ['x', 'y', 'z'].filter((candidateAxis) => candidateAxis !== axis);
+  const firstRange = getAxisRange(pair, tangentAxes[0]);
+  const secondRange = getAxisRange(pair, tangentAxes[1]);
+  const firstValues = [firstRange.min, firstRange.max];
+  const secondValues = [secondRange.min, secondRange.max];
+  const points = [];
+
+  for (const firstValue of firstValues) {
+    for (const secondValue of secondValues) {
+      const point = {
+        x: midpoint(pair.aabbA.center.x, pair.aabbB.center.x),
+        y: midpoint(pair.aabbA.center.y, pair.aabbB.center.y),
+        z: midpoint(pair.aabbA.center.z, pair.aabbB.center.z)
+      };
+      point[axis] = contactPlane;
+      point[tangentAxes[0]] = firstValue;
+      point[tangentAxes[1]] = secondValue;
+      points.push(createVec3(point.x, point.y, point.z));
+    }
+  }
+
+  return dedupeContactPoints(points);
+}
+function collideBoxPair(pair) {
+  const overlap = getAabbOverlap(pair?.aabbA, pair?.aabbB);
+  if (!overlap) {
+    return null;
+  }
+
+  const axis = chooseContactAxis(pair, overlap);
+  const centerDelta = pair.aabbB.center[axis] - pair.aabbA.center[axis];
+  const normalSign = centerDelta >= 0 ? 1 : -1;
+  const normal = createAxisNormal(axis, normalSign);
+  const penetration = overlap[axis];
+  const contactPoints = createFaceContactPoints(pair, axis, normalSign);
+
+  return {
+    id: `${pair.pairKey}:contact-pair`,
+    pairKey: pair.pairKey,
+    algorithm: 'box-box-aabb-v2',
+    status: 'touching',
+    pairKind: pair.pairKind,
+    colliderAId: pair.colliderAId,
+    colliderBId: pair.colliderBId,
+    bodyAId: pair.bodyAId,
+    bodyBId: pair.bodyBId,
+    shapeAType: pair.shapeAType,
+    shapeBType: pair.shapeBType,
+    normal,
+    penetration,
+    contactCount: contactPoints.length,
+    contacts: contactPoints.map((contactPoint, index) => ({
+      id: `${pair.pairKey}:contact-${index}`,
+      position: contactPoint,
+      normal,
+      penetration,
+      separation: -penetration,
+      featureId: `axis:${axis}:corner:${index}`
+    }))
+  };
+}
+
+__exports.collideBoxPair = collideBoxPair;
+},
+  10: function(__require, __exports) {
+const { addScaledVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
+const { createTangentBasis, getShapeSupportFeature, getShapeWorldCenter } = __require(7);
+const GJK_MAX_ITERATIONS = 24;
+const EPA_MAX_ITERATIONS = 32;
+const EPA_TOLERANCE = 1e-4;
+
+function createSupportVertex(shapeA, poseA, shapeB, poseB, direction) {
+  const supportFeatureA = getShapeSupportFeature(shapeA, poseA, direction);
+  const supportFeatureB = getShapeSupportFeature(shapeB, poseB, negateVec3(direction));
+  const supportA = supportFeatureA.worldPoint;
+  const supportB = supportFeatureB.worldPoint;
+  return {
+    supportA,
+    supportB,
+    supportFeatureA,
+    supportFeatureB,
+    point: subtractVec3(supportA, supportB)
+  };
+}
+
+function tripleCross(a, b, c) {
+  return crossVec3(crossVec3(a, b), c);
+}
+
+function choosePerpendicular(vector) {
+  const axis = Math.abs(vector.x) < 0.7 ? createVec3(1, 0, 0) : createVec3(0, 1, 0);
+  return normalizeVec3(crossVec3(vector, axis), createVec3(0, 0, 1));
+}
+
+function computeBarycentric(point, a, b, c) {
+  const v0 = subtractVec3(b, a);
+  const v1 = subtractVec3(c, a);
+  const v2 = subtractVec3(point, a);
+  const d00 = dotVec3(v0, v0);
+  const d01 = dotVec3(v0, v1);
+  const d11 = dotVec3(v1, v1);
+  const d20 = dotVec3(v2, v0);
+  const d21 = dotVec3(v2, v1);
+  const denominator = d00 * d11 - d01 * d01;
+
+  if (Math.abs(denominator) <= 1e-12) {
+    return { u: 1 / 3, v: 1 / 3, w: 1 / 3 };
+  }
+
+  const v = (d11 * d20 - d01 * d21) / denominator;
+  const w = (d00 * d21 - d01 * d20) / denominator;
+  const u = 1 - v - w;
+  const clamped = {
+    u: Math.max(0, u),
+    v: Math.max(0, v),
+    w: Math.max(0, w)
+  };
+  const sum = clamped.u + clamped.v + clamped.w;
+  if (sum <= 1e-12) {
+    return { u: 1 / 3, v: 1 / 3, w: 1 / 3 };
+  }
+
+  return {
+    u: clamped.u / sum,
+    v: clamped.v / sum,
+    w: clamped.w / sum
+  };
+}
+
+function blendSupportVertex(faceVertices, weights, key) {
+  let result = createVec3();
+  result = addScaledVec3(result, faceVertices[0][key], weights.u);
+  result = addScaledVec3(result, faceVertices[1][key], weights.v);
+  result = addScaledVec3(result, faceVertices[2][key], weights.w);
+  return result;
+}
+
+function sameDirection(direction, toward) {
+  return dotVec3(direction, toward) > 1e-8;
+}
+
+function updateSimplex(simplex) {
+  const a = simplex[0];
+  const ao = negateVec3(a.point);
+
+  if (simplex.length === 2) {
+    const b = simplex[1];
+    const ab = subtractVec3(b.point, a.point);
+    if (sameDirection(ab, ao)) {
+      let direction = tripleCross(ab, ao, ab);
+      if (lengthSquaredVec3(direction) <= 1e-12) {
+        direction = choosePerpendicular(ab);
+      }
+
+      return {
+        hit: false,
+        direction
+      };
+    }
+
+    simplex.splice(1, 1);
+    return {
+      hit: false,
+      direction: ao
+    };
+  }
+
+  if (simplex.length === 3) {
+    const b = simplex[1];
+    const c = simplex[2];
+    const ab = subtractVec3(b.point, a.point);
+    const ac = subtractVec3(c.point, a.point);
+    const abc = crossVec3(ab, ac);
+    const acPerp = crossVec3(abc, ac);
+
+    if (sameDirection(acPerp, ao)) {
+      if (sameDirection(ac, ao)) {
+        simplex.splice(1, 1);
+        let direction = tripleCross(ac, ao, ac);
+        if (lengthSquaredVec3(direction) <= 1e-12) {
+          direction = choosePerpendicular(ac);
+        }
+
+        return {
+          hit: false,
+          direction
+        };
+      }
+
+      simplex.splice(2, 1);
+      return updateSimplex(simplex);
+    }
+
+    const abPerp = crossVec3(ab, abc);
+    if (sameDirection(abPerp, ao)) {
+      simplex.splice(2, 1);
+      return updateSimplex(simplex);
+    }
+
+    if (sameDirection(abc, ao)) {
+      return {
+        hit: false,
+        direction: abc
+      };
+    }
+
+    simplex[1] = c;
+    simplex[2] = b;
+    return {
+      hit: false,
+      direction: negateVec3(abc)
+    };
+  }
+
+  if (simplex.length === 4) {
+    const b = simplex[1];
+    const c = simplex[2];
+    const d = simplex[3];
+    const ab = subtractVec3(b.point, a.point);
+    const ac = subtractVec3(c.point, a.point);
+    const ad = subtractVec3(d.point, a.point);
+    const abc = crossVec3(ab, ac);
+    const acd = crossVec3(ac, ad);
+    const adb = crossVec3(ad, ab);
+
+    if (sameDirection(abc, ao)) {
+      simplex.splice(3, 1);
+      return {
+        hit: false,
+        direction: abc
+      };
+    }
+
+    if (sameDirection(acd, ao)) {
+      simplex[1] = c;
+      simplex[2] = d;
+      simplex.splice(3, 1);
+      return {
+        hit: false,
+        direction: acd
+      };
+    }
+
+    if (sameDirection(adb, ao)) {
+      simplex[1] = d;
+      simplex[2] = b;
+      simplex.splice(3, 1);
+      return {
+        hit: false,
+        direction: adb
+      };
+    }
+
+    return {
+      hit: true,
+      direction: createVec3()
+    };
+  }
+
+  return {
+    hit: false,
+    direction: ao
+  };
+}
+
+function createFace(a, b, c, vertices) {
+  const pointA = vertices[a].point;
+  const pointB = vertices[b].point;
+  const pointC = vertices[c].point;
+  let normal = crossVec3(subtractVec3(pointB, pointA), subtractVec3(pointC, pointA));
+  if (lengthSquaredVec3(normal) <= 1e-12) {
+    return null;
+  }
+
+  normal = normalizeVec3(normal, createVec3(0, 1, 0));
+  let distance = dotVec3(normal, pointA);
+  if (distance < 0) {
+    normal = scaleVec3(normal, -1);
+    distance = -distance;
+    return {
+      a,
+      b: c,
+      c: b,
+      normal,
+      distance
+    };
+  }
+
+  return {
+    a,
+    b,
+    c,
+    normal,
+    distance
+  };
+}
+
+function addHorizonEdge(edges, start, end) {
+  const reverseKey = `${end}|${start}`;
+  if (edges.has(reverseKey)) {
+    edges.delete(reverseKey);
+    return;
+  }
+
+  edges.set(`${start}|${end}`, { start, end });
+}
+
+function buildContactFromFace(face, vertices) {
+  const closestPoint = scaleVec3(face.normal, face.distance);
+  const faceVertices = [vertices[face.a], vertices[face.b], vertices[face.c]];
+  const weights = computeBarycentric(closestPoint, faceVertices[0].point, faceVertices[1].point, faceVertices[2].point);
+  const supportA = blendSupportVertex(faceVertices, weights, 'supportA');
+  const supportB = blendSupportVertex(faceVertices, weights, 'supportB');
+
+  return {
+    normal: face.normal,
+    penetration: Math.max(face.distance, 0),
+    supportA,
+    supportB,
+    faceVertices,
+    contactPosition: createVec3(
+      (supportA.x + supportB.x) / 2,
+      (supportA.y + supportB.y) / 2,
+      (supportA.z + supportB.z) / 2
+    )
+  };
+}
+
+function createManifoldCandidate(featureA, featureB, normal, fallbackFeatureId = 'feature') {
+  const featureIdA = String(featureA?.featureId ?? 'shape-a');
+  const featureIdB = String(featureB?.featureId ?? 'shape-b');
+  const separation = dotVec3(subtractVec3(featureB.worldPoint, featureA.worldPoint), normal);
+  return {
+    featureId: `${featureIdA}|${featureIdB}|${fallbackFeatureId}`,
+    position: createVec3(
+      (featureA.worldPoint.x + featureB.worldPoint.x) / 2,
+      (featureA.worldPoint.y + featureB.worldPoint.y) / 2,
+      (featureA.worldPoint.z + featureB.worldPoint.z) / 2
+    ),
+    penetration: Math.max(0, -separation),
+    separation
+  };
+}
+
+function dedupeCandidates(candidates) {
+  const uniqueCandidates = [];
+  const seenFeatureIds = new Set();
+  const seenPoints = new Set();
+
+  for (const candidate of candidates) {
+    const featureId = String(candidate.featureId ?? '').trim();
+    const pointKey = `${candidate.position.x.toFixed(5)}|${candidate.position.y.toFixed(5)}|${candidate.position.z.toFixed(5)}`;
+    if (seenFeatureIds.has(featureId) || seenPoints.has(pointKey)) {
+      continue;
+    }
+
+    seenFeatureIds.add(featureId);
+    seenPoints.add(pointKey);
+    uniqueCandidates.push(candidate);
+  }
+
+  return uniqueCandidates;
+}
+
+function collectFaceCandidates(faceVertices, normal) {
+  return faceVertices.map((vertex, index) => createManifoldCandidate(
+    vertex.supportFeatureA,
+    vertex.supportFeatureB,
+    normal,
+    `face:${index}`
+  ));
+}
+
+function collectSampledCandidates(shapeA, poseA, shapeB, poseB, normal) {
+  const basis = createTangentBasis(normal);
+  const sampleDirections = [
+    normal,
+    normalizeVec3(addScaledVec3(normal, basis.tangentA, 0.35), normal),
+    normalizeVec3(addScaledVec3(normal, basis.tangentA, -0.35), normal),
+    normalizeVec3(addScaledVec3(normal, basis.tangentB, 0.35), normal),
+    normalizeVec3(addScaledVec3(normal, basis.tangentB, -0.35), normal),
+    normalizeVec3(addScaledVec3(addScaledVec3(normal, basis.tangentA, 0.25), basis.tangentB, 0.25), normal),
+    normalizeVec3(addScaledVec3(addScaledVec3(normal, basis.tangentA, 0.25), basis.tangentB, -0.25), normal),
+    normalizeVec3(addScaledVec3(addScaledVec3(normal, basis.tangentA, -0.25), basis.tangentB, 0.25), normal),
+    normalizeVec3(addScaledVec3(addScaledVec3(normal, basis.tangentA, -0.25), basis.tangentB, -0.25), normal)
+  ];
+
+  return sampleDirections.map((direction, index) => {
+    const featureA = getShapeSupportFeature(shapeA, poseA, direction);
+    const featureB = getShapeSupportFeature(shapeB, poseB, negateVec3(direction));
+    return createManifoldCandidate(featureA, featureB, normal, `sample:${index}`);
+  });
+}
+
+function selectManifoldCandidates(candidates, normal, maxContacts = 4) {
+  const uniqueCandidates = dedupeCandidates(candidates).sort((left, right) => right.penetration - left.penetration);
+  if (uniqueCandidates.length <= maxContacts) {
+    return uniqueCandidates;
+  }
+
+  const basis = createTangentBasis(normal);
+  const selected = [];
+  const selectedKeys = new Set();
+
+  function addCandidate(candidate) {
+    if (!candidate || selectedKeys.has(candidate.featureId)) {
+      return;
+    }
+
+    selected.push(candidate);
+    selectedKeys.add(candidate.featureId);
+  }
+
+  addCandidate(uniqueCandidates[0]);
+
+  const extremalDirections = [
+    basis.tangentA,
+    negateVec3(basis.tangentA),
+    basis.tangentB,
+    negateVec3(basis.tangentB)
+  ];
+
+  for (const direction of extremalDirections) {
+    const candidate = uniqueCandidates.reduce((best, current) => {
+      if (selectedKeys.has(current.featureId)) {
+        return best;
+      }
+
+      if (!best) {
+        return current;
+      }
+
+      return dotVec3(current.position, direction) > dotVec3(best.position, direction) ? current : best;
+    }, null);
+    addCandidate(candidate);
+    if (selected.length >= maxContacts) {
+      return selected.slice(0, maxContacts);
+    }
+  }
+
+  while (selected.length < maxContacts) {
+    const candidate = uniqueCandidates.find((current) => !selectedKeys.has(current.featureId));
+    if (!candidate) {
+      break;
+    }
+
+    addCandidate(candidate);
+  }
+
+  return selected.slice(0, maxContacts);
+}
+function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResult) {
+  if (!epaResult || epaResult.penetration <= 0) {
+    return [];
+  }
+
+  const faceCandidates = collectFaceCandidates(epaResult.faceVertices ?? [], epaResult.normal);
+  const sampledCandidates = collectSampledCandidates(shapeA, poseA, shapeB, poseB, epaResult.normal);
+  const deepestPenetration = Math.max(epaResult.penetration, 1e-6);
+  const minimumPenetration = Math.max(1e-5, deepestPenetration * 0.2);
+  const filteredCandidates = [...faceCandidates, ...sampledCandidates]
+    .filter((candidate) => candidate.penetration >= minimumPenetration);
+
+  return selectManifoldCandidates(filteredCandidates, epaResult.normal, 4);
+}
+function runGjk(shapeA, poseA, shapeB, poseB, options = {}) {
+  const maxIterations = Math.max(4, Number(options.maxIterations ?? GJK_MAX_ITERATIONS));
+  let direction = subtractVec3(getShapeWorldCenter(shapeB, poseB), getShapeWorldCenter(shapeA, poseA));
+  if (lengthSquaredVec3(direction) <= 1e-12) {
+    direction = createVec3(1, 0, 0);
+  }
+
+  const simplex = [createSupportVertex(shapeA, poseA, shapeB, poseB, direction)];
+  direction = negateVec3(simplex[0].point);
+
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    if (lengthSquaredVec3(direction) <= 1e-12) {
+      direction = createVec3(0, 1, 0);
+    }
+
+    const support = createSupportVertex(shapeA, poseA, shapeB, poseB, direction);
+    if (dotVec3(support.point, direction) <= 1e-8) {
+      return {
+        hit: false,
+        simplex,
+        iterations: iteration + 1
+      };
+    }
+
+    simplex.unshift(support);
+    const updated = updateSimplex(simplex);
+    direction = updated.direction;
+
+    if (updated.hit) {
+      return {
+        hit: true,
+        simplex,
+        iterations: iteration + 1
+      };
+    }
+  }
+
+  return {
+    hit: false,
+    simplex,
+    iterations: maxIterations
+  };
+}
+function runEpa(shapeA, poseA, shapeB, poseB, simplex, options = {}) {
+  if (!Array.isArray(simplex) || simplex.length < 4) {
+    return null;
+  }
+
+  const tolerance = Number(options.tolerance ?? EPA_TOLERANCE);
+  const maxIterations = Math.max(8, Number(options.maxIterations ?? EPA_MAX_ITERATIONS));
+  const vertices = simplex.slice(0, 4).map((vertex) => ({
+    supportA: vertex.supportA,
+    supportB: vertex.supportB,
+    supportFeatureA: vertex.supportFeatureA,
+    supportFeatureB: vertex.supportFeatureB,
+    point: vertex.point
+  }));
+  let faces = [
+    createFace(0, 1, 2, vertices),
+    createFace(0, 3, 1, vertices),
+    createFace(0, 2, 3, vertices),
+    createFace(1, 3, 2, vertices)
+  ].filter(Boolean);
+
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    faces.sort((left, right) => left.distance - right.distance);
+    const closestFace = faces[0];
+    if (!closestFace) {
+      return null;
+    }
+
+    const support = createSupportVertex(shapeA, poseA, shapeB, poseB, closestFace.normal);
+    const supportDistance = dotVec3(support.point, closestFace.normal);
+
+    if (supportDistance - closestFace.distance <= tolerance) {
+      return {
+        ...buildContactFromFace(closestFace, vertices),
+        closestFace,
+        vertices,
+        iterations: iteration + 1
+      };
+    }
+
+    const newVertexIndex = vertices.length;
+    vertices.push(support);
+
+    const horizonEdges = new Map();
+    const remainingFaces = [];
+
+    for (const face of faces) {
+      const visible = dotVec3(face.normal, subtractVec3(support.point, vertices[face.a].point)) > tolerance;
+      if (!visible) {
+        remainingFaces.push(face);
+        continue;
+      }
+
+      addHorizonEdge(horizonEdges, face.a, face.b);
+      addHorizonEdge(horizonEdges, face.b, face.c);
+      addHorizonEdge(horizonEdges, face.c, face.a);
+    }
+
+    faces = remainingFaces;
+    for (const edge of horizonEdges.values()) {
+      const face = createFace(edge.start, edge.end, newVertexIndex, vertices);
+      if (face) {
+        faces.push(face);
+      }
+    }
+  }
+
+  faces.sort((left, right) => left.distance - right.distance);
+  if (!faces[0]) {
+    return null;
+  }
+
+  return {
+    ...buildContactFromFace(faces[0], vertices),
+    closestFace: faces[0],
+    vertices,
+    iterations: maxIterations
+  };
+}
+function collideConvexPairWithGjkEpa(shapeA, poseA, shapeB, poseB, options = {}) {
+  const gjk = runGjk(shapeA, poseA, shapeB, poseB, options);
+  if (!gjk.hit) {
+    return null;
+  }
+
+  return runEpa(shapeA, poseA, shapeB, poseB, gjk.simplex, options);
+}
+
+__exports.buildConvexContactManifold = buildConvexContactManifold;
+__exports.runGjk = runGjk;
+__exports.runEpa = runEpa;
+__exports.collideConvexPairWithGjkEpa = collideConvexPairWithGjkEpa;
+},
+  11: function(__require, __exports) {
+const { cloneVec3, createVec3, lengthVec3, negateVec3, normalizeVec3, subtractVec3 } = __require(6);
+const { getAabbOverlap } = __require(4);
+const { collideBoxPair } = __require(9);
+const { buildConvexContactManifold, collideConvexPairWithGjkEpa } = __require(10);
+const { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter, getSupportMappedPenetration } = __require(7);
+function cloneContact(contact) {
+  return {
+    id: contact.id,
+    position: cloneVec3(contact.position),
+    normal: cloneVec3(contact.normal),
+    penetration: contact.penetration,
+    separation: contact.separation,
+    featureId: contact.featureId
+  };
+}
+
+function chooseDefaultNormal(pair) {
+  const overlap = getAabbOverlap(pair?.aabbA, pair?.aabbB);
+  if (!overlap) {
+    return {
+      normal: createVec3(0, 1, 0),
+      penetration: 0,
+      axis: 'y'
+    };
+  }
+
+  const axes = ['x', 'y', 'z'];
+  let axis = axes[0];
+  let bestOverlap = overlap[axis];
+  let bestDelta = Math.abs(pair.aabbB.center[axis] - pair.aabbA.center[axis]);
+
+  for (let index = 1; index < axes.length; index += 1) {
+    const candidateAxis = axes[index];
+    const candidateOverlap = overlap[candidateAxis];
+    const candidateDelta = Math.abs(pair.aabbB.center[candidateAxis] - pair.aabbA.center[candidateAxis]);
+
+    if (candidateOverlap < bestOverlap - 1e-8) {
+      axis = candidateAxis;
+      bestOverlap = candidateOverlap;
+      bestDelta = candidateDelta;
+      continue;
+    }
+
+    if (Math.abs(candidateOverlap - bestOverlap) <= 1e-8 && candidateDelta > bestDelta + 1e-8) {
+      axis = candidateAxis;
+      bestOverlap = candidateOverlap;
+      bestDelta = candidateDelta;
+    }
+  }
+
+  const delta = pair.aabbB.center[axis] - pair.aabbA.center[axis];
+  const sign = delta >= 0 ? 1 : -1;
+  return {
+    normal: axis === 'x'
+      ? createVec3(sign, 0, 0)
+      : axis === 'y'
+        ? createVec3(0, sign, 0)
+        : createVec3(0, 0, sign),
+    penetration: overlap[axis],
+    axis
+  };
+}
+
+function createContactPairCore(pair, options = {}) {
+  const contacts = Array.isArray(options.contacts) ? options.contacts : [];
+  return createContactPair({
+    id: `${pair.pairKey}:contact-pair`,
+    pairKey: pair.pairKey,
+    algorithm: options.algorithm,
+    status: options.status ?? 'touching',
+    pairKind: pair.pairKind,
+    colliderAId: pair.colliderAId,
+    colliderBId: pair.colliderBId,
+    bodyAId: pair.bodyAId,
+    bodyBId: pair.bodyBId,
+    shapeAType: pair.shapeAType,
+    shapeBType: pair.shapeBType,
+    normal: options.normal,
+    penetration: options.penetration,
+    contactCount: contacts.length,
+    contacts
+  });
+}
+
+function createSingleContactPair(pair, options = {}) {
+  const normal = cloneVec3(options.normal ?? createVec3(0, 1, 0));
+  const penetration = Number(options.penetration ?? 0);
+  const contactPosition = cloneVec3(options.position ?? createVec3());
+
+  return createContactPairCore(pair, {
+    algorithm: options.algorithm,
+    normal,
+    penetration,
+    contacts: [
+      {
+        id: `${pair.pairKey}:contact-0`,
+        position: contactPosition,
+        normal,
+        penetration,
+        separation: -penetration,
+        featureId: options.featureId ?? 'contact:0'
+      }
+    ]
+  });
+}
+
+function createManifoldContactPair(pair, options = {}) {
+  const normal = cloneVec3(options.normal ?? createVec3(0, 1, 0));
+  const penetration = Number(options.penetration ?? 0);
+  const contacts = Array.isArray(options.contacts) ? options.contacts : [];
+
+  return createContactPairCore(pair, {
+    algorithm: options.algorithm,
+    normal,
+    penetration,
+    contacts: contacts.map((contact, index) => ({
+      id: `${pair.pairKey}:contact-${index}`,
+      position: cloneVec3(contact.position),
+      normal,
+      penetration: Number(contact.penetration ?? penetration),
+      separation: Number(contact.separation ?? -Number(contact.penetration ?? penetration)),
+      featureId: contact.featureId ?? `contact:${index}`
+    }))
+  });
+}
+
+function isSupportMappedShape(shapeType) {
+  return shapeType === 'box' || shapeType === 'sphere' || shapeType === 'capsule' || shapeType === 'convex-hull';
+}
+
+function collideSphereSpherePair(pair, shapeA, poseA, shapeB, poseB) {
+  const centerA = getShapeWorldCenter(shapeA, poseA);
+  const centerB = getShapeWorldCenter(shapeB, poseB);
+  const delta = subtractVec3(centerB, centerA);
+  const distance = lengthVec3(delta);
+  const radiusSum = shapeA.geometry.radius + shapeB.geometry.radius;
+  if (distance > radiusSum + 1e-8) {
+    return null;
+  }
+
+  const fallback = chooseDefaultNormal(pair);
+  const normal = normalizeVec3(delta, fallback.normal);
+  const penetration = Math.max(radiusSum - distance, fallback.penetration);
+  const supportA = getShapeSupportPoint(shapeA, poseA, normal);
+  const supportB = getShapeSupportPoint(shapeB, poseB, negateVec3(normal));
+  const contactPosition = createVec3(
+    (supportA.x + supportB.x) / 2,
+    (supportA.y + supportB.y) / 2,
+    (supportA.z + supportB.z) / 2
+  );
+
+  return createSingleContactPair(pair, {
+    algorithm: 'sphere-sphere-v1',
+    normal,
+    penetration,
+    position: contactPosition,
+    featureId: 'sphere-sphere'
+  });
+}
+
+function collideSphereBoxPair(pair, sphereShape, spherePose, boxShape, boxPose, sphereIsA) {
+  const sphereCenter = getShapeWorldCenter(sphereShape, spherePose);
+  const boxAabb = sphereIsA ? pair.aabbB : pair.aabbA;
+  const closestPoint = clampPointToAabb(sphereCenter, boxAabb);
+  const outward = subtractVec3(sphereCenter, closestPoint);
+  const distance = lengthVec3(outward);
+  const fallback = chooseDefaultNormal(pair);
+  const normalFromBoxToSphere = distance > 1e-8 ? normalizeVec3(outward, fallback.normal) : fallback.normal;
+  const normal = sphereIsA ? negateVec3(normalFromBoxToSphere) : normalFromBoxToSphere;
+  const penetration = Math.max(sphereShape.geometry.radius - distance, fallback.penetration);
+  const sphereSurface = getShapeSupportPoint(sphereShape, spherePose, sphereIsA ? normal : negateVec3(normal));
+  const contactPosition = createVec3(
+    (closestPoint.x + sphereSurface.x) / 2,
+    (closestPoint.y + sphereSurface.y) / 2,
+    (closestPoint.z + sphereSurface.z) / 2
+  );
+
+  if (distance > sphereShape.geometry.radius + 1e-8 && fallback.penetration <= 0) {
+    return null;
+  }
+
+  return createSingleContactPair(pair, {
+    algorithm: 'sphere-box-v1',
+    normal,
+    penetration,
+    position: contactPosition,
+    featureId: sphereIsA ? 'sphere-box:a' : 'sphere-box:b'
+  });
+}
+
+function collideCapsuleSpherePair(pair, capsuleShape, capsulePose, sphereShape, spherePose, capsuleIsA) {
+  const sphereCenter = getShapeWorldCenter(sphereShape, spherePose);
+  const capsuleSegment = getCapsuleSegmentEndpoints(capsuleShape, capsulePose);
+  const closestPoint = getClosestPointOnSegment(sphereCenter, capsuleSegment.start, capsuleSegment.end);
+  const delta = subtractVec3(sphereCenter, closestPoint);
+  const distance = lengthVec3(delta);
+  const radiusSum = capsuleShape.geometry.radius + sphereShape.geometry.radius;
+  if (distance > radiusSum + 1e-8) {
+    return null;
+  }
+
+  const fallback = chooseDefaultNormal(pair);
+  const normalFromCapsuleToSphere = normalizeVec3(delta, fallback.normal);
+  const normal = capsuleIsA ? normalFromCapsuleToSphere : negateVec3(normalFromCapsuleToSphere);
+  const penetration = Math.max(radiusSum - distance, fallback.penetration);
+  const capsuleSurface = getShapeSupportPoint(capsuleShape, capsulePose, capsuleIsA ? normal : negateVec3(normal));
+  const sphereSurface = getShapeSupportPoint(sphereShape, spherePose, capsuleIsA ? negateVec3(normal) : normal);
+  const contactPosition = createVec3(
+    (capsuleSurface.x + sphereSurface.x) / 2,
+    (capsuleSurface.y + sphereSurface.y) / 2,
+    (capsuleSurface.z + sphereSurface.z) / 2
+  );
+
+  return createSingleContactPair(pair, {
+    algorithm: 'capsule-sphere-v1',
+    normal,
+    penetration,
+    position: contactPosition,
+    featureId: capsuleIsA ? 'capsule-sphere:a' : 'capsule-sphere:b'
+  });
+}
+
+function collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB) {
+  if (!isSupportMappedShape(shapeA.type) || !isSupportMappedShape(shapeB.type)) {
+    return null;
+  }
+
+  const fallback = chooseDefaultNormal(pair);
+  const support = getSupportMappedPenetration(shapeA, poseA, shapeB, poseB, fallback.normal);
+  const penetration = Math.max(fallback.penetration, support.penetration);
+  if (penetration <= 0) {
+    return null;
+  }
+
+  const contactPosition = createVec3(
+    (support.supportA.x + support.supportB.x) / 2,
+    (support.supportA.y + support.supportB.y) / 2,
+    (support.supportA.z + support.supportB.z) / 2
+  );
+
+  return createSingleContactPair(pair, {
+    algorithm: 'support-mapped-aabb-v1',
+    normal: fallback.normal,
+    penetration,
+    position: contactPosition,
+    featureId: `support:${fallback.axis}`
+  });
+}
+
+function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
+  if (!isSupportMappedShape(shapeA.type) || !isSupportMappedShape(shapeB.type)) {
+    return null;
+  }
+
+  const result = collideConvexPairWithGjkEpa(shapeA, poseA, shapeB, poseB);
+  if (!result || result.penetration <= 0) {
+    return null;
+  }
+
+  const contacts = buildConvexContactManifold(shapeA, poseA, shapeB, poseB, result);
+  if (contacts.length === 0) {
+    return createSingleContactPair(pair, {
+      algorithm: 'gjk-epa-manifold-v1',
+      normal: result.normal,
+      penetration: result.penetration,
+      position: result.contactPosition,
+      featureId: 'gjk:contact'
+    });
+  }
+
+  return createManifoldContactPair(pair, {
+    algorithm: 'gjk-epa-manifold-v1',
+    normal: result.normal,
+    penetration: Math.max(...contacts.map((contact) => Number(contact.penetration ?? 0)), result.penetration),
+    contacts
+  });
+}
+
+function collidePair(pair, shapeA, poseA, shapeB, poseB) {
+  if (!shapeA || !shapeB || !poseA || !poseB) {
+    return null;
+  }
+
+  if (shapeA.type === 'box' && shapeB.type === 'box') {
+    return collideBoxPair(pair);
+  }
+
+  return collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) ?? collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB);
+}
+function createContactPair(options = {}) {
+  return {
+    id: String(options.id ?? options.pairKey ?? '').trim() || String(options.pairKey ?? '').trim(),
+    pairKey: String(options.pairKey ?? '').trim() || null,
+    algorithm: String(options.algorithm ?? '').trim() || 'unknown',
+    status: String(options.status ?? '').trim() || 'unknown',
+    pairKind: String(options.pairKind ?? '').trim() || 'dynamic-dynamic',
+    colliderAId: String(options.colliderAId ?? '').trim() || null,
+    colliderBId: String(options.colliderBId ?? '').trim() || null,
+    bodyAId: String(options.bodyAId ?? '').trim() || null,
+    bodyBId: String(options.bodyBId ?? '').trim() || null,
+    shapeAType: String(options.shapeAType ?? '').trim() || 'unknown',
+    shapeBType: String(options.shapeBType ?? '').trim() || 'unknown',
+    friction: Number(options.friction ?? 0.5),
+    restitution: Number(options.restitution ?? 0),
+    restitutionThreshold: Number(options.restitutionThreshold ?? 1),
+    normal: cloneVec3(options.normal ?? createVec3()),
+    penetration: Number(options.penetration ?? 0),
+    contactCount: Number(options.contactCount ?? (Array.isArray(options.contacts) ? options.contacts.length : 0)),
+    contacts: Array.isArray(options.contacts) ? options.contacts.map((contact) => cloneContact(contact)) : []
+  };
+}
+function cloneContactPair(contactPair) {
+  return createContactPair(contactPair);
+}
+function runNarrowphase(pairs, options = {}) {
+  const contactPairs = [];
+  const unsupportedPairs = [];
+  const getShape = typeof options.getShape === 'function' ? options.getShape : () => null;
+  const getPose = typeof options.getPose === 'function' ? options.getPose : () => null;
+
+  for (const pair of Array.isArray(pairs) ? pairs : []) {
+    const shapeA = getShape(pair.shapeAId);
+    const shapeB = getShape(pair.shapeBId);
+    const poseA = getPose(pair.colliderAId);
+    const poseB = getPose(pair.colliderBId);
+    const contactPair = collidePair(pair, shapeA, poseA, shapeB, poseB);
+
+    if (contactPair) {
+      contactPairs.push(contactPair);
+      continue;
+    }
+
+    unsupportedPairs.push(pair.pairKey);
+  }
+
+  return {
+    contactPairs,
+    summary: {
+      pairCount: Array.isArray(pairs) ? pairs.length : 0,
+      contactCount: contactPairs.length,
+      unsupportedPairCount: unsupportedPairs.length,
+      unsupportedPairs,
+      algorithms: contactPairs.reduce((counts, contactPair) => {
+        counts[contactPair.algorithm] = (counts[contactPair.algorithm] ?? 0) + 1;
+        return counts;
+      }, {})
+    }
+  };
+}
+
+__exports.createContactPair = createContactPair;
+__exports.cloneContactPair = cloneContactPair;
+__exports.runNarrowphase = runNarrowphase;
+},
+  12: function(__require, __exports) {
+const { cloneQuat, createIdentityQuat } = __require(5);
+const { cloneVec3, createVec3 } = __require(6);
+function toFiniteNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function createDebugColor(color, fallback) {
+  const source = color ?? fallback;
+  return {
+    r: toFiniteNumber(source?.r, fallback.r),
+    g: toFiniteNumber(source?.g, fallback.g),
+    b: toFiniteNumber(source?.b, fallback.b),
+    a: toFiniteNumber(source?.a, fallback.a)
+  };
+}
+
+function cloneSource(source) {
+  if (!source) {
+    return null;
+  }
+
+  return { ...source };
+}
+
+function cloneDebugPrimitive(primitive) {
+  if (primitive.type === DEBUG_PRIMITIVE_TYPES.POINT) {
+    return createDebugPoint(primitive);
+  }
+
+  if (primitive.type === DEBUG_PRIMITIVE_TYPES.LINE) {
+    return createDebugLine(primitive);
+  }
+
+  if (primitive.type === DEBUG_PRIMITIVE_TYPES.WIRE_BOX) {
+    return createDebugWireBox(primitive);
+  }
+
+  return {
+    ...primitive,
+    source: cloneSource(primitive.source ?? null)
+  };
+}
+const DEBUG_FRAME_SCHEMA_VERSION = 'physics-debug-primitives@1';
+const DEBUG_PRIMITIVE_TYPES = Object.freeze({
+  POINT: 'point',
+  LINE: 'line',
+  WIRE_BOX: 'wireBox'
+});
+const DEFAULT_DEBUG_COLORS = Object.freeze({
+  rigidBodyWireframe: Object.freeze({ r: 64, g: 180, b: 255, a: 1 }),
+  rigidBodyCenter: Object.freeze({ r: 255, g: 196, b: 61, a: 1 }),
+  sleepingRigidBodyWireframe: Object.freeze({ r: 145, g: 160, b: 174, a: 1 }),
+  staticColliderWireframe: Object.freeze({ r: 107, g: 222, b: 157, a: 1 }),
+  broadphaseAabb: Object.freeze({ r: 250, g: 128, b: 114, a: 0.9 }),
+  contactPoint: Object.freeze({ r: 255, g: 72, b: 72, a: 1 }),
+  contactNormal: Object.freeze({ r: 255, g: 150, b: 54, a: 1 })
+});
+function countDebugPrimitivesByType(primitives) {
+  const counts = {};
+
+  for (const primitive of primitives) {
+    counts[primitive.type] = (counts[primitive.type] ?? 0) + 1;
+  }
+
+  return counts;
+}
+function createDebugPoint(options = {}) {
+  return {
+    type: DEBUG_PRIMITIVE_TYPES.POINT,
+    id: String(options.id ?? '').trim() || 'debug-point',
+    category: String(options.category ?? '').trim() || 'point',
+    position: cloneVec3(options.position ?? createVec3()),
+    color: createDebugColor(options.color, DEFAULT_DEBUG_COLORS.rigidBodyCenter),
+    size: toFiniteNumber(options.size, 4),
+    source: cloneSource(options.source ?? null)
+  };
+}
+function createDebugLine(options = {}) {
+  return {
+    type: DEBUG_PRIMITIVE_TYPES.LINE,
+    id: String(options.id ?? '').trim() || 'debug-line',
+    category: String(options.category ?? '').trim() || 'line',
+    start: cloneVec3(options.start ?? createVec3()),
+    end: cloneVec3(options.end ?? createVec3()),
+    color: createDebugColor(options.color, DEFAULT_DEBUG_COLORS.rigidBodyWireframe),
+    source: cloneSource(options.source ?? null)
+  };
+}
+function createDebugWireBox(options = {}) {
+  return {
+    type: DEBUG_PRIMITIVE_TYPES.WIRE_BOX,
+    id: String(options.id ?? '').trim() || 'debug-wire-box',
+    category: String(options.category ?? '').trim() || 'wire-box',
+    center: cloneVec3(options.center ?? createVec3()),
+    halfExtents: cloneVec3(options.halfExtents ?? createVec3(0.5, 0.5, 0.5)),
+    rotation: cloneQuat(options.rotation ?? createIdentityQuat()),
+    color: createDebugColor(options.color, DEFAULT_DEBUG_COLORS.rigidBodyWireframe),
+    source: cloneSource(options.source ?? null)
+  };
+}
+function createDebugFrame(options = {}) {
+  const primitives = Array.isArray(options.primitives)
+    ? options.primitives.map((primitive) => cloneDebugPrimitive(primitive))
+    : [];
+
+  return {
+    schemaVersion: DEBUG_FRAME_SCHEMA_VERSION,
+    frameNumber: toFiniteNumber(options.frameNumber, 0),
+    simulationTick: toFiniteNumber(options.simulationTick, 0),
+    camera: {
+      position: cloneVec3(options.camera?.position ?? createVec3())
+    },
+    primitives,
+    stats: {
+      primitiveCount: primitives.length,
+      byType: countDebugPrimitivesByType(primitives),
+      ...options.stats
+    }
+  };
+}
+
+__exports.countDebugPrimitivesByType = countDebugPrimitivesByType;
+__exports.createDebugPoint = createDebugPoint;
+__exports.createDebugLine = createDebugLine;
+__exports.createDebugWireBox = createDebugWireBox;
+__exports.createDebugFrame = createDebugFrame;
+__exports.DEBUG_FRAME_SCHEMA_VERSION = DEBUG_FRAME_SCHEMA_VERSION;
+__exports.DEBUG_PRIMITIVE_TYPES = DEBUG_PRIMITIVE_TYPES;
+__exports.DEFAULT_DEBUG_COLORS = DEFAULT_DEBUG_COLORS;
+},
+  13: function(__require, __exports) {
+const { cloneVec3, createVec3 } = __require(6);
+function cloneManifoldContact(contact) {
+  return {
+    id: contact.id,
+    featureId: contact.featureId,
+    position: cloneVec3(contact.position),
+    normal: cloneVec3(contact.normal),
+    penetration: contact.penetration,
+    separation: contact.separation,
+    accumulatedNormalImpulse: contact.accumulatedNormalImpulse,
+    accumulatedTangentImpulseA: contact.accumulatedTangentImpulseA,
+    accumulatedTangentImpulseB: contact.accumulatedTangentImpulseB,
+    lifetime: contact.lifetime,
+    persisted: contact.persisted
+  };
+}
+function cloneManifold(manifold) {
+  return {
+    id: manifold.id,
+    pairKey: manifold.pairKey,
+    pairKind: manifold.pairKind,
+    colliderAId: manifold.colliderAId,
+    colliderBId: manifold.colliderBId,
+    bodyAId: manifold.bodyAId,
+    bodyBId: manifold.bodyBId,
+    shapeAType: manifold.shapeAType,
+    shapeBType: manifold.shapeBType,
+    algorithm: manifold.algorithm,
+    status: manifold.status,
+    friction: manifold.friction,
+    restitution: manifold.restitution,
+    restitutionThreshold: manifold.restitutionThreshold,
+    normal: cloneVec3(manifold.normal),
+    contactCount: manifold.contactCount,
+    contacts: manifold.contacts.map((contact) => cloneManifoldContact(contact)),
+    lifetime: manifold.lifetime,
+    lastUpdatedTick: manifold.lastUpdatedTick
+  };
+}
+
+function createPersistentContact(contact, previousContact, simulationTick) {
+  const matchedPreviousContact = previousContact ?? null;
+  return {
+    id: contact.id,
+    featureId: contact.featureId ?? contact.id,
+    position: cloneVec3(contact.position),
+    normal: cloneVec3(contact.normal),
+    penetration: Number(contact.penetration ?? 0),
+    separation: Number(contact.separation ?? 0),
+    accumulatedNormalImpulse: matchedPreviousContact?.accumulatedNormalImpulse ?? 0,
+    accumulatedTangentImpulseA: matchedPreviousContact?.accumulatedTangentImpulseA ?? 0,
+    accumulatedTangentImpulseB: matchedPreviousContact?.accumulatedTangentImpulseB ?? 0,
+    lifetime: matchedPreviousContact?.lastUpdatedTick === simulationTick
+      ? matchedPreviousContact.lifetime
+      : (matchedPreviousContact ? matchedPreviousContact.lifetime + 1 : 1),
+    lastUpdatedTick: simulationTick,
+    persisted: Boolean(matchedPreviousContact)
+  };
+}
+
+function findMatchingPreviousContact(previousContacts, contact) {
+  if (!Array.isArray(previousContacts) || previousContacts.length === 0) {
+    return null;
+  }
+
+  const featureId = contact.featureId ?? contact.id;
+  for (const previousContact of previousContacts) {
+    if ((previousContact.featureId ?? previousContact.id) === featureId) {
+      return previousContact;
+    }
+  }
+
+  return null;
+}
+
+function createPersistentManifold(contactPair, previousManifold, simulationTick) {
+  const previousContacts = previousManifold?.contacts ?? [];
+  const contacts = Array.isArray(contactPair.contacts)
+    ? contactPair.contacts.map((contact) => createPersistentContact(
+      contact,
+      findMatchingPreviousContact(previousContacts, contact),
+      simulationTick
+    ))
+    : [];
+
+  return {
+    id: `${contactPair.pairKey}:manifold`,
+    pairKey: contactPair.pairKey,
+    pairKind: contactPair.pairKind,
+    colliderAId: contactPair.colliderAId,
+    colliderBId: contactPair.colliderBId,
+    bodyAId: contactPair.bodyAId,
+    bodyBId: contactPair.bodyBId,
+    shapeAType: contactPair.shapeAType,
+    shapeBType: contactPair.shapeBType,
+    algorithm: contactPair.algorithm,
+    status: contactPair.status,
+    friction: Number(contactPair.friction ?? previousManifold?.friction ?? 0.5),
+    restitution: Number(contactPair.restitution ?? previousManifold?.restitution ?? 0),
+    restitutionThreshold: Number(contactPair.restitutionThreshold ?? previousManifold?.restitutionThreshold ?? 1),
+    normal: cloneVec3(contactPair.normal ?? createVec3()),
+    contactCount: contacts.length,
+    contacts,
+    lifetime: previousManifold?.lastUpdatedTick === simulationTick
+      ? previousManifold.lifetime
+      : (previousManifold ? previousManifold.lifetime + 1 : 1),
+    lastUpdatedTick: simulationTick
+  };
+}
+class ManifoldCache {
   constructor() {
-    this.reset();
+    this.records = new Map();
+  }
+
+  clear() {
+    this.records.clear();
+  }
+
+  get(pairKey) {
+    const manifold = this.records.get(pairKey);
+    return manifold ? cloneManifold(manifold) : null;
+  }
+
+  getMutable(pairKey) {
+    return this.records.get(pairKey) ?? null;
+  }
+
+  list() {
+    return Array.from(this.records.values(), (manifold) => cloneManifold(manifold));
+  }
+
+  syncFromContactPairs(contactPairs, simulationTick = 0) {
+    const nextRecords = new Map();
+
+    for (const contactPair of Array.isArray(contactPairs) ? contactPairs : []) {
+      const previousManifold = this.records.get(contactPair.pairKey) ?? null;
+      const manifold = createPersistentManifold(contactPair, previousManifold, simulationTick);
+      nextRecords.set(manifold.pairKey, manifold);
+    }
+
+    this.records = nextRecords;
+    return Array.from(this.records.values());
+  }
+}
+
+__exports.ManifoldCache = ManifoldCache;
+__exports.cloneManifoldContact = cloneManifoldContact;
+__exports.cloneManifold = cloneManifold;
+},
+  14: function(__require, __exports) {
+const { createIdentityQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
+const { addScaledVec3, addVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
+const { createTangentBasis } = __require(7);
+function createEmptySolverStats(iterations) {
+  return {
+    iterations,
+    manifoldCount: 0,
+    warmStartedContactCount: 0,
+    solvedContactCount: 0,
+    solvedTangentContactCount: 0,
+    restitutionContactCount: 0,
+    skippedContactCount: 0,
+    impulsesApplied: 0,
+    frictionImpulsesApplied: 0,
+    positionCorrections: 0,
+    maxPenetration: 0
+  };
+}
+
+function getDynamicBody(bodyRegistry, bodyId) {
+  if (!bodyId) {
+    return null;
+  }
+
+  const body = bodyRegistry.getMutable(bodyId);
+  if (!body || !body.enabled || body.motionType !== 'dynamic') {
+    return null;
+  }
+
+  return body;
+}
+
+function applyInverseInertiaWorld(body, worldVector) {
+  if (!body || body.motionType !== 'dynamic') {
+    return createVec3();
+  }
+
+  const rotation = body.rotation ?? createIdentityQuat();
+  const localVector = inverseRotateVec3ByQuat(rotation, worldVector ?? createVec3());
+  const localResult = createVec3(
+    localVector.x * Number(body.inverseInertia?.x ?? 0),
+    localVector.y * Number(body.inverseInertia?.y ?? 0),
+    localVector.z * Number(body.inverseInertia?.z ?? 0)
+  );
+  return rotateVec3ByQuat(rotation, localResult);
+}
+
+function getContactOffset(body, contactPosition) {
+  if (!body) {
+    return createVec3();
+  }
+
+  return subtractVec3(contactPosition, body.position);
+}
+
+function getVelocityAtPoint(body, contactPosition) {
+  if (!body) {
+    return createVec3();
+  }
+
+  const offset = getContactOffset(body, contactPosition);
+  return addVec3(body.linearVelocity, crossVec3(body.angularVelocity, offset));
+}
+
+function getRelativeVelocity(bodyA, bodyB, contactPosition) {
+  const velocityA = getVelocityAtPoint(bodyA, contactPosition);
+  const velocityB = getVelocityAtPoint(bodyB, contactPosition);
+  return subtractVec3(velocityB, velocityA);
+}
+
+function applyImpulse(bodyA, bodyB, contactPosition, impulse) {
+  if (bodyA) {
+    const offsetA = getContactOffset(bodyA, contactPosition);
+    const impulseA = scaleVec3(impulse, -1);
+    bodyA.linearVelocity = addScaledVec3(bodyA.linearVelocity, impulseA, bodyA.inverseMass);
+    bodyA.angularVelocity = addVec3(bodyA.angularVelocity, applyInverseInertiaWorld(bodyA, crossVec3(offsetA, impulseA)));
+  }
+
+  if (bodyB) {
+    const offsetB = getContactOffset(bodyB, contactPosition);
+    bodyB.linearVelocity = addScaledVec3(bodyB.linearVelocity, impulse, bodyB.inverseMass);
+    bodyB.angularVelocity = addVec3(bodyB.angularVelocity, applyInverseInertiaWorld(bodyB, crossVec3(offsetB, impulse)));
+  }
+}
+
+function applyPositionCorrection(bodyA, bodyB, direction, correctionMagnitude) {
+  if (bodyA) {
+    bodyA.position = addScaledVec3(bodyA.position, direction, -correctionMagnitude * bodyA.inverseMass);
+  }
+
+  if (bodyB) {
+    bodyB.position = addScaledVec3(bodyB.position, direction, correctionMagnitude * bodyB.inverseMass);
+  }
+}
+
+function computeEffectiveMass(bodyA, bodyB, contactPosition, direction) {
+  let inverseMassSum = (bodyA?.inverseMass ?? 0) + (bodyB?.inverseMass ?? 0);
+
+  if (bodyA) {
+    const offsetA = getContactOffset(bodyA, contactPosition);
+    const angularMassA = crossVec3(applyInverseInertiaWorld(bodyA, crossVec3(offsetA, direction)), offsetA);
+    inverseMassSum += dotVec3(direction, angularMassA);
+  }
+
+  if (bodyB) {
+    const offsetB = getContactOffset(bodyB, contactPosition);
+    const angularMassB = crossVec3(applyInverseInertiaWorld(bodyB, crossVec3(offsetB, direction)), offsetB);
+    inverseMassSum += dotVec3(direction, angularMassB);
+  }
+
+  return inverseMassSum;
+}
+
+function applyWarmStart(bodyA, bodyB, manifold, contact, tangentBasis, stats) {
+  if (contact.accumulatedNormalImpulse > 0) {
+    applyImpulse(bodyA, bodyB, contact.position, scaleVec3(manifold.normal, contact.accumulatedNormalImpulse));
+    stats.warmStartedContactCount += 1;
+  }
+
+  if (Math.abs(contact.accumulatedTangentImpulseA) > 1e-8) {
+    applyImpulse(bodyA, bodyB, contact.position, scaleVec3(tangentBasis.tangentA, contact.accumulatedTangentImpulseA));
+    stats.frictionImpulsesApplied += Math.abs(contact.accumulatedTangentImpulseA);
+  }
+
+  if (Math.abs(contact.accumulatedTangentImpulseB) > 1e-8) {
+    applyImpulse(bodyA, bodyB, contact.position, scaleVec3(tangentBasis.tangentB, contact.accumulatedTangentImpulseB));
+    stats.frictionImpulsesApplied += Math.abs(contact.accumulatedTangentImpulseB);
+  }
+}
+
+function solveNormalImpulse(bodyA, bodyB, manifold, contact, deltaTime, baumgarte, allowedPenetration, stats) {
+  const inverseMassSum = computeEffectiveMass(bodyA, bodyB, contact.position, manifold.normal);
+  if (inverseMassSum <= 1e-8) {
+    stats.skippedContactCount += 1;
+    return;
+  }
+
+  const relativeVelocity = getRelativeVelocity(bodyA, bodyB, contact.position);
+  const relativeNormalVelocity = dotVec3(relativeVelocity, manifold.normal);
+  const separationWithSlop = Math.min(0, contact.separation + allowedPenetration);
+  const positionBias = (baumgarte * separationWithSlop) / deltaTime;
+  const restitutionThreshold = Number(manifold.restitutionThreshold ?? 1);
+  const bounceVelocity = manifold.restitution > 0 && relativeNormalVelocity < -restitutionThreshold
+    ? -manifold.restitution * relativeNormalVelocity
+    : 0;
+
+  if (bounceVelocity > 0) {
+    stats.restitutionContactCount += 1;
+  }
+
+  const impulseDelta = -(relativeNormalVelocity - bounceVelocity + positionBias) / inverseMassSum;
+  const previousImpulse = contact.accumulatedNormalImpulse;
+  const nextImpulse = Math.max(previousImpulse + impulseDelta, 0);
+  const appliedImpulse = nextImpulse - previousImpulse;
+
+  if (Math.abs(appliedImpulse) <= 1e-8) {
+    return;
+  }
+
+  contact.accumulatedNormalImpulse = nextImpulse;
+  applyImpulse(bodyA, bodyB, contact.position, scaleVec3(manifold.normal, appliedImpulse));
+  stats.solvedContactCount += 1;
+  stats.impulsesApplied += Math.abs(appliedImpulse);
+}
+
+function solveTangentImpulse(bodyA, bodyB, contact, tangentDirection, inverseMassSum, maxFrictionImpulse, tangentImpulseKey, stats) {
+  if (inverseMassSum <= 1e-8) {
+    return;
+  }
+
+  const relativeVelocity = getRelativeVelocity(bodyA, bodyB, contact.position);
+  const relativeTangentVelocity = dotVec3(relativeVelocity, tangentDirection);
+  const impulseDelta = -relativeTangentVelocity / inverseMassSum;
+  const previousImpulse = contact[tangentImpulseKey];
+  const nextImpulse = Math.max(-maxFrictionImpulse, Math.min(maxFrictionImpulse, previousImpulse + impulseDelta));
+  const appliedImpulse = nextImpulse - previousImpulse;
+
+  if (Math.abs(appliedImpulse) <= 1e-8) {
+    return;
+  }
+
+  contact[tangentImpulseKey] = nextImpulse;
+  applyImpulse(bodyA, bodyB, contact.position, scaleVec3(tangentDirection, appliedImpulse));
+  stats.solvedTangentContactCount += 1;
+  stats.frictionImpulsesApplied += Math.abs(appliedImpulse);
+}
+function solveNormalContactConstraints(options = {}) {
+  const manifolds = Array.isArray(options.manifolds) ? options.manifolds : [];
+  const bodyRegistry = options.bodyRegistry;
+  const deltaTime = Math.max(Number(options.deltaTime ?? 0), 1e-8);
+  const iterations = Math.max(1, Math.floor(Number(options.iterations ?? 6)));
+  const baumgarte = Number(options.baumgarte ?? 0.2);
+  const allowedPenetration = Number(options.allowedPenetration ?? 0.01);
+  const positionCorrectionPercent = Number(options.positionCorrectionPercent ?? 0.8);
+  const stats = createEmptySolverStats(iterations);
+  stats.manifoldCount = manifolds.length;
+
+  for (const manifold of manifolds) {
+    const bodyA = getDynamicBody(bodyRegistry, manifold.bodyAId);
+    const bodyB = getDynamicBody(bodyRegistry, manifold.bodyBId);
+
+    for (const contact of manifold.contacts) {
+      const tangentBasis = createTangentBasis(manifold.normal);
+      stats.maxPenetration = Math.max(stats.maxPenetration, contact.penetration);
+
+      if (computeEffectiveMass(bodyA, bodyB, contact.position, manifold.normal) <= 1e-8) {
+        stats.skippedContactCount += 1;
+        continue;
+      }
+
+      applyWarmStart(bodyA, bodyB, manifold, contact, tangentBasis, stats);
+    }
+  }
+
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    for (const manifold of manifolds) {
+      const bodyA = getDynamicBody(bodyRegistry, manifold.bodyAId);
+      const bodyB = getDynamicBody(bodyRegistry, manifold.bodyBId);
+
+      for (const contact of manifold.contacts) {
+        solveNormalImpulse(
+          bodyA,
+          bodyB,
+          manifold,
+          contact,
+          deltaTime,
+          baumgarte,
+          allowedPenetration,
+          stats
+        );
+
+        const tangentBasis = createTangentBasis(manifold.normal);
+        const maxFrictionImpulse = manifold.friction * contact.accumulatedNormalImpulse;
+        const inverseMassA = computeEffectiveMass(bodyA, bodyB, contact.position, tangentBasis.tangentA);
+        const inverseMassB = computeEffectiveMass(bodyA, bodyB, contact.position, tangentBasis.tangentB);
+        solveTangentImpulse(bodyA, bodyB, contact, tangentBasis.tangentA, inverseMassA, maxFrictionImpulse, 'accumulatedTangentImpulseA', stats);
+        solveTangentImpulse(bodyA, bodyB, contact, tangentBasis.tangentB, inverseMassB, maxFrictionImpulse, 'accumulatedTangentImpulseB', stats);
+      }
+    }
+  }
+
+  for (const manifold of manifolds) {
+    const bodyA = getDynamicBody(bodyRegistry, manifold.bodyAId);
+    const bodyB = getDynamicBody(bodyRegistry, manifold.bodyBId);
+
+    for (const contact of manifold.contacts) {
+      const linearInverseMassSum = (bodyA?.inverseMass ?? 0) + (bodyB?.inverseMass ?? 0);
+      if (linearInverseMassSum <= 1e-8) {
+        continue;
+      }
+
+      const correctionMagnitude = Math.max(contact.penetration - allowedPenetration, 0) * positionCorrectionPercent / linearInverseMassSum;
+      if (correctionMagnitude <= 1e-8) {
+        continue;
+      }
+
+      const correctionDirection = lengthSquaredVec3(manifold.normal) > 0 ? normalizeVec3(manifold.normal, createVec3(0, 1, 0)) : createVec3(0, 1, 0);
+      applyPositionCorrection(bodyA, bodyB, correctionDirection, correctionMagnitude);
+      stats.positionCorrections += 1;
+    }
+  }
+
+  return stats;
+}
+
+__exports.solveNormalContactConstraints = solveNormalContactConstraints;
+},
+  15: function(__require, __exports) {
+const { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfExtents, testAabbOverlap, testPointInAabb } = __require(4);
+const { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } = __require(8);
+const { cloneContactPair, runNarrowphase } = __require(11);
+const { composePoses } = __require(7);
+const { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } = __require(12);
+const { cloneManifold, ManifoldCache } = __require(13);
+const { cloneQuat, createIdentityQuat, integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
+const { addScaledVec3, addVec3, cloneVec3, createVec3, lengthSquaredVec3 } = __require(6);
+const { solveNormalContactConstraints } = __require(14);
+const { BodyRegistry } = __require(16);
+const { ColliderRegistry } = __require(18);
+const { MaterialRegistry } = __require(19);
+const { ShapeRegistry } = __require(20);
+const DEFAULT_MATERIAL_ID = 'material-default';
+
+function toPositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function toNonNegativeNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function cloneCamera(camera) {
+  return {
+    position: cloneVec3(camera.position)
+  };
+}
+
+function createQueryResult(type, options = {}) {
+  return {
+    type,
+    bodies: options.bodies ?? [],
+    colliders: options.colliders ?? [],
+    count: {
+      bodies: options.bodies?.length ?? 0,
+      colliders: options.colliders?.length ?? 0
+    },
+    input: options.input ?? {}
+  };
+}
+
+function createEmptySolverStats(iterations = 0) {
+  return {
+    iterations,
+    manifoldCount: 0,
+    warmStartedContactCount: 0,
+    solvedContactCount: 0,
+    solvedTangentContactCount: 0,
+    restitutionContactCount: 0,
+    skippedContactCount: 0,
+    impulsesApplied: 0,
+    frictionImpulsesApplied: 0,
+    positionCorrections: 0,
+    maxPenetration: 0
+  };
+}
+
+function cloneSolverStats(solverStats) {
+  return {
+    iterations: solverStats.iterations,
+    manifoldCount: solverStats.manifoldCount,
+    warmStartedContactCount: solverStats.warmStartedContactCount,
+    solvedContactCount: solverStats.solvedContactCount,
+    solvedTangentContactCount: solverStats.solvedTangentContactCount,
+    restitutionContactCount: solverStats.restitutionContactCount,
+    skippedContactCount: solverStats.skippedContactCount,
+    impulsesApplied: solverStats.impulsesApplied,
+    frictionImpulsesApplied: solverStats.frictionImpulsesApplied,
+    positionCorrections: solverStats.positionCorrections,
+    maxPenetration: solverStats.maxPenetration
+  };
+}
+
+function createEmptyCollisionState(iterations = 0) {
+  return {
+    broadphaseProxies: [],
+    broadphasePairs: [],
+    contactPairs: [],
+    manifolds: [],
+    solverStats: createEmptySolverStats(iterations),
+    summary: {
+      proxyCount: 0,
+      pairCount: 0,
+      contactCount: 0,
+      manifoldCount: 0,
+      unsupportedPairCount: 0,
+      pairKinds: {},
+      algorithms: {}
+    }
+  };
+}
+
+function cloneCollisionSummary(summary) {
+  return {
+    proxyCount: summary.proxyCount,
+    pairCount: summary.pairCount,
+    contactCount: summary.contactCount,
+    manifoldCount: summary.manifoldCount,
+    unsupportedPairCount: summary.unsupportedPairCount,
+    pairKinds: { ...summary.pairKinds },
+    algorithms: { ...summary.algorithms }
+  };
+}
+
+function cloneCollisionState(collisionState) {
+  return {
+    broadphaseProxies: collisionState.broadphaseProxies.map((proxy) => cloneBroadphaseProxy(proxy)),
+    broadphasePairs: collisionState.broadphasePairs.map((pair) => cloneBroadphasePair(pair)),
+    contactPairs: collisionState.contactPairs.map((contactPair) => cloneContactPair(contactPair)),
+    manifolds: collisionState.manifolds.map((manifold) => cloneManifold(manifold)),
+    solverStats: cloneSolverStats(collisionState.solverStats),
+    summary: cloneCollisionSummary(collisionState.summary)
+  };
+}
+
+function countByPairKind(pairs) {
+  return pairs.reduce((counts, pair) => {
+    counts[pair.pairKind] = (counts[pair.pairKind] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function mergeSolverStats(target, source) {
+  target.iterations = Math.max(target.iterations, source.iterations);
+  target.manifoldCount = Math.max(target.manifoldCount, source.manifoldCount);
+  target.warmStartedContactCount += source.warmStartedContactCount;
+  target.solvedContactCount += source.solvedContactCount;
+  target.solvedTangentContactCount += source.solvedTangentContactCount;
+  target.restitutionContactCount += source.restitutionContactCount;
+  target.skippedContactCount += source.skippedContactCount;
+  target.impulsesApplied += source.impulsesApplied;
+  target.frictionImpulsesApplied += source.frictionImpulsesApplied;
+  target.positionCorrections += source.positionCorrections;
+  target.maxPenetration = Math.max(target.maxPenetration, source.maxPenetration);
+}
+
+function combineMaterialProperties(materialA, materialB) {
+  const frictionA = Number(materialA?.friction ?? 0.5);
+  const frictionB = Number(materialB?.friction ?? 0.5);
+  const restitutionA = Number(materialA?.restitution ?? 0);
+  const restitutionB = Number(materialB?.restitution ?? 0);
+
+  return {
+    friction: Math.sqrt(Math.max(0, frictionA) * Math.max(0, frictionB)),
+    restitution: Math.max(0, restitutionA, restitutionB),
+    restitutionThreshold: 1
+  };
+}
+
+function safeInverse(value) {
+  return value > 1e-8 ? 1 / value : 0;
+}
+
+function cloneDiagonalInverse(inertia) {
+  return createVec3(
+    safeInverse(Number(inertia?.x ?? 0)),
+    safeInverse(Number(inertia?.y ?? 0)),
+    safeInverse(Number(inertia?.z ?? 0))
+  );
+}
+
+function computeBoxInertia(halfExtents, mass) {
+  const hx = Math.abs(Number(halfExtents?.x ?? 0));
+  const hy = Math.abs(Number(halfExtents?.y ?? 0));
+  const hz = Math.abs(Number(halfExtents?.z ?? 0));
+
+  return createVec3(
+    (mass / 3) * (hy * hy + hz * hz),
+    (mass / 3) * (hx * hx + hz * hz),
+    (mass / 3) * (hx * hx + hy * hy)
+  );
+}
+
+function computeSphereInertia(radius, mass) {
+  const resolvedRadius = Math.abs(Number(radius ?? 0));
+  const scalar = 0.4 * mass * resolvedRadius * resolvedRadius;
+  return createVec3(scalar, scalar, scalar);
+}
+
+function computeCapsuleInertia(shape, mass) {
+  const radius = Math.abs(Number(shape?.geometry?.radius ?? 0));
+  const halfHeight = Math.abs(Number(shape?.geometry?.halfHeight ?? 0));
+  return computeBoxInertia(createVec3(radius, halfHeight + radius, radius), mass);
+}
+
+function computeConvexHullInertia(shape, mass) {
+  const localAabb = computeLocalShapeAabb(shape);
+  return computeBoxInertia(localAabb?.halfExtents ?? createVec3(), mass);
+}
+
+function computeShapeInertia(shape, mass) {
+  if (!shape || mass <= 0) {
+    return createVec3();
+  }
+
+  if (shape.type === 'box') {
+    return computeBoxInertia(shape.geometry.halfExtents, mass);
+  }
+
+  if (shape.type === 'sphere') {
+    return computeSphereInertia(shape.geometry.radius, mass);
+  }
+
+  if (shape.type === 'capsule') {
+    return computeCapsuleInertia(shape, mass);
+  }
+
+  if (shape.type === 'convex-hull') {
+    return computeConvexHullInertia(shape, mass);
+  }
+
+  return createVec3();
+}
+
+function clearVector(vector) {
+  vector.x = 0;
+  vector.y = 0;
+  vector.z = 0;
+}
+class PhysicsWorld {
+  constructor(options = {}) {
+    this.fixedDeltaTime = toPositiveNumber(options.fixedDeltaTime, 1 / 60);
+    this.maxSubsteps = Math.max(1, Math.floor(toPositiveNumber(options.maxSubsteps, 4)));
+    this.gravity = cloneVec3(options.gravity ?? createVec3(0, -9.81, 0));
+    this.solverIterations = Math.max(1, Math.floor(toPositiveNumber(options.solverIterations, 8)));
+    this.solverBaumgarte = toNonNegativeNumber(options.solverBaumgarte, 0.2);
+    this.allowedPenetration = toNonNegativeNumber(options.allowedPenetration, 0.01);
+    this.positionCorrectionPercent = toNonNegativeNumber(options.positionCorrectionPercent, 0.8);
+    this.shapeRegistry = new ShapeRegistry();
+    this.bodyRegistry = new BodyRegistry();
+    this.colliderRegistry = new ColliderRegistry();
+    this.materialRegistry = new MaterialRegistry();
+    this.manifoldCache = new ManifoldCache();
+    this.resetRuntimeState();
+    this.bootstrapDefaultMaterials();
+  }
+
+  bootstrapDefaultMaterials() {
+    this.materialRegistry.createMaterial({
+      id: DEFAULT_MATERIAL_ID,
+      friction: 0.5,
+      restitution: 0,
+      density: 1
+    });
+  }
+
+  resetRuntimeState() {
+    this.debugCamera = {
+      position: createVec3(0, 0, 400)
+    };
+    this.accumulatorSeconds = 0;
+    this.simulationTick = 0;
+    this.renderFrameCount = 0;
+    this.lastStepStats = {
+      requestedDeltaSeconds: 0,
+      performedSubsteps: 0,
+      simulationTick: 0,
+      remainingAccumulatorSeconds: 0
+    };
+    this.lastSolverStats = createEmptySolverStats(this.solverIterations);
+    this.collisionStateDirty = true;
+    this.collisionState = createEmptyCollisionState(this.solverIterations);
+    this.manifoldCache.clear();
   }
 
   reset() {
-    this.camera = createDefaultCamera();
-    this.objects = [];
-    this.frameCount = 0;
+    this.shapeRegistry.clear();
+    this.bodyRegistry.clear();
+    this.colliderRegistry.clear();
+    this.materialRegistry.clear();
+    this.bootstrapDefaultMaterials();
+    this.resetRuntimeState();
   }
 
-  setCameraPosition(position) {
-    this.camera.position = cloneVec3(position);
+  setDebugCameraPosition(position) {
+    this.debugCamera.position = cloneVec3(position);
   }
 
-  addCube({ id, position, size }) {
-    const cube = {
-      id: normalizeObjectId(id, this.objects.length),
-      kind: 'cube',
-      position: cloneVec3(position),
-      size: Number.isFinite(Number(size)) ? Number(size) : 100
+  setGravity(gravity) {
+    this.gravity = cloneVec3(gravity);
+  }
+
+  markCollisionStateDirty() {
+    this.collisionStateDirty = true;
+  }
+
+  createMaterial(options = {}) {
+    return this.materialRegistry.createMaterial(options);
+  }
+
+  resolveMaterialId(materialId) {
+    const resolvedId = String(materialId ?? '').trim();
+    if (resolvedId && this.materialRegistry.has(resolvedId)) {
+      return resolvedId;
+    }
+
+    return DEFAULT_MATERIAL_ID;
+  }
+
+  createBoxShape(options = {}) {
+    const shape = this.shapeRegistry.createBoxShape(options);
+    this.markCollisionStateDirty();
+    return shape;
+  }
+
+  createSphereShape(options = {}) {
+    const shape = this.shapeRegistry.createSphereShape(options);
+    this.markCollisionStateDirty();
+    return shape;
+  }
+
+  createCapsuleShape(options = {}) {
+    const shape = this.shapeRegistry.createCapsuleShape(options);
+    this.markCollisionStateDirty();
+    return shape;
+  }
+
+  createConvexHullShape(options = {}) {
+    const shape = this.shapeRegistry.createConvexHullShape(options);
+    this.markCollisionStateDirty();
+    return shape;
+  }
+
+  createRigidBody(options = {}) {
+    const body = this.bodyRegistry.createRigidBody(options);
+    const updatedBody = this.updateBodyMassProperties(body.id) ?? body;
+    this.markCollisionStateDirty();
+    return updatedBody;
+  }
+
+  createCollider(options = {}) {
+    const collider = this.colliderRegistry.createCollider({
+      ...options,
+      materialId: this.resolveMaterialId(options.materialId)
+    });
+
+    if (collider.bodyId) {
+      this.bodyRegistry.attachCollider(collider.bodyId, collider.id, collider.shapeId);
+      this.updateBodyMassProperties(collider.bodyId);
+    }
+
+    this.markCollisionStateDirty();
+    return collider;
+  }
+
+  updateBodyMassProperties(bodyId) {
+    const body = this.bodyRegistry.getMutable(bodyId);
+    if (!body) {
+      return null;
+    }
+
+    if (!body.enabled || body.motionType !== 'dynamic' || body.mass <= 0) {
+      body.inverseMass = 0;
+      body.inertia = createVec3();
+      body.inverseInertia = createVec3();
+      return this.getBody(bodyId);
+    }
+
+    const shape = body.shapeId ? this.getShape(body.shapeId) : null;
+    const inertia = computeShapeInertia(shape, body.mass);
+    body.inverseMass = safeInverse(body.mass);
+    body.inertia = inertia;
+    body.inverseInertia = cloneDiagonalInverse(inertia);
+    return this.getBody(bodyId);
+  }
+
+  createBoxBody(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const size = toPositiveNumber(options.size, 1);
+    const shape = this.createBoxShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      halfExtents: createVec3(size / 2, size / 2, size / 2),
+      userData: options.shapeUserData ?? null
+    });
+    const body = this.createRigidBody({
+      id: resolvedId,
+      motionType: options.motionType ?? 'dynamic',
+      position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
+      linearVelocity: options.linearVelocity ?? createVec3(),
+      angularVelocity: options.angularVelocity ?? createVec3(),
+      mass: options.mass ?? 1,
+      userData: options.bodyUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: body.id,
+      materialId: options.materialId,
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      body: this.getBody(body.id),
+      collider
+    };
+  }
+
+  createSphereBody(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const radius = toPositiveNumber(options.radius, 0.5);
+    const shape = this.createSphereShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      radius,
+      userData: options.shapeUserData ?? null
+    });
+    const body = this.createRigidBody({
+      id: resolvedId,
+      motionType: options.motionType ?? 'dynamic',
+      position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
+      linearVelocity: options.linearVelocity ?? createVec3(),
+      angularVelocity: options.angularVelocity ?? createVec3(),
+      mass: options.mass ?? 1,
+      userData: options.bodyUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: body.id,
+      materialId: options.materialId,
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      body: this.getBody(body.id),
+      collider
+    };
+  }
+
+  createCapsuleBody(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const shape = this.createCapsuleShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      radius: options.radius,
+      halfHeight: options.halfHeight,
+      userData: options.shapeUserData ?? null
+    });
+    const body = this.createRigidBody({
+      id: resolvedId,
+      motionType: options.motionType ?? 'dynamic',
+      position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
+      linearVelocity: options.linearVelocity ?? createVec3(),
+      angularVelocity: options.angularVelocity ?? createVec3(),
+      mass: options.mass ?? 1,
+      userData: options.bodyUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: body.id,
+      materialId: options.materialId,
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      body: this.getBody(body.id),
+      collider
+    };
+  }
+
+  createConvexHullBody(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const shape = this.createConvexHullShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      vertices: options.vertices ?? [],
+      userData: options.shapeUserData ?? null
+    });
+    const body = this.createRigidBody({
+      id: resolvedId,
+      motionType: options.motionType ?? 'dynamic',
+      position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
+      linearVelocity: options.linearVelocity ?? createVec3(),
+      angularVelocity: options.angularVelocity ?? createVec3(),
+      mass: options.mass ?? 1,
+      userData: options.bodyUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: body.id,
+      materialId: options.materialId,
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      body: this.getBody(body.id),
+      collider
+    };
+  }
+
+  createStaticBoxCollider(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const size = toPositiveNumber(options.size, 1);
+    const shape = this.createBoxShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      halfExtents: createVec3(size / 2, size / 2, size / 2),
+      userData: options.shapeUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: null,
+      materialId: options.materialId,
+      localPose: {
+        position: options.position ?? createVec3(),
+        rotation: options.rotation ?? createIdentityQuat()
+      },
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      collider
+    };
+  }
+
+  getBody(id) {
+    return this.bodyRegistry.get(id);
+  }
+
+  getShape(id) {
+    return this.shapeRegistry.get(id);
+  }
+
+  getCollider(id) {
+    return this.colliderRegistry.get(id);
+  }
+
+  getMaterial(id) {
+    return this.materialRegistry.get(id);
+  }
+
+  getEffectiveMaterialForCollider(colliderId) {
+    const collider = this.getCollider(colliderId);
+    if (!collider) {
+      return null;
+    }
+
+    return this.getMaterial(collider.materialId) ?? this.getMaterial(DEFAULT_MATERIAL_ID);
+  }
+
+  getBodyColliders(bodyId) {
+    const body = this.getBody(bodyId);
+    if (!body) {
+      return [];
+    }
+
+    return body.colliderIds
+      .map((colliderId) => this.getCollider(colliderId))
+      .filter(Boolean);
+  }
+
+  getWorldSummary() {
+    const collisionState = this.getCollisionState();
+
+    return {
+      bodyCount: this.bodyRegistry.count(),
+      shapeCount: this.shapeRegistry.count(),
+      colliderCount: this.colliderRegistry.count(),
+      materialCount: this.materialRegistry.count(),
+      broadphaseProxyCount: collisionState.summary.proxyCount,
+      broadphasePairCount: collisionState.summary.pairCount,
+      contactPairCount: collisionState.summary.contactCount,
+      manifoldCount: collisionState.summary.manifoldCount,
+      simulationTick: this.simulationTick,
+      renderFrameCount: this.renderFrameCount,
+      fixedDeltaTime: this.fixedDeltaTime,
+      gravity: cloneVec3(this.gravity)
+    };
+  }
+
+  step(deltaSeconds = this.fixedDeltaTime) {
+    const requestedDeltaSeconds = toNonNegativeNumber(deltaSeconds, this.fixedDeltaTime);
+    if (requestedDeltaSeconds === 0) {
+      return {
+        ...this.lastStepStats
+      };
+    }
+
+    this.accumulatorSeconds += requestedDeltaSeconds;
+    let performedSubsteps = 0;
+    const aggregatedSolverStats = createEmptySolverStats(this.solverIterations);
+
+    while (this.accumulatorSeconds + 1e-12 >= this.fixedDeltaTime && performedSubsteps < this.maxSubsteps) {
+      this.integrateRigidBodies(this.fixedDeltaTime);
+      const solverStats = this.solveRigidContacts(this.fixedDeltaTime, this.simulationTick + 1);
+      mergeSolverStats(aggregatedSolverStats, solverStats);
+      this.accumulatorSeconds -= this.fixedDeltaTime;
+      this.simulationTick += 1;
+      performedSubsteps += 1;
+    }
+
+    if (performedSubsteps === this.maxSubsteps && this.accumulatorSeconds > this.fixedDeltaTime) {
+      this.accumulatorSeconds = this.fixedDeltaTime;
+    }
+
+    this.lastSolverStats = aggregatedSolverStats;
+    if (!this.collisionStateDirty) {
+      this.collisionState.solverStats = cloneSolverStats(this.lastSolverStats);
+    }
+
+    this.lastStepStats = {
+      requestedDeltaSeconds,
+      performedSubsteps,
+      simulationTick: this.simulationTick,
+      remainingAccumulatorSeconds: this.accumulatorSeconds
     };
 
-    this.objects = this.objects.filter((object) => object.id !== cube.id);
-    this.objects.push(cube);
-    return cube;
-  }
-
-  nextFrame() {
-    this.frameCount += 1;
-    return this.frameCount;
-  }
-
-  snapshot() {
     return {
-      camera: {
-        position: vec3ToObject(this.camera.position),
-        rotation: vec3ToObject(this.camera.rotation),
-        fov: this.camera.fov
+      ...this.lastStepStats
+    };
+  }
+
+  applyInverseInertia(body, worldVector) {
+    if (!body || body.motionType !== 'dynamic' || !body.inverseInertia) {
+      return createVec3();
+    }
+
+    const rotation = body.rotation ?? createIdentityQuat();
+    const localVector = inverseRotateVec3ByQuat(rotation, worldVector ?? createVec3());
+    const localResult = createVec3(
+      localVector.x * Number(body.inverseInertia.x ?? 0),
+      localVector.y * Number(body.inverseInertia.y ?? 0),
+      localVector.z * Number(body.inverseInertia.z ?? 0)
+    );
+    return rotateVec3ByQuat(rotation, localResult);
+  }
+
+  integrateRigidBodies(deltaTime) {
+    let movedAnyDynamicBody = false;
+
+    this.bodyRegistry.forEachMutable((body) => {
+      if (!body.enabled || body.sleeping || body.motionType !== 'dynamic') {
+        return;
+      }
+
+      const linearAcceleration = addScaledVec3(this.gravity, body.forceAccumulator, body.inverseMass);
+      const angularAcceleration = this.applyInverseInertia(body, body.torqueAccumulator);
+      body.linearVelocity = addScaledVec3(body.linearVelocity, linearAcceleration, deltaTime);
+      body.angularVelocity = addScaledVec3(body.angularVelocity, angularAcceleration, deltaTime);
+      body.position = addScaledVec3(body.position, body.linearVelocity, deltaTime);
+      body.rotation = integrateQuat(body.rotation, body.angularVelocity, deltaTime);
+      movedAnyDynamicBody = movedAnyDynamicBody ||
+        lengthSquaredVec3(body.linearVelocity) > 1e-12 ||
+        lengthSquaredVec3(body.angularVelocity) > 1e-12 ||
+        lengthSquaredVec3(linearAcceleration) > 1e-12 ||
+        lengthSquaredVec3(angularAcceleration) > 1e-12;
+      clearVector(body.forceAccumulator);
+      clearVector(body.torqueAccumulator);
+    });
+
+    if (movedAnyDynamicBody) {
+      this.markCollisionStateDirty();
+    }
+  }
+
+  solveRigidContacts(deltaTime, simulationTick) {
+    const initialResults = this.buildCollisionResults();
+    const manifolds = this.manifoldCache.syncFromContactPairs(initialResults.contactPairs, simulationTick);
+    const solverStats = solveNormalContactConstraints({
+      bodyRegistry: this.bodyRegistry,
+      manifolds,
+      deltaTime,
+      iterations: this.solverIterations,
+      baumgarte: this.solverBaumgarte,
+      allowedPenetration: this.allowedPenetration,
+      positionCorrectionPercent: this.positionCorrectionPercent
+    });
+
+    this.lastSolverStats = solverStats;
+    const finalResults = this.buildCollisionResults();
+    const finalManifolds = this.manifoldCache.syncFromContactPairs(finalResults.contactPairs, simulationTick);
+    this.commitCollisionState(finalResults, finalManifolds, solverStats);
+    this.collisionStateDirty = false;
+    return cloneSolverStats(solverStats);
+  }
+
+  getColliderWorldPose(colliderId) {
+    const collider = this.colliderRegistry.get(colliderId);
+    if (!collider) {
+      return null;
+    }
+
+    if (!collider.bodyId) {
+      return {
+        position: cloneVec3(collider.localPose.position),
+        rotation: cloneQuat(collider.localPose.rotation)
+      };
+    }
+
+    const body = this.bodyRegistry.get(collider.bodyId);
+    if (!body) {
+      return {
+        position: cloneVec3(collider.localPose.position),
+        rotation: cloneQuat(collider.localPose.rotation)
+      };
+    }
+
+    return composePoses({
+      position: body.position,
+      rotation: body.rotation ?? createIdentityQuat()
+    }, collider.localPose);
+  }
+
+  buildBroadphaseProxies() {
+    const broadphaseProxies = [];
+
+    this.colliderRegistry.forEachMutable((mutableCollider) => {
+      if (!mutableCollider.enabled || !mutableCollider.shapeId) {
+        return;
+      }
+
+      const shape = this.shapeRegistry.get(mutableCollider.shapeId);
+      const worldPose = this.getColliderWorldPose(mutableCollider.id);
+      if (!shape || !worldPose) {
+        return;
+      }
+
+      const aabb = computeShapeWorldAabb(shape, worldPose);
+      if (!aabb) {
+        return;
+      }
+
+      const body = mutableCollider.bodyId ? this.bodyRegistry.get(mutableCollider.bodyId) : null;
+      broadphaseProxies.push(createBroadphaseProxy({
+        colliderId: mutableCollider.id,
+        bodyId: mutableCollider.bodyId,
+        shapeId: shape.id,
+        materialId: mutableCollider.materialId,
+        shapeType: shape.type,
+        motionType: body?.motionType ?? 'static',
+        isSensor: mutableCollider.isSensor,
+        aabb
+      }));
+    });
+
+    return broadphaseProxies;
+  }
+
+  buildCollisionResults() {
+    const broadphaseProxies = this.buildBroadphaseProxies();
+    const broadphasePairs = buildBroadphasePairs(broadphaseProxies);
+    const narrowphase = runNarrowphase(broadphasePairs, {
+      getShape: (shapeId) => this.getShape(shapeId),
+      getPose: (colliderId) => this.getColliderWorldPose(colliderId)
+    });
+    const contactPairs = narrowphase.contactPairs.map((contactPair) => {
+      const materialA = this.getEffectiveMaterialForCollider(contactPair.colliderAId);
+      const materialB = this.getEffectiveMaterialForCollider(contactPair.colliderBId);
+      const materialProperties = combineMaterialProperties(materialA, materialB);
+
+      return cloneContactPair({
+        ...contactPair,
+        ...materialProperties
+      });
+    });
+
+    return {
+      broadphaseProxies,
+      broadphasePairs,
+      contactPairs,
+      unsupportedPairCount: narrowphase.summary.unsupportedPairCount,
+      algorithms: contactPairs.reduce((counts, contactPair) => {
+        counts[contactPair.algorithm] = (counts[contactPair.algorithm] ?? 0) + 1;
+        return counts;
+      }, {}),
+      pairKinds: countByPairKind(broadphasePairs)
+    };
+  }
+
+  commitCollisionState(results, manifolds, solverStats) {
+    this.collisionState = {
+      broadphaseProxies: results.broadphaseProxies,
+      broadphasePairs: results.broadphasePairs,
+      contactPairs: results.contactPairs,
+      manifolds: Array.isArray(manifolds) ? manifolds.map((manifold) => cloneManifold(manifold)) : [],
+      solverStats: cloneSolverStats(solverStats ?? this.lastSolverStats),
+      summary: {
+        proxyCount: results.broadphaseProxies.length,
+        pairCount: results.broadphasePairs.length,
+        contactCount: results.contactPairs.length,
+        manifoldCount: Array.isArray(manifolds) ? manifolds.length : 0,
+        unsupportedPairCount: results.unsupportedPairCount,
+        pairKinds: { ...results.pairKinds },
+        algorithms: { ...results.algorithms }
+      }
+    };
+  }
+
+  ensureCollisionState() {
+    if (this.collisionStateDirty) {
+      const results = this.buildCollisionResults();
+      const manifolds = this.manifoldCache.syncFromContactPairs(results.contactPairs, this.simulationTick);
+      this.commitCollisionState(results, manifolds, this.lastSolverStats);
+      this.collisionStateDirty = false;
+    }
+
+    return this.collisionState;
+  }
+
+  getCollisionState() {
+    return cloneCollisionState(this.ensureCollisionState());
+  }
+
+  queryPoint(point) {
+    const resolvedPoint = cloneVec3(point);
+    const collisionState = this.ensureCollisionState();
+    const colliders = [];
+    const bodies = [];
+    const seenBodyIds = new Set();
+
+    for (const proxy of collisionState.broadphaseProxies) {
+      if (!testPointInAabb(resolvedPoint, proxy.aabb)) {
+        continue;
+      }
+
+      const collider = this.colliderRegistry.get(proxy.colliderId);
+      if (!collider) {
+        continue;
+      }
+
+      colliders.push(collider);
+      if (proxy.bodyId && !seenBodyIds.has(proxy.bodyId)) {
+        const body = this.bodyRegistry.get(proxy.bodyId);
+        if (body) {
+          seenBodyIds.add(proxy.bodyId);
+          bodies.push(body);
+        }
+      }
+    }
+
+    return createQueryResult('point', {
+      bodies,
+      colliders,
+      input: {
+        point: resolvedPoint
+      }
+    });
+  }
+
+  queryAabb(options = {}) {
+    const center = cloneVec3(options.center ?? createVec3());
+    const halfExtents = cloneVec3(options.halfExtents ?? createVec3(0.5, 0.5, 0.5));
+    const queryBounds = createAabbFromCenterHalfExtents(center, halfExtents);
+    const collisionState = this.ensureCollisionState();
+    const colliders = [];
+    const bodies = [];
+    const seenBodyIds = new Set();
+
+    for (const proxy of collisionState.broadphaseProxies) {
+      if (!testAabbOverlap(queryBounds, proxy.aabb)) {
+        continue;
+      }
+
+      const collider = this.colliderRegistry.get(proxy.colliderId);
+      if (!collider) {
+        continue;
+      }
+
+      colliders.push(collider);
+      if (proxy.bodyId && !seenBodyIds.has(proxy.bodyId)) {
+        const body = this.bodyRegistry.get(proxy.bodyId);
+        if (body) {
+          seenBodyIds.add(proxy.bodyId);
+          bodies.push(body);
+        }
+      }
+    }
+
+    return createQueryResult('aabb', {
+      bodies,
+      colliders,
+      input: {
+        center,
+        halfExtents
+      }
+    });
+  }
+
+  buildDebugFrame() {
+    const collisionState = this.ensureCollisionState();
+    this.renderFrameCount += 1;
+    const primitives = [];
+
+    for (const proxy of collisionState.broadphaseProxies) {
+      const collider = this.getCollider(proxy.colliderId);
+      const shape = this.getShape(proxy.shapeId);
+      const pose = this.getColliderWorldPose(proxy.colliderId);
+      if (!collider || !shape || !pose) {
+        continue;
+      }
+
+      const body = proxy.bodyId ? this.bodyRegistry.get(proxy.bodyId) : null;
+      const source = {
+        bodyId: proxy.bodyId,
+        colliderId: proxy.colliderId,
+        shapeId: shape.id,
+        materialId: collider.materialId
+      };
+      const wireHalfExtents = shape.type === 'box'
+        ? shape.geometry.halfExtents
+        : proxy.aabb.halfExtents;
+
+      primitives.push(
+        createDebugWireBox({
+          id: `${proxy.colliderId}:wire-box`,
+          category: body ? 'rigid-body' : 'static-collider',
+          center: pose.position,
+          halfExtents: wireHalfExtents,
+          rotation: pose.rotation,
+          color: body
+            ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
+            : DEFAULT_DEBUG_COLORS.staticColliderWireframe,
+          source
+        })
+      );
+
+      primitives.push(
+        createDebugPoint({
+          id: `${proxy.colliderId}:center-of-mass`,
+          category: body ? 'center-of-mass' : 'collider-origin',
+          position: body?.position ?? pose.position,
+          color: DEFAULT_DEBUG_COLORS.rigidBodyCenter,
+          size: 4,
+          source
+        })
+      );
+
+      primitives.push(
+        createDebugWireBox({
+          id: `${proxy.colliderId}:aabb`,
+          category: 'broadphase-aabb',
+          center: proxy.aabb.center,
+          halfExtents: proxy.aabb.halfExtents,
+          color: DEFAULT_DEBUG_COLORS.broadphaseAabb,
+          source
+        })
+      );
+    }
+
+    for (const manifold of collisionState.manifolds) {
+      for (const contact of manifold.contacts) {
+        const source = {
+          pairKey: manifold.pairKey,
+          colliderAId: manifold.colliderAId,
+          colliderBId: manifold.colliderBId,
+          accumulatedNormalImpulse: contact.accumulatedNormalImpulse
+        };
+
+        primitives.push(
+          createDebugPoint({
+            id: `${contact.id}:point`,
+            category: 'contact-point',
+            position: contact.position,
+            color: DEFAULT_DEBUG_COLORS.contactPoint,
+            size: 5,
+            source
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${contact.id}:normal`,
+            category: 'contact-normal',
+            start: contact.position,
+            end: addScaledVec3(contact.position, manifold.normal, Math.max(10, contact.penetration * 20)),
+            color: DEFAULT_DEBUG_COLORS.contactNormal,
+            source
+          })
+        );
+      }
+    }
+
+    return createDebugFrame({
+      frameNumber: this.renderFrameCount,
+      simulationTick: this.simulationTick,
+      camera: cloneCamera(this.debugCamera),
+      primitives,
+      stats: {
+        bodyCount: this.bodyRegistry.count(),
+        shapeCount: this.shapeRegistry.count(),
+        colliderCount: this.colliderRegistry.count(),
+        materialCount: this.materialRegistry.count(),
+        broadphaseProxyCount: collisionState.summary.proxyCount,
+        broadphasePairCount: collisionState.summary.pairCount,
+        contactPairCount: collisionState.summary.contactCount,
+        manifoldCount: collisionState.summary.manifoldCount,
+        solverIterations: collisionState.solverStats.iterations,
+        solvedContactCount: collisionState.solverStats.solvedContactCount,
+        solvedTangentContactCount: collisionState.solverStats.solvedTangentContactCount,
+        restitutionContactCount: collisionState.solverStats.restitutionContactCount,
+        warmStartedContactCount: collisionState.solverStats.warmStartedContactCount,
+        fixedDeltaTime: this.fixedDeltaTime,
+        performedSubsteps: this.lastStepStats.performedSubsteps
+      }
+    });
+  }
+
+  getSnapshot() {
+    const collisionState = this.getCollisionState();
+
+    return {
+      debugCamera: cloneCamera(this.debugCamera),
+      bodyCount: this.bodyRegistry.count(),
+      shapeCount: this.shapeRegistry.count(),
+      colliderCount: this.colliderRegistry.count(),
+      materialCount: this.materialRegistry.count(),
+      bodies: this.bodyRegistry.list(),
+      shapes: this.shapeRegistry.list(),
+      colliders: this.colliderRegistry.list(),
+      materials: this.materialRegistry.list(),
+      collision: collisionState,
+      simulationTick: this.simulationTick,
+      renderFrameCount: this.renderFrameCount,
+      fixedDeltaTime: this.fixedDeltaTime,
+      gravity: cloneVec3(this.gravity),
+      accumulatorSeconds: this.accumulatorSeconds,
+      lastStepStats: {
+        ...this.lastStepStats
       },
-      objects: this.objects.map((object) => ({
-        id: object.id,
-        kind: object.kind,
-        position: vec3ToObject(object.position),
-        size: object.size
-      })),
-      objectCount: this.objects.length,
-      frameCount: this.frameCount
+      lastSolverStats: cloneSolverStats(this.lastSolverStats)
     };
   }
 }
 
-
-__exports.Scene3D = Scene3D;
+__exports.PhysicsWorld = PhysicsWorld;
 },
-  6: function(__require, __exports) {
+  16: function(__require, __exports) {
+const { cloneQuat, createIdentityQuat } = __require(5);
+const { cloneVec3, createVec3 } = __require(6);
+const { BaseRegistry } = __require(17);
+function toFiniteNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeMotionType(value) {
+  const motionType = String(value ?? '').trim().toLowerCase();
+  if (motionType === 'static' || motionType === 'kinematic') {
+    return motionType;
+  }
+
+  return 'dynamic';
+}
+
+function resolveMass(motionType, mass) {
+  if (motionType !== 'dynamic') {
+    return 0;
+  }
+
+  const parsedMass = toFiniteNumber(mass, 1);
+  return parsedMass > 0 ? parsedMass : 1;
+}
+
+function cloneNullableValue(value) {
+  if (value === undefined) {
+    return null;
+  }
+
+  return value;
+}
+class BodyRegistry extends BaseRegistry {
+  constructor() {
+    super('body');
+  }
+
+  cloneRecord(body) {
+    return {
+      id: body.id,
+      type: body.type,
+      motionType: body.motionType,
+      shapeId: body.shapeId,
+      primaryColliderId: body.primaryColliderId,
+      colliderIds: [...body.colliderIds],
+      position: cloneVec3(body.position),
+      rotation: cloneQuat(body.rotation),
+      linearVelocity: cloneVec3(body.linearVelocity),
+      angularVelocity: cloneVec3(body.angularVelocity),
+      forceAccumulator: cloneVec3(body.forceAccumulator),
+      torqueAccumulator: cloneVec3(body.torqueAccumulator),
+      mass: body.mass,
+      inverseMass: body.inverseMass,
+      inertia: cloneVec3(body.inertia),
+      inverseInertia: cloneVec3(body.inverseInertia),
+      sleeping: body.sleeping,
+      enabled: body.enabled,
+      userData: cloneNullableValue(body.userData)
+    };
+  }
+
+  createRigidBody(options = {}) {
+    const motionType = normalizeMotionType(options.motionType);
+    const mass = resolveMass(motionType, options.mass);
+
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'rigid-body',
+      motionType,
+      shapeId: String(options.shapeId ?? '').trim() || null,
+      primaryColliderId: String(options.primaryColliderId ?? '').trim() || null,
+      colliderIds: Array.isArray(options.colliderIds) ? [...options.colliderIds] : [],
+      position: cloneVec3(options.position ?? createVec3()),
+      rotation: cloneQuat(options.rotation ?? createIdentityQuat()),
+      linearVelocity: cloneVec3(options.linearVelocity ?? createVec3()),
+      angularVelocity: cloneVec3(options.angularVelocity ?? createVec3()),
+      forceAccumulator: cloneVec3(options.forceAccumulator ?? createVec3()),
+      torqueAccumulator: cloneVec3(options.torqueAccumulator ?? createVec3()),
+      mass,
+      inverseMass: mass > 0 ? 1 / mass : 0,
+      inertia: cloneVec3(options.inertia ?? createVec3()),
+      inverseInertia: cloneVec3(options.inverseInertia ?? createVec3()),
+      sleeping: Boolean(options.sleeping),
+      enabled: options.enabled !== false,
+      userData: cloneNullableValue(options.userData)
+    });
+  }
+
+  attachCollider(bodyId, colliderId, shapeId = null) {
+    const body = this.getMutable(bodyId);
+    if (!body) {
+      return null;
+    }
+
+    if (!body.colliderIds.includes(colliderId)) {
+      body.colliderIds.push(colliderId);
+    }
+
+    if (!body.primaryColliderId) {
+      body.primaryColliderId = colliderId;
+    }
+
+    if (shapeId && !body.shapeId) {
+      body.shapeId = shapeId;
+    }
+
+    return this.cloneRecord(body);
+  }
+}
+
+__exports.BodyRegistry = BodyRegistry;
+},
+  17: function(__require, __exports) {
+class BaseRegistry {
+  constructor(prefix) {
+    this.prefix = prefix;
+    this.records = new Map();
+    this.nextId = 1;
+  }
+
+  allocateId(requestedId) {
+    const explicitId = String(requestedId ?? '').trim();
+    if (explicitId) {
+      return explicitId;
+    }
+
+    const allocatedId = `${this.prefix}-${this.nextId}`;
+    this.nextId += 1;
+    return allocatedId;
+  }
+
+  clear() {
+    this.records.clear();
+    this.nextId = 1;
+  }
+
+  count() {
+    return this.records.size;
+  }
+
+  has(id) {
+    return this.records.has(id);
+  }
+
+  get(id) {
+    const record = this.records.get(id);
+    return record ? this.cloneRecord(record) : null;
+  }
+
+  getMutable(id) {
+    return this.records.get(id) ?? null;
+  }
+
+  list() {
+    return Array.from(this.records.values(), (record) => this.cloneRecord(record));
+  }
+
+  remove(id) {
+    return this.records.delete(id);
+  }
+
+  forEachMutable(visitor) {
+    for (const record of this.records.values()) {
+      visitor(record);
+    }
+  }
+
+  store(record) {
+    this.records.set(record.id, record);
+    return this.cloneRecord(record);
+  }
+
+  cloneRecord(record) {
+    return record;
+  }
+}
+
+__exports.BaseRegistry = BaseRegistry;
+},
+  18: function(__require, __exports) {
+const { cloneQuat, createIdentityQuat } = __require(5);
+const { cloneVec3, createVec3 } = __require(6);
+const { BaseRegistry } = __require(17);
+function createLocalPose(localPose) {
+  return {
+    position: cloneVec3(localPose?.position ?? createVec3()),
+    rotation: cloneQuat(localPose?.rotation ?? createIdentityQuat())
+  };
+}
+class ColliderRegistry extends BaseRegistry {
+  constructor() {
+    super('collider');
+  }
+
+  cloneRecord(collider) {
+    return {
+      id: collider.id,
+      type: collider.type,
+      shapeId: collider.shapeId,
+      bodyId: collider.bodyId,
+      materialId: collider.materialId,
+      enabled: collider.enabled,
+      isSensor: collider.isSensor,
+      localPose: createLocalPose(collider.localPose),
+      userData: collider.userData ?? null
+    };
+  }
+
+  createCollider(options = {}) {
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'collider',
+      shapeId: String(options.shapeId ?? '').trim() || null,
+      bodyId: String(options.bodyId ?? '').trim() || null,
+      materialId: String(options.materialId ?? '').trim() || null,
+      enabled: options.enabled !== false,
+      isSensor: Boolean(options.isSensor),
+      localPose: createLocalPose(options.localPose),
+      userData: options.userData ?? null
+    });
+  }
+}
+
+__exports.ColliderRegistry = ColliderRegistry;
+},
+  19: function(__require, __exports) {
+const { BaseRegistry } = __require(17);
+function toNonNegativeNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+class MaterialRegistry extends BaseRegistry {
+  constructor() {
+    super('material');
+  }
+
+  cloneRecord(material) {
+    return {
+      id: material.id,
+      friction: material.friction,
+      restitution: material.restitution,
+      density: material.density,
+      userData: material.userData ?? null
+    };
+  }
+
+  createMaterial(options = {}) {
+    return this.store({
+      id: this.allocateId(options.id),
+      friction: toNonNegativeNumber(options.friction, 0.5),
+      restitution: toNonNegativeNumber(options.restitution, 0),
+      density: toNonNegativeNumber(options.density, 1),
+      userData: options.userData ?? null
+    });
+  }
+}
+
+__exports.MaterialRegistry = MaterialRegistry;
+},
+  20: function(__require, __exports) {
+const { cloneQuat, createIdentityQuat } = __require(5);
+const { cloneVec3, createVec3 } = __require(6);
+const { BaseRegistry } = __require(17);
+function toPositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function cloneVertices(vertices) {
+  return Array.isArray(vertices) ? vertices.map((vertex) => cloneVec3(vertex)) : [];
+}
+
+function createLocalPose(localPose) {
+  return {
+    position: cloneVec3(localPose?.position ?? createVec3()),
+    rotation: cloneQuat(localPose?.rotation ?? createIdentityQuat())
+  };
+}
+
+function cloneGeometry(shape) {
+  if (shape.type === 'box') {
+    return {
+      halfExtents: cloneVec3(shape.geometry.halfExtents)
+    };
+  }
+
+  if (shape.type === 'sphere') {
+    return {
+      radius: shape.geometry.radius
+    };
+  }
+
+  if (shape.type === 'capsule') {
+    return {
+      radius: shape.geometry.radius,
+      halfHeight: shape.geometry.halfHeight
+    };
+  }
+
+  if (shape.type === 'convex-hull') {
+    return {
+      vertices: cloneVertices(shape.geometry.vertices)
+    };
+  }
+
+  return { ...shape.geometry };
+}
+class ShapeRegistry extends BaseRegistry {
+  constructor() {
+    super('shape');
+  }
+
+  cloneRecord(shape) {
+    return {
+      id: shape.id,
+      type: shape.type,
+      geometry: cloneGeometry(shape),
+      localPose: createLocalPose(shape.localPose),
+      userData: shape.userData ?? null
+    };
+  }
+
+  createBoxShape(options = {}) {
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'box',
+      geometry: {
+        halfExtents: cloneVec3(options.halfExtents ?? createVec3(0.5, 0.5, 0.5))
+      },
+      localPose: createLocalPose(options.localPose),
+      userData: options.userData ?? null
+    });
+  }
+
+  createSphereShape(options = {}) {
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'sphere',
+      geometry: {
+        radius: toPositiveNumber(options.radius, 0.5)
+      },
+      localPose: createLocalPose(options.localPose),
+      userData: options.userData ?? null
+    });
+  }
+
+  createCapsuleShape(options = {}) {
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'capsule',
+      geometry: {
+        radius: toPositiveNumber(options.radius, 0.5),
+        halfHeight: toPositiveNumber(options.halfHeight, 0.5)
+      },
+      localPose: createLocalPose(options.localPose),
+      userData: options.userData ?? null
+    });
+  }
+
+  createConvexHullShape(options = {}) {
+    return this.store({
+      id: this.allocateId(options.id),
+      type: 'convex-hull',
+      geometry: {
+        vertices: cloneVertices(options.vertices)
+      },
+      localPose: createLocalPose(options.localPose),
+      userData: options.userData ?? null
+    });
+  }
+}
+
+
+__exports.ShapeRegistry = ShapeRegistry;
+},
+  21: function(__require, __exports) {
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -324,7 +4241,7 @@ function toString(value, fallback = '') {
 __exports.toNumber = toNumber;
 __exports.toString = toString;
 },
-  7: function(__require, __exports) {
+  22: function(__require, __exports) {
 const EXTENSION_ID = 'engine3d';
 const GANDI_EXTENSION_METADATA = {
   name: 'engine3d.meta.name',
@@ -335,71 +4252,91 @@ const GANDI_EXTENSION_METADATA = {
 };
 const GANDI_L10N = {
   en: {
-    'engine3d.meta.name': '3D Engine Kit',
-    'engine3d.meta.description': 'Shared 3D engine scaffold for Gandi and TurboWarp.'
+    'engine3d.meta.name': 'Physics Engine Kit',
+    'engine3d.meta.description': 'Shared 3D physics engine scaffold for Gandi and TurboWarp.'
   },
   'zh-cn': {
-    'engine3d.meta.name': '3D 引擎脚手架',
-    'engine3d.meta.description': '面向 Gandi 与 TurboWarp 的共享 3D 引擎扩展骨架。'
+    'engine3d.meta.name': 'Physics Engine Kit',
+    'engine3d.meta.description': 'Shared 3D physics engine scaffold for Gandi and TurboWarp.'
   }
 };
 function createExtensionInfo() {
   return {
     id: EXTENSION_ID,
-    name: '3D Engine Kit',
+    name: 'Physics Engine Kit',
     color1: '#0B84FF',
     color2: '#0861C5',
     color3: '#0A3A73',
     blocks: [
       {
-        opcode: 'resetScene',
+        opcode: 'resetWorld',
         blockType: 'command',
-        text: 'reset 3D scene'
+        text: 'reset physics world'
+      },
+      {
+        opcode: 'setGravity',
+        blockType: 'command',
+        text: 'set gravity x:[X] y:[Y] z:[Z]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: -9.81 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'createMaterial',
+        blockType: 'command',
+        text: 'create material [ID] friction:[FRICTION] restitution:[RESTITUTION] density:[DENSITY]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-1' },
+          FRICTION: { type: 'number', defaultValue: 0.5 },
+          RESTITUTION: { type: 'number', defaultValue: 0 },
+          DENSITY: { type: 'number', defaultValue: 1 }
+        }
       },
       {
         opcode: 'setCameraPosition',
         blockType: 'command',
-        text: 'set camera position x:[X] y:[Y] z:[Z]',
+        text: 'set debug camera position x:[X] y:[Y] z:[Z]',
         arguments: {
-          X: {
-            type: 'number',
-            defaultValue: 0
-          },
-          Y: {
-            type: 'number',
-            defaultValue: 0
-          },
-          Z: {
-            type: 'number',
-            defaultValue: 400
-          }
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 400 }
         }
       },
       {
-        opcode: 'addCube',
+        opcode: 'createBoxRigidBody',
         blockType: 'command',
-        text: 'add cube [ID] at x:[X] y:[Y] z:[Z] size:[SIZE]',
+        text: 'create box rigid body [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] mass:[MASS] material:[MATERIAL]',
         arguments: {
-          ID: {
-            type: 'string',
-            defaultValue: 'cube-1'
-          },
-          X: {
-            type: 'number',
-            defaultValue: 0
-          },
-          Y: {
-            type: 'number',
-            defaultValue: 0
-          },
-          Z: {
-            type: 'number',
-            defaultValue: 0
-          },
-          SIZE: {
-            type: 'number',
-            defaultValue: 100
-          }
+          ID: { type: 'string', defaultValue: 'body-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 },
+          MASS: { type: 'number', defaultValue: 1 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createStaticBoxCollider',
+        blockType: 'command',
+        text: 'create static box collider [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'collider-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: -100 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'stepWorld',
+        blockType: 'command',
+        text: 'step physics world by [SECONDS] seconds',
+        arguments: {
+          SECONDS: { type: 'number', defaultValue: 0.016666666666666666 }
         }
       },
       {
@@ -408,31 +4345,131 @@ function createExtensionInfo() {
         text: 'render debug frame'
       },
       {
-        opcode: 'sceneSummary',
+        opcode: 'worldSummary',
         blockType: 'reporter',
-        text: 'scene summary'
+        text: 'physics world summary'
       },
       {
-        opcode: 'lastFrameSummary',
+        opcode: 'rigidBodySummary',
         blockType: 'reporter',
-        text: 'last frame summary'
+        text: 'rigid body [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'colliderSummary',
+        blockType: 'reporter',
+        text: 'collider [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'collider-1:collider' }
+        }
+      },
+      {
+        opcode: 'materialSummary',
+        blockType: 'reporter',
+        text: 'material [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'queryPointBodies',
+        blockType: 'reporter',
+        text: 'bodies at point x:[X] y:[Y] z:[Z]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'queryPointColliders',
+        blockType: 'reporter',
+        text: 'colliders at point x:[X] y:[Y] z:[Z]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'queryAabbBodies',
+        blockType: 'reporter',
+        text: 'bodies in box center x:[X] y:[Y] z:[Z] half x:[HX] y:[HY] z:[HZ]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          HX: { type: 'number', defaultValue: 50 },
+          HY: { type: 'number', defaultValue: 50 },
+          HZ: { type: 'number', defaultValue: 50 }
+        }
+      },
+      {
+        opcode: 'queryAabbColliders',
+        blockType: 'reporter',
+        text: 'colliders in box center x:[X] y:[Y] z:[Z] half x:[HX] y:[HY] z:[HZ]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          HX: { type: 'number', defaultValue: 50 },
+          HY: { type: 'number', defaultValue: 50 },
+          HZ: { type: 'number', defaultValue: 50 }
+        }
+      },
+      {
+        opcode: 'debugFrameSummary',
+        blockType: 'reporter',
+        text: 'debug frame summary'
       },
       {
         opcode: 'hostSummary',
         blockType: 'reporter',
         text: 'host summary'
+      },
+      {
+        opcode: 'resetScene',
+        blockType: 'command',
+        text: 'reset 3D scene',
+        hideFromPalette: true
+      },
+      {
+        opcode: 'addCube',
+        blockType: 'command',
+        text: 'add cube [ID] at x:[X] y:[Y] z:[Z] size:[SIZE]',
+        hideFromPalette: true,
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cube-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 }
+        }
+      },
+      {
+        opcode: 'sceneSummary',
+        blockType: 'reporter',
+        text: 'scene summary',
+        hideFromPalette: true
+      },
+      {
+        opcode: 'lastFrameSummary',
+        blockType: 'reporter',
+        text: 'last frame summary',
+        hideFromPalette: true
       }
     ]
   };
 }
-
 
 __exports.createExtensionInfo = createExtensionInfo;
 __exports.EXTENSION_ID = EXTENSION_ID;
 __exports.GANDI_EXTENSION_METADATA = GANDI_EXTENSION_METADATA;
 __exports.GANDI_L10N = GANDI_L10N;
 },
-  8: function(__require, __exports) {
+  23: function(__require, __exports) {
 function createHost(displayName, runtime, renderer, sandbox) {
   return {
     id: displayName.toLowerCase().replace(/\s+/g, '-'),
