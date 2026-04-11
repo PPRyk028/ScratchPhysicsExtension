@@ -1,6 +1,5 @@
 import { cloneVec3, createVec3, lengthVec3, negateVec3, normalizeVec3, subtractVec3 } from '../math/vec3.js';
 import { getAabbOverlap } from './aabb.js';
-import { collideBoxPair } from './box-box.js';
 import { buildConvexContactManifold, collideConvexPairWithGjkEpa } from './gjk-epa.js';
 import { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter, getSupportMappedPenetration } from './support.js';
 
@@ -280,10 +279,6 @@ function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
 function collidePair(pair, shapeA, poseA, shapeB, poseB) {
   if (!shapeA || !shapeB || !poseA || !poseB) {
     return null;
-  }
-
-  if (shapeA.type === 'box' && shapeB.type === 'box') {
-    return collideBoxPair(pair);
   }
 
   return collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) ?? collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB);

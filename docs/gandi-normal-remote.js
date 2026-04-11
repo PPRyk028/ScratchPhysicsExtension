@@ -2488,7 +2488,6 @@ __exports.collideConvexPairWithGjkEpa = collideConvexPairWithGjkEpa;
   11: function(__require, __exports) {
 const { cloneVec3, createVec3, lengthVec3, negateVec3, normalizeVec3, subtractVec3 } = __require(6);
 const { getAabbOverlap } = __require(4);
-const { collideBoxPair } = __require(9);
 const { buildConvexContactManifold, collideConvexPairWithGjkEpa } = __require(10);
 const { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter, getSupportMappedPenetration } = __require(7);
 function cloneContact(contact) {
@@ -2767,10 +2766,6 @@ function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
 function collidePair(pair, shapeA, poseA, shapeB, poseB) {
   if (!shapeA || !shapeB || !poseA || !poseB) {
     return null;
-  }
-
-  if (shapeA.type === 'box' && shapeB.type === 'box') {
-    return collideBoxPair(pair);
   }
 
   return collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) ?? collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB);
