@@ -1509,8 +1509,6 @@ __exports.crossVec3 = crossVec3;
 const { cloneQuat, createIdentityQuat, inverseRotateVec3ByQuat, multiplyQuat, rotateVec3ByQuat } = __require(5);
 const { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, maxVec3, minVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
 const SUPPORT_POLYGON_EPSILON = 1e-5;
-const SUPPORT_FACE_ALIGNMENT_THRESHOLD = 0.965;
-const SUPPORT_FACE_PROJECTION_EPSILON = 1e-3;
 
 function clampNumber(value, minValue, maxValue) {
   return Math.max(minValue, Math.min(maxValue, value));
@@ -1640,151 +1638,68 @@ function dedupeSupportPolygonPoints(points) {
   return uniquePoints;
 }
 
-function buildBoxSupportPolygon(shapeWorldPose, halfExtents, localDirection, direction) {
-  const axisWeights = [
-    Math.abs(localDirection.x),
-    Math.abs(localDirection.y),
-    Math.abs(localDirection.z)
-  ];
-  let dominantAxisIndex = 0;
-  if (axisWeights[1] > axisWeights[dominantAxisIndex]) {
-    dominantAxisIndex = 1;
-  }
-  if (axisWeights[2] > axisWeights[dominantAxisIndex]) {
-    dominantAxisIndex = 2;
-  }
+function buildExtremeVertexSupportPolygon(points, direction) {
+  const supportPoints = [];
+  let maxProjection = -Infinity;
 
-  const axisSigns = [
-    localDirection.x >= 0 ? 1 : -1,
-    localDirection.y >= 0 ? 1 : -1,
-    localDirection.z >= 0 ? 1 : -1
-  ];
-  const signs = [-1, 1];
-  const points = [];
+  for (const point of Array.isArray(points) ? points : []) {
+    const projection = dotVec3(point.worldPoint, direction);
+    if (projection > maxProjection + SUPPORT_POLYGON_EPSILON) {
+      maxProjection = projection;
+      supportPoints.length = 0;
+    }
 
-  for (const signA of signs) {
-    for (const signB of signs) {
-      const localPoint = createVec3(
-        dominantAxisIndex === 0 ? halfExtents.x * axisSigns[0] : halfExtents.x * signA,
-        dominantAxisIndex === 1 ? halfExtents.y * axisSigns[1] : halfExtents.y * (dominantAxisIndex === 0 ? signA : signB),
-        dominantAxisIndex === 2 ? halfExtents.z * axisSigns[2] : halfExtents.z * signB
-      );
-      const worldPoint = transformPointByPose(shapeWorldPose, localPoint);
-      points.push({
-        worldPoint,
-        localPoint,
-        featureId: `corner:${localPoint.x >= 0 ? '+' : '-'}${localPoint.y >= 0 ? '+' : '-'}${localPoint.z >= 0 ? '+' : '-'}`,
-        featureType: 'vertex'
-      });
+    if (projection >= maxProjection - SUPPORT_POLYGON_EPSILON) {
+      supportPoints.push(point);
     }
   }
 
-  const planeOffset = points.reduce((maxProjection, point) => Math.max(maxProjection, dotVec3(point.worldPoint, direction)), -Infinity);
-
   return {
-    points: dedupeSupportPolygonPoints(points),
-    planeOffset
+    points: dedupeSupportPolygonPoints(supportPoints),
+    planeOffset: maxProjection
   };
+}
+
+function buildBoxSupportPolygon(shapeWorldPose, halfExtents, direction) {
+  const localCorners = [
+    createVec3(-halfExtents.x, -halfExtents.y, -halfExtents.z),
+    createVec3(halfExtents.x, -halfExtents.y, -halfExtents.z),
+    createVec3(halfExtents.x, halfExtents.y, -halfExtents.z),
+    createVec3(-halfExtents.x, halfExtents.y, -halfExtents.z),
+    createVec3(-halfExtents.x, -halfExtents.y, halfExtents.z),
+    createVec3(halfExtents.x, -halfExtents.y, halfExtents.z),
+    createVec3(halfExtents.x, halfExtents.y, halfExtents.z),
+    createVec3(-halfExtents.x, halfExtents.y, halfExtents.z)
+  ];
+
+  const vertices = localCorners.map((localPoint, index) => ({
+    worldPoint: transformPointByPose(shapeWorldPose, localPoint),
+    localPoint,
+    featureId: `vertex:${index}`,
+    featureType: 'vertex'
+  }));
+
+  return buildExtremeVertexSupportPolygon(vertices, direction);
 }
 
 function buildConvexHullSupportVertexPolygon(shapeWorldPose, vertices, direction) {
-  const points = [];
-  let maxDot = -Infinity;
+  const points = Array.isArray(vertices)
+    ? vertices.map((localPoint, index) => ({
+      worldPoint: transformPointByPose(shapeWorldPose, localPoint),
+      localPoint: cloneVec3(localPoint),
+      featureId: `vertex:${index}`,
+      featureType: 'vertex'
+    }))
+    : [];
 
-  for (let index = 0; index < vertices.length; index += 1) {
-    const localPoint = vertices[index];
-    const worldPoint = transformPointByPose(shapeWorldPose, localPoint);
-    const projection = dotVec3(worldPoint, direction);
-
-    if (projection > maxDot + SUPPORT_POLYGON_EPSILON) {
-      maxDot = projection;
-      points.length = 0;
-    }
-
-    if (projection >= maxDot - SUPPORT_POLYGON_EPSILON) {
-      points.push({
-        worldPoint,
-        localPoint: cloneVec3(localPoint),
-        featureId: `vertex:${index}`,
-        featureType: 'vertex'
-      });
-    }
-  }
-
-  return {
-    points: dedupeSupportPolygonPoints(points),
-    planeOffset: maxDot
-  };
-}
-
-function buildConvexHullSupportPolygon(shapeWorldPose, geometry, direction) {
-  const vertices = Array.isArray(geometry?.vertices) ? geometry.vertices : [];
-  const fallback = buildConvexHullSupportVertexPolygon(shapeWorldPose, vertices, direction);
-  const faces = Array.isArray(geometry?.faces) ? geometry.faces : [];
-  if (faces.length === 0) {
-    return fallback;
-  }
-
-  const faceCandidates = [];
-  for (const face of faces) {
-    const boundaryIndices = Array.isArray(face.boundaryIndices) ? face.boundaryIndices : [];
-    if (boundaryIndices.length < 2) {
-      continue;
-    }
-
-    const points = boundaryIndices.map((index) => {
-      const localPoint = vertices[index];
-      return {
-        worldPoint: transformPointByPose(shapeWorldPose, localPoint),
-        localPoint: cloneVec3(localPoint),
-        featureId: `vertex:${index}`,
-        featureType: 'vertex'
-      };
-    });
-    const planeOffset = points.reduce((maxProjection, point) => Math.max(maxProjection, dotVec3(point.worldPoint, direction)), -Infinity);
-    const worldNormal = normalizeVec3(rotateVec3ByQuat(shapeWorldPose.rotation, face.normal ?? createVec3(0, 1, 0)), direction);
-    const alignment = dotVec3(worldNormal, direction);
-
-    faceCandidates.push({
-      points,
-      planeOffset,
-      alignment
-    });
-  }
-
-  const selectedFace = faceCandidates
-    .filter((candidate) =>
-      candidate.alignment >= SUPPORT_FACE_ALIGNMENT_THRESHOLD &&
-      candidate.planeOffset >= fallback.planeOffset - SUPPORT_FACE_PROJECTION_EPSILON
-    )
-    .sort((left, right) => {
-      if (right.alignment !== left.alignment) {
-        return right.alignment - left.alignment;
-      }
-
-      if (right.points.length !== left.points.length) {
-        return right.points.length - left.points.length;
-      }
-
-      return right.planeOffset - left.planeOffset;
-    })[0];
-
-  if (selectedFace) {
-    return {
-      points: dedupeSupportPolygonPoints(selectedFace.points),
-      planeOffset: selectedFace.planeOffset
-    };
-  }
-
-  return fallback;
+  return buildExtremeVertexSupportPolygon(points, direction);
 }
 function getShapeSupportPolygon(shape, worldPose, direction) {
   const shapeWorldPose = getShapeWorldPose(shape, worldPose);
   const resolvedDirection = normalizeVec3(direction, createVec3(1, 0, 0));
-  const localDirection = inverseRotateVec3ByQuat(shapeWorldPose.rotation, resolvedDirection);
 
   if (shape?.type === 'box') {
-    const result = buildBoxSupportPolygon(shapeWorldPose, shape.geometry.halfExtents, localDirection, resolvedDirection);
+    const result = buildBoxSupportPolygon(shapeWorldPose, shape.geometry.halfExtents, resolvedDirection);
     return {
       normal: resolvedDirection,
       planeOffset: result.planeOffset,
@@ -1793,7 +1708,7 @@ function getShapeSupportPolygon(shape, worldPose, direction) {
   }
 
   if (shape?.type === 'convex-hull') {
-    const result = buildConvexHullSupportPolygon(shapeWorldPose, shape.geometry ?? {}, resolvedDirection);
+    const result = buildConvexHullSupportVertexPolygon(shapeWorldPose, shape.geometry?.vertices ?? [], resolvedDirection);
     return {
       normal: resolvedDirection,
       planeOffset: result.planeOffset,
@@ -1944,6 +1859,42 @@ function cloneNullableId(value) {
   return value ? String(value) : null;
 }
 
+function shouldSwapPairOrder(options) {
+  const leftRank = motionTypeRank(canonicalMotionType(options.motionTypeA, Boolean(options.bodyAId)));
+  const rightRank = motionTypeRank(canonicalMotionType(options.motionTypeB, Boolean(options.bodyBId)));
+  if (leftRank !== rightRank) {
+    return leftRank < rightRank;
+  }
+
+  const leftColliderId = String(options.colliderAId ?? '').trim();
+  const rightColliderId = String(options.colliderBId ?? '').trim();
+  if (!leftColliderId || !rightColliderId) {
+    return false;
+  }
+
+  return leftColliderId.localeCompare(rightColliderId) > 0;
+}
+
+function swapPairSides(options) {
+  return {
+    ...options,
+    colliderAId: options.colliderBId,
+    colliderBId: options.colliderAId,
+    bodyAId: options.bodyBId,
+    bodyBId: options.bodyAId,
+    shapeAId: options.shapeBId,
+    shapeBId: options.shapeAId,
+    materialAId: options.materialBId,
+    materialBId: options.materialAId,
+    shapeAType: options.shapeBType,
+    shapeBType: options.shapeAType,
+    motionTypeA: options.motionTypeB,
+    motionTypeB: options.motionTypeA,
+    aabbA: options.aabbB,
+    aabbB: options.aabbA
+  };
+}
+
 function compareProxiesBySweepAxis(left, right) {
   if (left.aabb.min.x !== right.aabb.min.x) {
     return left.aabb.min.x - right.aabb.min.x;
@@ -1981,25 +1932,29 @@ function cloneBroadphaseProxy(proxy) {
   return createBroadphaseProxy(proxy);
 }
 function createBroadphasePair(options = {}) {
+  const canonicalOptions = shouldSwapPairOrder(options)
+    ? swapPairSides(options)
+    : options;
+
   return {
-    id: String(options.id ?? options.pairKey ?? '').trim() || createPairKey(options.colliderAId, options.colliderBId),
-    pairKey: String(options.pairKey ?? '').trim() || createPairKey(options.colliderAId, options.colliderBId),
+    id: String(canonicalOptions.id ?? canonicalOptions.pairKey ?? '').trim() || createPairKey(canonicalOptions.colliderAId, canonicalOptions.colliderBId),
+    pairKey: String(canonicalOptions.pairKey ?? '').trim() || createPairKey(canonicalOptions.colliderAId, canonicalOptions.colliderBId),
     type: 'potential-collision-pair',
-    pairKind: String(options.pairKind ?? '').trim() || 'dynamic-dynamic',
-    colliderAId: cloneNullableId(options.colliderAId),
-    colliderBId: cloneNullableId(options.colliderBId),
-    bodyAId: cloneNullableId(options.bodyAId),
-    bodyBId: cloneNullableId(options.bodyBId),
-    shapeAId: cloneNullableId(options.shapeAId),
-    shapeBId: cloneNullableId(options.shapeBId),
-    materialAId: cloneNullableId(options.materialAId),
-    materialBId: cloneNullableId(options.materialBId),
-    shapeAType: String(options.shapeAType ?? '').trim() || 'unknown',
-    shapeBType: String(options.shapeBType ?? '').trim() || 'unknown',
-    motionTypeA: canonicalMotionType(options.motionTypeA, Boolean(options.bodyAId)),
-    motionTypeB: canonicalMotionType(options.motionTypeB, Boolean(options.bodyBId)),
-    aabbA: cloneAabb(options.aabbA),
-    aabbB: cloneAabb(options.aabbB)
+    pairKind: String(canonicalOptions.pairKind ?? '').trim() || 'dynamic-dynamic',
+    colliderAId: cloneNullableId(canonicalOptions.colliderAId),
+    colliderBId: cloneNullableId(canonicalOptions.colliderBId),
+    bodyAId: cloneNullableId(canonicalOptions.bodyAId),
+    bodyBId: cloneNullableId(canonicalOptions.bodyBId),
+    shapeAId: cloneNullableId(canonicalOptions.shapeAId),
+    shapeBId: cloneNullableId(canonicalOptions.shapeBId),
+    materialAId: cloneNullableId(canonicalOptions.materialAId),
+    materialBId: cloneNullableId(canonicalOptions.materialBId),
+    shapeAType: String(canonicalOptions.shapeAType ?? '').trim() || 'unknown',
+    shapeBType: String(canonicalOptions.shapeBType ?? '').trim() || 'unknown',
+    motionTypeA: canonicalMotionType(canonicalOptions.motionTypeA, Boolean(canonicalOptions.bodyAId)),
+    motionTypeB: canonicalMotionType(canonicalOptions.motionTypeB, Boolean(canonicalOptions.bodyBId)),
+    aabbA: cloneAabb(canonicalOptions.aabbA),
+    aabbB: cloneAabb(canonicalOptions.aabbB)
   };
 }
 function cloneBroadphasePair(pair) {
@@ -2241,12 +2196,16 @@ function collideBoxPair(pair) {
 __exports.collideBoxPair = collideBoxPair;
 },
   10: function(__require, __exports) {
+const { rotateVec3ByQuat } = __require(5);
 const { addScaledVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, negateVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
-const { createTangentBasis, getShapeSupportFeature, getShapeSupportPolygon, getShapeWorldCenter } = __require(7);
+const { createTangentBasis, getShapeSupportFeature, getShapeSupportPolygon, getShapeWorldCenter, getShapeWorldPose, transformPointByPose } = __require(7);
 const GJK_MAX_ITERATIONS = 24;
 const EPA_MAX_ITERATIONS = 32;
 const EPA_TOLERANCE = 1e-4;
 const MANIFOLD_CLIP_EPSILON = 1e-5;
+const FACE_CLIP_EPSILON = 1e-4;
+const REFERENCE_FACE_SWITCH_EPSILON = 1e-3;
+const FACE_SUPPORT_PLANE_EPSILON = 0.25;
 
 function createSupportVertex(shapeA, poseA, shapeB, poseB, direction) {
   const supportFeatureA = getShapeSupportFeature(shapeA, poseA, direction);
@@ -2629,6 +2588,86 @@ function selectManifoldCandidates(candidates, normal, maxContacts = 4) {
   return selected.slice(0, maxContacts);
 }
 
+function reduceOrderedPolygonCandidates(candidates, normal, maxContacts = 4) {
+  const uniqueCandidates = dedupeCandidates(candidates);
+  if (uniqueCandidates.length <= maxContacts) {
+    return uniqueCandidates;
+  }
+
+  const basis = createTangentBasis(normal);
+  const projected = uniqueCandidates.map((candidate, index) => ({
+    index,
+    candidate,
+    u: dotVec3(candidate.position, basis.tangentA),
+    v: dotVec3(candidate.position, basis.tangentB)
+  }));
+  const centroid = projected.reduce((sum, point) => ({
+    u: sum.u + point.u,
+    v: sum.v + point.v
+  }), { u: 0, v: 0 });
+  centroid.u /= projected.length;
+  centroid.v /= projected.length;
+
+  const ordered = projected
+    .map((point) => ({
+      ...point,
+      angle: Math.atan2(point.v - centroid.v, point.u - centroid.u),
+      radiusSquared: (point.u - centroid.u) * (point.u - centroid.u) + (point.v - centroid.v) * (point.v - centroid.v)
+    }))
+    .sort((left, right) => left.angle - right.angle);
+
+  let startIndex = 0;
+  for (let index = 1; index < ordered.length; index += 1) {
+    if (ordered[index].radiusSquared > ordered[startIndex].radiusSquared + 1e-8) {
+      startIndex = index;
+      continue;
+    }
+
+    if (
+      Math.abs(ordered[index].radiusSquared - ordered[startIndex].radiusSquared) <= 1e-8 &&
+      ordered[index].candidate.penetration > ordered[startIndex].candidate.penetration
+    ) {
+      startIndex = index;
+    }
+  }
+
+  const selected = [];
+  const selectedIndices = new Set();
+  const step = ordered.length / maxContacts;
+
+  for (let slot = 0; slot < maxContacts; slot += 1) {
+    const orderedIndex = Math.floor((startIndex + slot * step) % ordered.length);
+    if (selectedIndices.has(orderedIndex)) {
+      continue;
+    }
+
+    selectedIndices.add(orderedIndex);
+    selected.push(ordered[orderedIndex].candidate);
+  }
+
+  if (selected.length < maxContacts) {
+    const remaining = ordered
+      .filter((point, index) => !selectedIndices.has(index))
+      .sort((left, right) => {
+        if (right.radiusSquared !== left.radiusSquared) {
+          return right.radiusSquared - left.radiusSquared;
+        }
+
+        return right.candidate.penetration - left.candidate.penetration;
+      });
+
+    for (const point of remaining) {
+      if (selected.length >= maxContacts) {
+        break;
+      }
+
+      selected.push(point.candidate);
+    }
+  }
+
+  return selected.slice(0, maxContacts);
+}
+
 function projectSupportPolygon(points, basis) {
   return points.map((point, index) => ({
     index,
@@ -2813,6 +2852,417 @@ function describeProjectedFeatureAtPoint(point, polygon) {
   return faceFeatureId ? `face:${faceFeatureId}` : 'feature:face';
 }
 
+function createFeaturePoint(position, featureId) {
+  return {
+    position,
+    featureId: String(featureId ?? '').trim() || 'feature:unknown'
+  };
+}
+
+function getBoxWorldAxes(pose) {
+  const rotation = pose?.rotation;
+  return [
+    normalizeVec3(rotateVec3ByQuat(rotation, createVec3(1, 0, 0)), createVec3(1, 0, 0)),
+    normalizeVec3(rotateVec3ByQuat(rotation, createVec3(0, 1, 0)), createVec3(0, 1, 0)),
+    normalizeVec3(rotateVec3ByQuat(rotation, createVec3(0, 0, 1)), createVec3(0, 0, 1))
+  ];
+}
+
+function computeProjectedBoxRadius(halfExtents, axes, direction) {
+  return (
+    Math.abs(dotVec3(direction, axes[0])) * Number(halfExtents?.x ?? 0) +
+    Math.abs(dotVec3(direction, axes[1])) * Number(halfExtents?.y ?? 0) +
+    Math.abs(dotVec3(direction, axes[2])) * Number(halfExtents?.z ?? 0)
+  );
+}
+
+function computeBoxFaceAxisNormal(shapeA, poseA, shapeB, poseB) {
+  if (shapeA?.type !== 'box' || shapeB?.type !== 'box') {
+    return null;
+  }
+
+  const worldPoseA = getShapeWorldPose(shapeA, poseA);
+  const worldPoseB = getShapeWorldPose(shapeB, poseB);
+  const axesA = getBoxWorldAxes(worldPoseA);
+  const axesB = getBoxWorldAxes(worldPoseB);
+  const centerDelta = subtractVec3(worldPoseB.position, worldPoseA.position);
+  const candidateAxes = [...axesA, ...axesB];
+
+  let bestAxis = null;
+  let bestPenetration = Infinity;
+
+  for (const axis of candidateAxes) {
+    if (lengthSquaredVec3(axis) <= 1e-12) {
+      continue;
+    }
+
+    const unitAxis = normalizeVec3(axis, createVec3(0, 1, 0));
+    const distance = dotVec3(centerDelta, unitAxis);
+    const radiusA = computeProjectedBoxRadius(shapeA.geometry?.halfExtents, axesA, unitAxis);
+    const radiusB = computeProjectedBoxRadius(shapeB.geometry?.halfExtents, axesB, unitAxis);
+    const overlap = radiusA + radiusB - Math.abs(distance);
+    if (overlap <= 0) {
+      return null;
+    }
+
+    if (overlap < bestPenetration) {
+      bestPenetration = overlap;
+      bestAxis = distance >= 0 ? unitAxis : negateVec3(unitAxis);
+    }
+  }
+
+  if (!bestAxis) {
+    return null;
+  }
+
+  return {
+    normal: bestAxis,
+    penetration: bestPenetration
+  };
+}
+
+function getBoxLocalCorners(halfExtents) {
+  return [
+    createVec3(-halfExtents.x, -halfExtents.y, -halfExtents.z),
+    createVec3(halfExtents.x, -halfExtents.y, -halfExtents.z),
+    createVec3(halfExtents.x, halfExtents.y, -halfExtents.z),
+    createVec3(-halfExtents.x, halfExtents.y, -halfExtents.z),
+    createVec3(-halfExtents.x, -halfExtents.y, halfExtents.z),
+    createVec3(halfExtents.x, -halfExtents.y, halfExtents.z),
+    createVec3(halfExtents.x, halfExtents.y, halfExtents.z),
+    createVec3(-halfExtents.x, halfExtents.y, halfExtents.z)
+  ];
+}
+
+function projectWorldFacePoints(points, normal) {
+  const basis = createTangentBasis(normal);
+  return points.map((point, index) => ({
+    index,
+    u: dotVec3(point.position, basis.tangentA),
+    v: dotVec3(point.position, basis.tangentB)
+  }));
+}
+
+function orderWorldFacePoints(points, normal) {
+  if (!Array.isArray(points) || points.length <= 2) {
+    return Array.isArray(points) ? points.slice() : [];
+  }
+
+  const projected = projectWorldFacePoints(points, normal);
+  const orderedProjected = orderProjectedPolygon(projected);
+  return orderedProjected.map((projectedPoint) => points[projectedPoint.index]);
+}
+
+function createWorldFace(id, normal, points) {
+  const orderedPoints = orderWorldFacePoints(points, normal);
+  if (orderedPoints.length === 0) {
+    return null;
+  }
+
+  const unitNormal = normalizeVec3(normal, createVec3(0, 1, 0));
+  return {
+    id: String(id ?? '').trim() || 'face:unknown',
+    normal: unitNormal,
+    planeOffset: dotVec3(unitNormal, orderedPoints[0].position),
+    points: orderedPoints
+  };
+}
+
+function flipWorldFace(face) {
+  if (!face) {
+    return null;
+  }
+
+  return createWorldFace(face.id, negateVec3(face.normal), face.points.slice().reverse());
+}
+
+function getBoxWorldFaces(shape, pose) {
+  const worldPose = getShapeWorldPose(shape, pose);
+  const localCorners = getBoxLocalCorners(shape.geometry.halfExtents);
+  const faceDefinitions = [
+    { id: 'face:x+', normal: createVec3(1, 0, 0), indices: [1, 5, 6, 2] },
+    { id: 'face:x-', normal: createVec3(-1, 0, 0), indices: [4, 0, 3, 7] },
+    { id: 'face:y+', normal: createVec3(0, 1, 0), indices: [3, 2, 6, 7] },
+    { id: 'face:y-', normal: createVec3(0, -1, 0), indices: [0, 4, 5, 1] },
+    { id: 'face:z+', normal: createVec3(0, 0, 1), indices: [4, 7, 6, 5] },
+    { id: 'face:z-', normal: createVec3(0, 0, -1), indices: [0, 1, 2, 3] }
+  ];
+
+  return faceDefinitions
+    .map((definition) => createWorldFace(
+      definition.id,
+      rotateVec3ByQuat(worldPose.rotation, definition.normal),
+      definition.indices.map((index) => createFeaturePoint(
+        transformPointByPose(worldPose, localCorners[index]),
+        `vertex:${index}`
+      ))
+    ))
+    .filter(Boolean);
+}
+
+function getConvexHullWorldFaces(shape, pose) {
+  const worldPose = getShapeWorldPose(shape, pose);
+  const localVertices = Array.isArray(shape?.geometry?.vertices) ? shape.geometry.vertices : [];
+  const faces = Array.isArray(shape?.geometry?.faces) ? shape.geometry.faces : [];
+
+  return faces
+    .map((face, faceIndex) => {
+      const boundaryIndices = Array.isArray(face.boundaryIndices) ? face.boundaryIndices : [];
+      const points = boundaryIndices
+        .map((vertexIndex) => localVertices[vertexIndex])
+        .filter(Boolean)
+        .map((localPoint, boundaryIndex) => createFeaturePoint(
+          transformPointByPose(worldPose, localPoint),
+          `vertex:${boundaryIndices[boundaryIndex]}`
+        ));
+      return createWorldFace(
+        `face:${faceIndex}`,
+        rotateVec3ByQuat(worldPose.rotation, face.normal ?? createVec3(0, 1, 0)),
+        points
+      );
+    })
+    .filter((face) => face && face.points.length >= 2);
+}
+
+function getPolygonalWorldFaces(shape, pose) {
+  if (shape?.type === 'box') {
+    return getBoxWorldFaces(shape, pose);
+  }
+
+  if (shape?.type === 'convex-hull') {
+    return getConvexHullWorldFaces(shape, pose);
+  }
+
+  return [];
+}
+
+function findBestFacingFace(faces, direction) {
+  let bestFace = null;
+  let bestAlignment = -Infinity;
+
+  for (const face of Array.isArray(faces) ? faces : []) {
+    const alignment = dotVec3(face.normal, direction);
+    if (alignment > bestAlignment) {
+      bestAlignment = alignment;
+      bestFace = face;
+    }
+  }
+
+  return bestFace ? { face: bestFace, alignment: bestAlignment } : null;
+}
+
+function isWorldFaceNearSupportPlane(face, direction, supportPlaneOffset, epsilon = FACE_SUPPORT_PLANE_EPSILON) {
+  if (!face || !Array.isArray(face.points) || face.points.length < 3) {
+    return false;
+  }
+
+  return face.points.every((point) => dotVec3(point.position, direction) >= supportPlaneOffset - epsilon);
+}
+
+function getFaceClipConfiguration(shapeA, poseA, shapeB, poseB, normal) {
+  const facesA = getPolygonalWorldFaces(shapeA, poseA);
+  const facesB = getPolygonalWorldFaces(shapeB, poseB);
+  if (facesB.length === 0) {
+    return null;
+  }
+
+  const supportA = getShapeSupportPolygon(shapeA, poseA, normal);
+  const supportB = getShapeSupportPolygon(shapeB, poseB, negateVec3(normal));
+  const bestA = findBestFacingFace(facesA, normal);
+  if (bestA?.face && isWorldFaceNearSupportPlane(bestA.face, normal, supportA.planeOffset)) {
+    const bestB = findBestFacingFace(facesB, negateVec3(bestA.face.normal));
+    if (bestB?.face && isWorldFaceNearSupportPlane(bestB.face, negateVec3(bestA.face.normal), supportB.planeOffset)) {
+      return {
+        referenceFace: bestA.face,
+        incidentFace: bestB.face
+      };
+    }
+  }
+
+  const bestB = findBestFacingFace(facesB, negateVec3(normal));
+  if (!bestB?.face || facesA.length === 0) {
+    return null;
+  }
+
+  const flippedReference = flipWorldFace(bestB.face);
+  const incident = findBestFacingFace(facesA, negateVec3(flippedReference.normal));
+  if (!isWorldFaceNearSupportPlane(bestB.face, negateVec3(normal), supportB.planeOffset)) {
+    return null;
+  }
+
+  if (!incident?.face || !isWorldFaceNearSupportPlane(incident.face, negateVec3(flippedReference.normal), supportA.planeOffset)) {
+    return null;
+  }
+
+  return {
+    referenceFace: flippedReference,
+    incidentFace: incident.face
+  };
+}
+
+function intersectSegmentWithPlane(startPoint, endPoint, startDistance, endDistance, planeTag) {
+  const denominator = startDistance - endDistance;
+  const t = Math.abs(denominator) <= 1e-12 ? 0 : startDistance / denominator;
+  return createFeaturePoint(
+    createVec3(
+      startPoint.position.x + (endPoint.position.x - startPoint.position.x) * t,
+      startPoint.position.y + (endPoint.position.y - startPoint.position.y) * t,
+      startPoint.position.z + (endPoint.position.z - startPoint.position.z) * t
+    ),
+    `${startPoint.featureId}|${endPoint.featureId}|${planeTag}`
+  );
+}
+
+function clipPolygonAgainstPlane(points, planePoint, planeNormal, planeTag) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return [];
+  }
+
+  const output = [];
+  let previousPoint = points[points.length - 1];
+  let previousDistance = dotVec3(subtractVec3(previousPoint.position, planePoint), planeNormal);
+  let previousInside = previousDistance >= -FACE_CLIP_EPSILON;
+
+  for (const currentPoint of points) {
+    const currentDistance = dotVec3(subtractVec3(currentPoint.position, planePoint), planeNormal);
+    const currentInside = currentDistance >= -FACE_CLIP_EPSILON;
+
+    if (currentInside !== previousInside) {
+      output.push(intersectSegmentWithPlane(previousPoint, currentPoint, previousDistance, currentDistance, planeTag));
+    }
+
+    if (currentInside) {
+      output.push(currentPoint);
+    }
+
+    previousPoint = currentPoint;
+    previousDistance = currentDistance;
+    previousInside = currentInside;
+  }
+
+  return output;
+}
+
+function dedupeFaceClipPoints(points) {
+  const uniquePoints = [];
+  const seen = new Set();
+
+  for (const point of points) {
+    const key = `${point.position.x.toFixed(5)}|${point.position.y.toFixed(5)}|${point.position.z.toFixed(5)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniquePoints.push(point);
+  }
+
+  return uniquePoints;
+}
+
+function computeFeaturePointCentroid(points) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return createVec3();
+  }
+
+  const centroid = points.reduce((sum, point) => createVec3(
+    sum.x + point.position.x,
+    sum.y + point.position.y,
+    sum.z + point.position.z
+  ), createVec3());
+
+  return scaleVec3(centroid, 1 / points.length);
+}
+
+function buildFaceClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
+  const configuration = getFaceClipConfiguration(shapeA, poseA, shapeB, poseB, normal);
+  if (!configuration?.referenceFace || !configuration?.incidentFace) {
+    return null;
+  }
+
+  return buildProjectedFaceManifoldCandidates(configuration.referenceFace, configuration.incidentFace);
+}
+
+function buildProjectedFaceManifoldCandidates(referenceFace, incidentFace) {
+  const referencePoints = referenceFace?.points ?? [];
+  const incidentPoints = incidentFace?.points ?? [];
+  if (referencePoints.length < 3 || incidentPoints.length < 3) {
+    return null;
+  }
+
+  const basis = createTangentBasis(referenceFace.normal);
+  const referencePolygon = projectSupportPolygon(referencePoints.map((point) => ({
+    worldPoint: point.position,
+    featureId: point.featureId
+  })), basis);
+  const incidentPolygon = projectSupportPolygon(incidentPoints.map((point) => ({
+    worldPoint: point.position,
+    featureId: point.featureId
+  })), basis);
+  const clippedPolygon = intersectSupportPolygons(referencePolygon, incidentPolygon);
+  if (clippedPolygon.length === 0) {
+    return null;
+  }
+
+  const referenceOffset = dotVec3(referenceFace.normal, referencePoints[0].position);
+  const incidentOffset = incidentPoints.reduce(
+    (maxOffset, point) => Math.max(maxOffset, dotVec3(referenceFace.normal, point.position)),
+    -Infinity
+  );
+  const separation = incidentOffset - referenceOffset;
+  if (separation > FACE_CLIP_EPSILON) {
+    return null;
+  }
+
+  const penetration = Math.max(0, -separation);
+  const candidates = clippedPolygon.map((point) => {
+    const referencePoint = addScaledVec3(
+      addScaledVec3(createVec3(), basis.tangentA, point.u),
+      basis.tangentB,
+      point.v
+    );
+    referencePoint.x += referenceFace.normal.x * referenceOffset;
+    referencePoint.y += referenceFace.normal.y * referenceOffset;
+    referencePoint.z += referenceFace.normal.z * referenceOffset;
+
+    const incidentPoint = addScaledVec3(referencePoint, referenceFace.normal, separation);
+    const referenceFeature = describeProjectedFeatureAtPoint(point, referencePolygon);
+    const incidentFeature = describeProjectedFeatureAtPoint(point, incidentPolygon);
+
+    return {
+      featureId: `${referenceFeature}|${incidentFeature}`,
+      position: createVec3(
+        (referencePoint.x + incidentPoint.x) / 2,
+        (referencePoint.y + incidentPoint.y) / 2,
+        (referencePoint.z + incidentPoint.z) / 2
+      ),
+      penetration,
+      separation
+    };
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return {
+    normal: referenceFace.normal,
+    candidates
+  };
+}
+
+function buildBoxBoxFaceManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
+  const facesA = getBoxWorldFaces(shapeA, poseA);
+  const facesB = getBoxWorldFaces(shapeB, poseB);
+  const reference = findBestFacingFace(facesA, normal)?.face ?? null;
+  const incident = findBestFacingFace(facesB, negateVec3(normal))?.face ?? null;
+  if (!reference || !incident) {
+    return null;
+  }
+
+  return buildProjectedFaceManifoldCandidates(reference, incident);
+}
+
 function intersectSupportPolygons(referencePolygon, incidentPolygon) {
   const reference = orderProjectedPolygon(referencePolygon);
   const incident = orderProjectedPolygon(incidentPolygon);
@@ -2853,7 +3303,7 @@ function intersectSupportPolygons(referencePolygon, incidentPolygon) {
   return orderProjectedPolygon(dedupeProjectedPoints(points));
 }
 
-function buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
+function buildSupportPolygonClippedCandidates(shapeA, poseA, shapeB, poseB, normal) {
   const basis = createTangentBasis(normal);
   const supportA = getShapeSupportPolygon(shapeA, poseA, normal);
   const supportB = getShapeSupportPolygon(shapeB, poseB, negateVec3(normal));
@@ -2909,13 +3359,33 @@ function buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, normal) {
 }
 function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResult) {
   if (!epaResult || epaResult.penetration <= 0) {
-    return [];
+    return {
+      normal: epaResult?.normal ?? createVec3(0, 1, 0),
+      contacts: []
+    };
   }
 
-  const clippedCandidates = buildClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, epaResult.normal)
+  const boxFaceAxis = computeBoxFaceAxisNormal(shapeA, poseA, shapeB, poseB);
+  const manifoldNormal = boxFaceAxis?.normal ?? epaResult.normal;
+  const polygonalResult = shapeA?.type === 'box' && shapeB?.type === 'box' && boxFaceAxis?.normal
+    ? (buildBoxBoxFaceManifoldCandidates(shapeA, poseA, shapeB, poseB, boxFaceAxis.normal)
+      ?? buildFaceClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal))
+    : buildFaceClippedManifoldCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal);
+  const polygonalCandidates = polygonalResult?.candidates?.filter((candidate) => candidate.penetration > 0) ?? [];
+  if (polygonalCandidates.length > 0) {
+    return {
+      normal: polygonalResult.normal,
+      contacts: reduceOrderedPolygonCandidates(polygonalCandidates, polygonalResult.normal, 4)
+    };
+  }
+
+  const clippedCandidates = buildSupportPolygonClippedCandidates(shapeA, poseA, shapeB, poseB, manifoldNormal)
     .filter((candidate) => candidate.penetration > 0);
   if (clippedCandidates.length > 0) {
-    return selectManifoldCandidates(clippedCandidates, epaResult.normal, 4);
+    return {
+      normal: manifoldNormal,
+      contacts: selectManifoldCandidates(clippedCandidates, manifoldNormal, 4)
+    };
   }
 
   const faceCandidates = collectFaceCandidates(epaResult.faceVertices ?? [], epaResult.normal);
@@ -2925,7 +3395,10 @@ function buildConvexContactManifold(shapeA, poseA, shapeB, poseB, epaResult) {
   const filteredCandidates = [...faceCandidates, ...sampledCandidates]
     .filter((candidate) => candidate.penetration >= minimumPenetration);
 
-  return selectManifoldCandidates(filteredCandidates, epaResult.normal, 4);
+  return {
+    normal: manifoldNormal,
+    contacts: selectManifoldCandidates(filteredCandidates, manifoldNormal, 4)
+  };
 }
 function runGjk(shapeA, poseA, shapeB, poseB, options = {}) {
   const maxIterations = Math.max(4, Number(options.maxIterations ?? GJK_MAX_ITERATIONS));
@@ -3295,11 +3768,13 @@ function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
     return null;
   }
 
-  const contacts = buildConvexContactManifold(shapeA, poseA, shapeB, poseB, result);
+  const manifold = buildConvexContactManifold(shapeA, poseA, shapeB, poseB, result);
+  const contacts = Array.isArray(manifold?.contacts) ? manifold.contacts : [];
+  const resolvedNormal = manifold?.normal ?? result.normal;
   if (contacts.length === 0) {
     return createSingleContactPair(pair, {
       algorithm: 'gjk-epa-manifold-v1',
-      normal: result.normal,
+      normal: resolvedNormal,
       penetration: result.penetration,
       position: result.contactPosition,
       featureId: 'gjk:contact'
@@ -3308,7 +3783,7 @@ function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
 
   return createManifoldContactPair(pair, {
     algorithm: 'gjk-epa-manifold-v1',
-    normal: result.normal,
+    normal: resolvedNormal,
     penetration: Math.max(...contacts.map((contact) => Number(contact.penetration ?? 0)), result.penetration),
     contacts
   });
@@ -4441,6 +4916,14 @@ function getRelativeAngularVelocity(bodyA, bodyB) {
 }
 
 function prepareJointContext(bodyRegistry, joint) {
+  if (joint?.type === 'hinge-joint') {
+    // Hinge angular correction impulses are accumulated in world space.
+    // Reapplying them across frames after the hinge basis rotates can oppose
+    // the motor on stale directions, so we keep hinge angular accumulation
+    // frame-local and only persist the scalar motor impulse.
+    joint.accumulatedAngularImpulse = createVec3();
+  }
+
   const bodyA = getDynamicBody(bodyRegistry, joint.bodyAId);
   const bodyB = getDynamicBody(bodyRegistry, joint.bodyBId);
   const anchorBodyA = bodyA ?? getAnyBody(bodyRegistry, joint.bodyAId);
@@ -5151,6 +5634,7 @@ function solveNormalContactConstraints(options = {}) {
     for (const manifold of manifolds) {
       const bodyA = getDynamicBody(bodyRegistry, manifold.bodyAId);
       const bodyB = getDynamicBody(bodyRegistry, manifold.bodyBId);
+      const frictionShare = 1 / Math.max(1, manifold.contacts.length);
 
       for (const contact of manifold.contacts) {
         solveNormalImpulse(
@@ -5165,7 +5649,7 @@ function solveNormalContactConstraints(options = {}) {
         );
 
         const tangentBasis = createTangentBasis(manifold.normal);
-        const maxFrictionImpulse = manifold.friction * contact.accumulatedNormalImpulse;
+        const maxFrictionImpulse = manifold.friction * contact.accumulatedNormalImpulse * frictionShare;
         const inverseMassA = computeEffectiveMass(bodyA, bodyB, contact.position, tangentBasis.tangentA);
         const inverseMassB = computeEffectiveMass(bodyA, bodyB, contact.position, tangentBasis.tangentB);
         solveTangentImpulse(bodyA, bodyB, contact, tangentBasis.tangentA, inverseMassA, maxFrictionImpulse, 'accumulatedTangentImpulseA', stats);
@@ -5627,6 +6111,16 @@ function cloneCcdEvent(event) {
 
 function cloneCcdEvents(events) {
   return Array.isArray(events) ? events.map((event) => cloneCcdEvent(event)) : [];
+}
+
+function createBodyPairKey(bodyAId, bodyBId) {
+  const left = String(bodyAId ?? '').trim();
+  const right = String(bodyBId ?? '').trim();
+  if (!left || !right) {
+    return null;
+  }
+
+  return [left, right].sort().join('|');
 }
 
 function createEmptySolverStats(iterations = 0) {
@@ -6191,11 +6685,15 @@ class PhysicsWorld {
     const sharedWorldAnchor = cloneVec3(options.worldAnchor ?? scaleVec3(addVec3(bodyA.position, bodyB.position), 0.5));
     const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
       localAnchor: options.localAnchorA,
-      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorA !== undefined
+        ? undefined
+        : (options.worldAnchorA ?? sharedWorldAnchor)
     });
     const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
       localAnchor: options.localAnchorB,
-      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorB !== undefined
+        ? undefined
+        : (options.worldAnchorB ?? sharedWorldAnchor)
     });
 
     const joint = this.jointRegistry.createPointToPointJoint({
@@ -6222,28 +6720,40 @@ class PhysicsWorld {
     const sharedWorldAxis = normalizeVec3(options.worldAxis ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
     const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
       localAnchor: options.localAnchorA,
-      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorA !== undefined
+        ? undefined
+        : (options.worldAnchorA ?? sharedWorldAnchor)
     });
     const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
       localAnchor: options.localAnchorB,
-      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorB !== undefined
+        ? undefined
+        : (options.worldAnchorB ?? sharedWorldAnchor)
     });
     const localAxisA = this.resolveBodyLocalAxis(bodyAId, {
       localAxis: options.localAxisA,
-      worldAxis: options.worldAxisA ?? sharedWorldAxis
+      worldAxis: options.localAxisA !== undefined
+        ? undefined
+        : (options.worldAxisA ?? sharedWorldAxis)
     });
     const localAxisB = this.resolveBodyLocalAxis(bodyBId, {
       localAxis: options.localAxisB,
-      worldAxis: options.worldAxisB ?? sharedWorldAxis
+      worldAxis: options.localAxisB !== undefined
+        ? undefined
+        : (options.worldAxisB ?? sharedWorldAxis)
     });
     const tangentBasis = createTangentBasis(sharedWorldAxis);
     const localReferenceA = this.resolveBodyLocalAxis(bodyAId, {
       localAxis: options.localReferenceA,
-      worldAxis: options.worldReferenceA ?? tangentBasis.tangentA
+      worldAxis: options.localReferenceA !== undefined
+        ? undefined
+        : (options.worldReferenceA ?? tangentBasis.tangentA)
     });
     const localReferenceB = this.resolveBodyLocalAxis(bodyBId, {
       localAxis: options.localReferenceB,
-      worldAxis: options.worldReferenceB ?? tangentBasis.tangentA
+      worldAxis: options.localReferenceB !== undefined
+        ? undefined
+        : (options.worldReferenceB ?? tangentBasis.tangentA)
     });
 
     const joint = this.jointRegistry.createHingeJoint({
@@ -6281,27 +6791,39 @@ class PhysicsWorld {
     );
     const localAnchorA = this.resolveBodyLocalAnchor(bodyAId, {
       localAnchor: options.localAnchorA,
-      worldAnchor: options.worldAnchorA ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorA !== undefined
+        ? undefined
+        : (options.worldAnchorA ?? sharedWorldAnchor)
     });
     const localAnchorB = this.resolveBodyLocalAnchor(bodyBId, {
       localAnchor: options.localAnchorB,
-      worldAnchor: options.worldAnchorB ?? sharedWorldAnchor
+      worldAnchor: options.localAnchorB !== undefined
+        ? undefined
+        : (options.worldAnchorB ?? sharedWorldAnchor)
     });
     const localAxisA = this.resolveBodyLocalAxis(bodyAId, {
       localAxis: options.localAxisA,
-      worldAxis: options.worldAxisA ?? sharedWorldAxis
+      worldAxis: options.localAxisA !== undefined
+        ? undefined
+        : (options.worldAxisA ?? sharedWorldAxis)
     });
     const localAxisB = this.resolveBodyLocalAxis(bodyBId, {
       localAxis: options.localAxisB,
-      worldAxis: options.worldAxisB ?? sharedWorldAxis
+      worldAxis: options.localAxisB !== undefined
+        ? undefined
+        : (options.worldAxisB ?? sharedWorldAxis)
     });
     const localReferenceA = this.resolveBodyLocalAxis(bodyAId, {
       localAxis: options.localReferenceA,
-      worldAxis: options.worldReferenceA ?? sharedWorldReference
+      worldAxis: options.localReferenceA !== undefined
+        ? undefined
+        : (options.worldReferenceA ?? sharedWorldReference)
     });
     const localReferenceB = this.resolveBodyLocalAxis(bodyBId, {
       localAxis: options.localReferenceB,
-      worldAxis: options.worldReferenceB ?? sharedWorldReference
+      worldAxis: options.localReferenceB !== undefined
+        ? undefined
+        : (options.worldReferenceB ?? sharedWorldReference)
     });
 
     const joint = this.jointRegistry.createFixedJoint({
@@ -7274,7 +7796,7 @@ class PhysicsWorld {
     });
     const jointSolverStats = solveJointConstraints({
       bodyRegistry: this.bodyRegistry,
-      joints: this.jointRegistry.list().filter((joint) => joint.enabled !== false),
+      joints: this.jointRegistry.listMutable().filter((joint) => joint.enabled !== false),
       deltaTime,
       iterations: this.solverIterations,
       baumgarte: this.solverBaumgarte,
@@ -7373,9 +7895,11 @@ class PhysicsWorld {
     const filteredPairs = [];
 
     for (const contactPair of Array.isArray(contactPairs) ? contactPairs : []) {
-      const contacts = Array.isArray(contactPair.contacts)
-        ? contactPair.contacts.filter((contact) => !this.shouldCullTransientContact(contactPair, contact))
-        : [];
+      const sourceContacts = Array.isArray(contactPair.contacts) ? contactPair.contacts : [];
+      const survivingContacts = sourceContacts.filter((contact) => !this.shouldCullTransientContact(contactPair, contact));
+      const contacts = sourceContacts.length > 1
+        ? (survivingContacts.length === 0 ? [] : sourceContacts)
+        : survivingContacts;
       if (contacts.length === 0) {
         continue;
       }
@@ -7391,9 +7915,30 @@ class PhysicsWorld {
     return filteredPairs;
   }
 
+  buildNonCollidingJointBodyPairSet() {
+    const suppressedPairs = new Set();
+
+    this.jointRegistry.forEachMutable((joint) => {
+      if (!joint || joint.enabled === false || joint.collideConnected === true) {
+        return;
+      }
+
+      const pairKey = createBodyPairKey(joint.bodyAId, joint.bodyBId);
+      if (pairKey) {
+        suppressedPairs.add(pairKey);
+      }
+    });
+
+    return suppressedPairs;
+  }
+
   buildCollisionResults() {
     const broadphaseProxies = this.buildBroadphaseProxies();
-    const broadphasePairs = buildBroadphasePairs(broadphaseProxies);
+    const suppressedJointPairs = this.buildNonCollidingJointBodyPairSet();
+    const broadphasePairs = buildBroadphasePairs(broadphaseProxies).filter((pair) => {
+      const pairKey = createBodyPairKey(pair.bodyAId, pair.bodyBId);
+      return !pairKey || !suppressedJointPairs.has(pairKey);
+    });
     const narrowphase = runNarrowphase(broadphasePairs, {
       getShape: (shapeId) => this.getShape(shapeId),
       getPose: (colliderId) => this.getColliderWorldPose(colliderId)
@@ -8430,6 +8975,10 @@ class BaseRegistry {
     return Array.from(this.records.values(), (record) => this.cloneRecord(record));
   }
 
+  listMutable() {
+    return Array.from(this.records.values());
+  }
+
   remove(id) {
     return this.records.delete(id);
   }
@@ -8591,6 +9140,7 @@ class JointRegistry extends BaseRegistry {
       type: joint.type,
       bodyAId: joint.bodyAId,
       bodyBId: joint.bodyBId,
+      collideConnected: joint.collideConnected === true,
       localAnchorA: cloneVec3(joint.localAnchorA),
       localAnchorB: cloneVec3(joint.localAnchorB),
       localAxisA: cloneVec3(joint.localAxisA),
@@ -8641,6 +9191,7 @@ class JointRegistry extends BaseRegistry {
       type: 'distance-joint',
       bodyAId: String(options.bodyAId ?? '').trim() || null,
       bodyBId: String(options.bodyBId ?? '').trim() || null,
+      collideConnected: options.collideConnected === true,
       localAnchorA,
       localAnchorB,
       localAxisA: createVec3(0, 1, 0),
@@ -8686,6 +9237,7 @@ class JointRegistry extends BaseRegistry {
       type: 'point-to-point-joint',
       bodyAId: String(options.bodyAId ?? '').trim() || null,
       bodyBId: String(options.bodyBId ?? '').trim() || null,
+      collideConnected: options.collideConnected === true,
       localAnchorA,
       localAnchorB,
       localAxisA: createVec3(0, 1, 0),
@@ -8732,6 +9284,7 @@ class JointRegistry extends BaseRegistry {
       type: 'hinge-joint',
       bodyAId: String(options.bodyAId ?? '').trim() || null,
       bodyBId: String(options.bodyBId ?? '').trim() || null,
+      collideConnected: options.collideConnected === true,
       localAnchorA,
       localAnchorB,
       localAxisA,
@@ -8779,6 +9332,7 @@ class JointRegistry extends BaseRegistry {
       type: 'fixed-joint',
       bodyAId: String(options.bodyAId ?? '').trim() || null,
       bodyBId: String(options.bodyBId ?? '').trim() || null,
+      collideConnected: options.collideConnected === true,
       localAnchorA,
       localAnchorB,
       localAxisA,
