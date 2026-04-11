@@ -1,4 +1,8 @@
-import { cloneVec3, createVec3 } from '../math/vec3.js';
+import { cloneVec3, createVec3, dotVec3, lengthSquaredVec3, subtractVec3 } from '../math/vec3.js';
+
+const CONTACT_PERSIST_DISTANCE = 1;
+const CONTACT_PERSIST_DISTANCE_SQUARED = CONTACT_PERSIST_DISTANCE * CONTACT_PERSIST_DISTANCE;
+const CONTACT_PERSIST_NORMAL_DOT = 0.9;
 
 export function cloneManifoldContact(contact) {
   return {
@@ -67,9 +71,20 @@ function findMatchingPreviousContact(previousContacts, contact) {
 
   const featureId = contact.featureId ?? contact.id;
   for (const previousContact of previousContacts) {
-    if ((previousContact.featureId ?? previousContact.id) === featureId) {
-      return previousContact;
+    if ((previousContact.featureId ?? previousContact.id) !== featureId) {
+      continue;
     }
+
+    const positionDelta = subtractVec3(previousContact.position ?? createVec3(), contact.position ?? createVec3());
+    if (lengthSquaredVec3(positionDelta) > CONTACT_PERSIST_DISTANCE_SQUARED) {
+      continue;
+    }
+
+    if (dotVec3(previousContact.normal ?? createVec3(), contact.normal ?? createVec3()) < CONTACT_PERSIST_NORMAL_DOT) {
+      continue;
+    }
+
+    return previousContact;
   }
 
   return null;

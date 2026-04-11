@@ -471,6 +471,29 @@ test('PhysicsWorld manifold cache and normal solver keep a falling box resting o
   assert.ok(Math.abs(box.angularVelocity.x) < 0.05, `expected resting angular x velocity near 0, got ${box.angularVelocity.x}`);
 });
 
+test('PhysicsWorld culls shallow separating contacts instead of keeping stale manifolds alive', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -1, z: 0 },
+    size: 2
+  });
+  world.createBoxBody({
+    id: 'lifting-box',
+    position: { x: 0, y: 0.995, z: 0 },
+    size: 2,
+    mass: 1,
+    linearVelocity: { x: 0, y: 1, z: 0 }
+  });
+
+  const collisionState = world.getCollisionState();
+
+  assert.equal(collisionState.summary.contactCount, 0);
+  assert.equal(collisionState.summary.manifoldCount, 0);
+});
+
 test('PhysicsWorld normal solver supports a simple two-box stack', () => {
   const world = new PhysicsWorld({
     fixedDeltaTime: 1 / 120,

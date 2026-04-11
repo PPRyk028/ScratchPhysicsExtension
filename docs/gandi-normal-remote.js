@@ -4113,7 +4113,10 @@ __exports.DEBUG_PRIMITIVE_TYPES = DEBUG_PRIMITIVE_TYPES;
 __exports.DEFAULT_DEBUG_COLORS = DEFAULT_DEBUG_COLORS;
 },
   14: function(__require, __exports) {
-const { cloneVec3, createVec3 } = __require(6);
+const { cloneVec3, createVec3, dotVec3, lengthSquaredVec3, subtractVec3 } = __require(6);
+const CONTACT_PERSIST_DISTANCE = 1;
+const CONTACT_PERSIST_DISTANCE_SQUARED = CONTACT_PERSIST_DISTANCE * CONTACT_PERSIST_DISTANCE;
+const CONTACT_PERSIST_NORMAL_DOT = 0.9;
 function cloneManifoldContact(contact) {
   return {
     id: contact.id,
@@ -4180,9 +4183,20 @@ function findMatchingPreviousContact(previousContacts, contact) {
 
   const featureId = contact.featureId ?? contact.id;
   for (const previousContact of previousContacts) {
-    if ((previousContact.featureId ?? previousContact.id) === featureId) {
-      return previousContact;
+    if ((previousContact.featureId ?? previousContact.id) !== featureId) {
+      continue;
     }
+
+    const positionDelta = subtractVec3(previousContact.position ?? createVec3(), contact.position ?? createVec3());
+    if (lengthSquaredVec3(positionDelta) > CONTACT_PERSIST_DISTANCE_SQUARED) {
+      continue;
+    }
+
+    if (dotVec3(previousContact.normal ?? createVec3(), contact.normal ?? createVec3()) < CONTACT_PERSIST_NORMAL_DOT) {
+      continue;
+    }
+
+    return previousContact;
   }
 
   return null;
@@ -5518,6 +5532,22 @@ function cloneCamera(camera) {
     position: cloneVec3(camera.position),
     target: cloneVec3(camera.target)
   };
+}
+
+function getBodyVelocityAtPoint(body, contactPosition) {
+  if (!body) {
+    return createVec3();
+  }
+
+  const offset = subtractVec3(contactPosition, body.position);
+  return addVec3(body.linearVelocity, crossVec3(body.angularVelocity, offset));
+}
+
+function getRelativeVelocityAtPoint(bodyA, bodyB, contactPosition) {
+  return subtractVec3(
+    getBodyVelocityAtPoint(bodyB, contactPosition),
+    getBodyVelocityAtPoint(bodyA, contactPosition)
+  );
 }
 
 function createQueryResult(type, options = {}) {
@@ -7325,6 +7355,42 @@ class PhysicsWorld {
     return broadphaseProxies;
   }
 
+  shouldCullTransientContact(contactPair, contact) {
+    const penetration = Number(contact?.penetration ?? contactPair?.penetration ?? 0);
+    const transientPenetration = Math.max(Number(this.allowedPenetration ?? 0.01) * 0.6, 0.004);
+    if (penetration > transientPenetration) {
+      return false;
+    }
+
+    const bodyA = contactPair?.bodyAId ? this.getBody(contactPair.bodyAId) : null;
+    const bodyB = contactPair?.bodyBId ? this.getBody(contactPair.bodyBId) : null;
+    const relativeVelocity = getRelativeVelocityAtPoint(bodyA, bodyB, contact.position ?? createVec3());
+    const relativeNormalVelocity = dotVec3(relativeVelocity, contactPair?.normal ?? createVec3(0, 1, 0));
+    return relativeNormalVelocity > 0.05;
+  }
+
+  filterTransientContactPairs(contactPairs) {
+    const filteredPairs = [];
+
+    for (const contactPair of Array.isArray(contactPairs) ? contactPairs : []) {
+      const contacts = Array.isArray(contactPair.contacts)
+        ? contactPair.contacts.filter((contact) => !this.shouldCullTransientContact(contactPair, contact))
+        : [];
+      if (contacts.length === 0) {
+        continue;
+      }
+
+      filteredPairs.push(cloneContactPair({
+        ...contactPair,
+        contactCount: contacts.length,
+        contacts,
+        penetration: Math.max(...contacts.map((contact) => Number(contact.penetration ?? 0)), Number(contactPair.penetration ?? 0))
+      }));
+    }
+
+    return filteredPairs;
+  }
+
   buildCollisionResults() {
     const broadphaseProxies = this.buildBroadphaseProxies();
     const broadphasePairs = buildBroadphasePairs(broadphaseProxies);
@@ -7332,7 +7398,7 @@ class PhysicsWorld {
       getShape: (shapeId) => this.getShape(shapeId),
       getPose: (colliderId) => this.getColliderWorldPose(colliderId)
     });
-    const contactPairs = narrowphase.contactPairs.map((contactPair) => {
+    const contactPairs = this.filterTransientContactPairs(narrowphase.contactPairs.map((contactPair) => {
       const materialA = this.getEffectiveMaterialForCollider(contactPair.colliderAId);
       const materialB = this.getEffectiveMaterialForCollider(contactPair.colliderBId);
       const materialProperties = combineMaterialProperties(materialA, materialB);
@@ -7341,7 +7407,7 @@ class PhysicsWorld {
         ...contactPair,
         ...materialProperties
       });
-    });
+    }));
 
     return {
       broadphaseProxies,

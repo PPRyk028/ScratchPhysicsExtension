@@ -95,6 +95,22 @@ function cloneCamera(camera) {
   };
 }
 
+function getBodyVelocityAtPoint(body, contactPosition) {
+  if (!body) {
+    return createVec3();
+  }
+
+  const offset = subtractVec3(contactPosition, body.position);
+  return addVec3(body.linearVelocity, crossVec3(body.angularVelocity, offset));
+}
+
+function getRelativeVelocityAtPoint(bodyA, bodyB, contactPosition) {
+  return subtractVec3(
+    getBodyVelocityAtPoint(bodyB, contactPosition),
+    getBodyVelocityAtPoint(bodyA, contactPosition)
+  );
+}
+
 function createQueryResult(type, options = {}) {
   return {
     type,
@@ -1901,6 +1917,42 @@ export class PhysicsWorld {
     return broadphaseProxies;
   }
 
+  shouldCullTransientContact(contactPair, contact) {
+    const penetration = Number(contact?.penetration ?? contactPair?.penetration ?? 0);
+    const transientPenetration = Math.max(Number(this.allowedPenetration ?? 0.01) * 0.6, 0.004);
+    if (penetration > transientPenetration) {
+      return false;
+    }
+
+    const bodyA = contactPair?.bodyAId ? this.getBody(contactPair.bodyAId) : null;
+    const bodyB = contactPair?.bodyBId ? this.getBody(contactPair.bodyBId) : null;
+    const relativeVelocity = getRelativeVelocityAtPoint(bodyA, bodyB, contact.position ?? createVec3());
+    const relativeNormalVelocity = dotVec3(relativeVelocity, contactPair?.normal ?? createVec3(0, 1, 0));
+    return relativeNormalVelocity > 0.05;
+  }
+
+  filterTransientContactPairs(contactPairs) {
+    const filteredPairs = [];
+
+    for (const contactPair of Array.isArray(contactPairs) ? contactPairs : []) {
+      const contacts = Array.isArray(contactPair.contacts)
+        ? contactPair.contacts.filter((contact) => !this.shouldCullTransientContact(contactPair, contact))
+        : [];
+      if (contacts.length === 0) {
+        continue;
+      }
+
+      filteredPairs.push(cloneContactPair({
+        ...contactPair,
+        contactCount: contacts.length,
+        contacts,
+        penetration: Math.max(...contacts.map((contact) => Number(contact.penetration ?? 0)), Number(contactPair.penetration ?? 0))
+      }));
+    }
+
+    return filteredPairs;
+  }
+
   buildCollisionResults() {
     const broadphaseProxies = this.buildBroadphaseProxies();
     const broadphasePairs = buildBroadphasePairs(broadphaseProxies);
@@ -1908,7 +1960,7 @@ export class PhysicsWorld {
       getShape: (shapeId) => this.getShape(shapeId),
       getPose: (colliderId) => this.getColliderWorldPose(colliderId)
     });
-    const contactPairs = narrowphase.contactPairs.map((contactPair) => {
+    const contactPairs = this.filterTransientContactPairs(narrowphase.contactPairs.map((contactPair) => {
       const materialA = this.getEffectiveMaterialForCollider(contactPair.colliderAId);
       const materialB = this.getEffectiveMaterialForCollider(contactPair.colliderBId);
       const materialProperties = combineMaterialProperties(materialA, materialB);
@@ -1917,7 +1969,7 @@ export class PhysicsWorld {
         ...contactPair,
         ...materialProperties
       });
-    });
+    }));
 
     return {
       broadphaseProxies,
