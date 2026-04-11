@@ -1,4 +1,4 @@
-import { combineAabbs, computeShapeWorldAabb, createAabbFromCenterHalfExtents, expandAabb, intersectRayAabb, testAabbOverlap } from './aabb.js';
+import { combineAabbs, computeShapeWorldAabb, createAabbFromCenterHalfExtents, intersectRayAabb, testAabbOverlap } from './aabb.js';
 import { runEpa, runGjk } from './gjk-epa.js';
 import { getClosestPointOnSegment, getShapeWorldPose } from './support.js';
 import { cloneQuat, createIdentityQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } from '../math/quat.js';
@@ -397,20 +397,31 @@ function raycastCapsule(shape, worldPose, origin, direction, maxDistance) {
   return bestHit;
 }
 
-function raycastConvexHullFallback(shape, worldPose, origin, direction, maxDistance) {
-  const aabb = computeShapeWorldAabb(shape, worldPose);
-  const hit = intersectRayAabb(origin, direction, maxDistance, aabb);
-  if (!hit) {
+function raycastSupportMappedShape(shape, worldPose, origin, direction, maxDistance) {
+  const toiHit = castConvexShapesWithToi({
+    queryShape: createCastShape('sphere', 0),
+    targetShape: shape,
+    targetPose: worldPose,
+    origin,
+    rotation: createIdentityQuat(),
+    direction,
+    maxDistance,
+    distanceTolerance: Math.max(1e-6, maxDistance / 262144),
+    maxDepth: 26
+  });
+
+  if (!toiHit) {
     return null;
   }
 
+  const point = addScaledVec3(origin, direction, toiHit.distance);
   return createShapeHit({
-    distance: hit.distance,
-    point: hit.point,
-    normal: hit.normal,
-    sweepPosition: addScaledVec3(origin, direction, hit.distance),
-    algorithm: 'convex-aabb-raycast-v1',
-    featureId: `aabb:${hit.axis}`
+    distance: toiHit.distance,
+    point,
+    normal: toiHit.normal,
+    sweepPosition: point,
+    algorithm: 'convex-raycast-v1',
+    featureId: 'gjk-epa:ray'
   });
 }
 
@@ -441,44 +452,10 @@ export function raycastShape(options = {}) {
   }
 
   if (shape.type === 'convex-hull') {
-    return raycastConvexHullFallback(shape, worldPose, origin, direction, maxDistance);
+    return raycastSupportMappedShape(shape, worldPose, origin, direction, maxDistance);
   }
 
   return null;
-}
-
-function createInflatedBoxShape(shape, inflationRadius) {
-  return {
-    ...shape,
-    geometry: {
-      ...shape.geometry,
-      halfExtents: createVec3(
-        Number(shape.geometry.halfExtents.x ?? 0) + inflationRadius,
-        Number(shape.geometry.halfExtents.y ?? 0) + inflationRadius,
-        Number(shape.geometry.halfExtents.z ?? 0) + inflationRadius
-      )
-    }
-  };
-}
-
-function createInflatedSphereShape(shape, inflationRadius) {
-  return {
-    ...shape,
-    geometry: {
-      ...shape.geometry,
-      radius: Number(shape.geometry.radius ?? 0) + inflationRadius
-    }
-  };
-}
-
-function createInflatedCapsuleShape(shape, inflationRadius) {
-  return {
-    ...shape,
-    geometry: {
-      ...shape.geometry,
-      radius: Number(shape.geometry.radius ?? 0) + inflationRadius
-    }
-  };
 }
 
 function sphereCastShapeHit(options = {}) {
@@ -515,72 +492,10 @@ function sphereCastShapeHit(options = {}) {
         sampleId: options.sampleId ?? 'center'
       });
     }
-  }
 
-  let targetHit = null;
-  if (shape.type === 'box') {
-    targetHit = raycastBox(createInflatedBoxShape(shape, radius), worldPose, origin, direction, maxDistance);
-  } else if (shape.type === 'sphere') {
-    const sphereCenter = getShapeWorldPose(shape, worldPose).position;
-    targetHit = raycastSphere(origin, direction, maxDistance, sphereCenter, Number(shape.geometry.radius ?? 0) + radius);
-  } else if (shape.type === 'capsule') {
-    targetHit = raycastCapsule(createInflatedCapsuleShape(shape, radius), worldPose, origin, direction, maxDistance);
-  } else if (shape.type === 'convex-hull') {
-    const expandedAabb = expandAabb(computeShapeWorldAabb(shape, worldPose), createVec3(radius, radius, radius));
-    const aabbHit = intersectRayAabb(origin, direction, maxDistance, expandedAabb);
-    if (aabbHit) {
-      targetHit = createShapeHit({
-        distance: aabbHit.distance,
-        point: aabbHit.point,
-        normal: aabbHit.normal,
-        sweepPosition: addScaledVec3(origin, direction, aabbHit.distance),
-        algorithm: 'convex-aabb-sphere-cast-v1',
-        featureId: `aabb:${aabbHit.axis}`
-      });
-    }
-  }
-
-  if (!targetHit) {
     return null;
   }
-
-  const sweepPosition = cloneVec3(targetHit.sweepPosition ?? addScaledVec3(origin, direction, targetHit.distance));
-  return createShapeHit({
-    distance: targetHit.distance,
-    point: addScaledVec3(sweepPosition, targetHit.normal, -radius),
-    normal: targetHit.normal,
-    sweepPosition,
-    algorithm: targetHit.algorithm,
-    featureId: targetHit.featureId,
-    sampleId: options.sampleId ?? 'center'
-  });
-}
-
-function getCapsuleCastSamples(origin, halfHeight, rotation) {
-  if (halfHeight <= 1e-8) {
-    return [
-      {
-        id: 'center',
-        position: cloneVec3(origin)
-      }
-    ];
-  }
-
-  const axisOffset = rotateVec3ByQuat(rotation ?? createIdentityQuat(), createVec3(0, halfHeight, 0));
-  return [
-    {
-      id: 'center',
-      position: cloneVec3(origin)
-    },
-    {
-      id: 'top',
-      position: addVec3(origin, axisOffset)
-    },
-    {
-      id: 'bottom',
-      position: addScaledVec3(origin, axisOffset, -1)
-    }
-  ];
+  return null;
 }
 
 export function sphereCastShape(options = {}) {
@@ -621,47 +536,10 @@ export function capsuleCastShape(options = {}) {
         sampleId: 'capsule'
       });
     }
-  }
 
-  const sampleOrigins = getCapsuleCastSamples(origin, halfHeight, rotation);
-  let bestHit = null;
-
-  for (const sample of sampleOrigins) {
-    const sampleHit = sphereCastShapeHit({
-      ...options,
-      origin: sample.position,
-      direction,
-      maxDistance,
-      radius,
-      sampleId: sample.id
-    });
-
-    if (!sampleHit) {
-      continue;
-    }
-
-    if (!bestHit || sampleHit.distance < bestHit.distance - 1e-8) {
-      bestHit = {
-        ...sampleHit,
-        sweepPosition: addScaledVec3(origin, direction, sampleHit.distance),
-        sampleId: sample.id
-      };
-    }
-  }
-
-  if (!bestHit) {
     return null;
   }
-
-  return createShapeHit({
-    distance: bestHit.distance,
-    point: bestHit.point,
-    normal: bestHit.normal,
-    sweepPosition: bestHit.sweepPosition,
-    algorithm: `capsule-cast-fallback-v1:${bestHit.algorithm}`,
-    featureId: bestHit.featureId,
-    sampleId: bestHit.sampleId
-  });
+  return null;
 }
 
 export function computeSweptShapeAabb(options = {}) {

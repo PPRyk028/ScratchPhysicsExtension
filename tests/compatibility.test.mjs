@@ -17,8 +17,11 @@ const REQUIRED_OPCODES = [
   'setGravity',
   'createMaterial',
   'setCameraPosition',
+  'setCameraTarget',
   'createBoxRigidBody',
+  'createConvexHullRigidBody',
   'createStaticBoxCollider',
+  'createStaticConvexHullCollider',
   'createDistanceJoint',
   'createPointToPointJoint',
   'createHingeJoint',
@@ -165,9 +168,12 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.createMaterial({ ID: 'ice', FRICTION: 0.05, RESTITUTION: 0.2, DENSITY: 0.9 });
   extension.setGravity({ X: 0, Y: -10, Z: 0 });
   extension.setCameraPosition({ X: 10, Y: 20, Z: 300 });
+  extension.setCameraTarget({ X: 10, Y: 0, Z: 0 });
   extension.createStaticBoxCollider({ ID: 'floor', X: 0, Y: -10, Z: 0, SIZE: 100, MATERIAL: 'ice' });
+  extension.createStaticConvexHullCollider({ ID: 'ramp', VERTICES: '-10 -10 -10; 10 -10 -10; 10 -10 10; -10 -10 10; 0 10 0', X: 0, Y: -20, Z: 40, MATERIAL: 'ice' });
   extension.createBoxRigidBody({ ID: 'probe', X: 5, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
   extension.createBoxRigidBody({ ID: 'probe-2', X: 40, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
+  extension.createConvexHullRigidBody({ ID: 'probe-hull', VERTICES: '-8 -8 -8; 8 -8 -8; 8 -8 8; -8 -8 8; 0 8 0', X: -20, Y: 30, Z: 0, MASS: 1.5, MATERIAL: 'ice' });
   extension.createDistanceJoint({ ID: 'joint-1', BODY_A: 'probe', BODY_B: 'probe-2', LENGTH: 35 });
   extension.createPointToPointJoint({ ID: 'joint-2', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7 });
   extension.createHingeJoint({ ID: 'joint-3', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7, AX: 0, AY: 1, AZ: 0 });
@@ -182,12 +188,12 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.raycast({ X: 0, Y: 120, Z: 0, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
   extension.showDebugOverlay();
   assert.match(extension.queryPointBodies({ X: 5, Y: 6, Z: 7 }), /1 bodies/);
-  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /3 colliders/);
+  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /5 colliders/);
   extension.stepWorld({ SECONDS: 1 / 60 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
 
-  assert.match(extension.worldSummary(), /2 bodies/);
+  assert.match(extension.worldSummary(), /3 bodies/);
   assert.match(extension.jointSummary({ ID: 'joint-1' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'joint-3' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'joint-4' }), /break force:/);
@@ -240,9 +246,12 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   assert.equal(info.id, 'engine3d');
   assertHasRequiredOpcodes(info);
   extension.resetWorld();
+  extension.setCameraTarget({ X: 0, Y: -5, Z: 0 });
   extension.createStaticBoxCollider({ ID: 'remote-floor', X: 0, Y: -5, Z: 0, SIZE: 10, MATERIAL: 'material-default' });
+  extension.createStaticConvexHullCollider({ ID: 'remote-ramp', VERTICES: '-4 -4 -4; 4 -4 -4; 4 -4 4; -4 -4 4; 0 4 0', X: 0, Y: -12, Z: 15, MATERIAL: 'material-default' });
   extension.createBoxRigidBody({ ID: 'remote-probe', X: 0, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
   extension.createBoxRigidBody({ ID: 'remote-probe-2', X: 20, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
+  extension.createConvexHullRigidBody({ ID: 'remote-hull', VERTICES: '-3 -3 -3; 3 -3 -3; 3 -3 3; -3 -3 3; 0 3 0', X: -15, Y: 6, Z: 0, MASS: 1, MATERIAL: 'material-default' });
   extension.createDistanceJoint({ ID: 'remote-joint', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', LENGTH: 20 });
   extension.createPointToPointJoint({ ID: 'remote-ball', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0 });
   extension.createHingeJoint({ ID: 'remote-hinge', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0, AX: 0, AY: 1, AZ: 0 });
@@ -259,7 +268,7 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
 
-  assert.match(extension.worldSummary(), /2 bodies/);
+  assert.match(extension.worldSummary(), /3 bodies/);
   assert.match(extension.jointSummary({ ID: 'remote-joint' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'remote-hinge' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'remote-fixed' }), /break force:/);
@@ -288,9 +297,12 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.createMaterial({ ID: 'rubber', FRICTION: 1, RESTITUTION: 0.8, DENSITY: 1.2 });
   extension.setGravity({ X: 0, Y: -12, Z: 0 });
   extension.setCameraPosition({ X: -12, Y: 0, Z: 512 });
+  extension.setCameraTarget({ X: 0, Y: 20, Z: 0 });
   extension.createStaticBoxCollider({ ID: 'gandi-floor', X: 1, Y: -10, Z: 3, SIZE: 64, MATERIAL: 'rubber' });
+  extension.createStaticConvexHullCollider({ ID: 'gandi-ramp', VERTICES: '-12 -12 -12; 12 -12 -12; 12 -12 12; -12 -12 12; 0 12 0', X: 1, Y: -24, Z: 28, MATERIAL: 'rubber' });
   extension.createBoxRigidBody({ ID: 'gandi-probe', X: 1, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
   extension.createBoxRigidBody({ ID: 'gandi-link', X: 40, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
+  extension.createConvexHullRigidBody({ ID: 'gandi-hull', VERTICES: '-10 -10 -10; 10 -10 -10; 10 -10 10; -10 -10 10; 0 10 0', X: -30, Y: 20, Z: 3, MASS: 2, MATERIAL: 'rubber' });
   extension.createDistanceJoint({ ID: 'gandi-joint', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', LENGTH: 40 });
   extension.createPointToPointJoint({ ID: 'gandi-ball', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3 });
   extension.createHingeJoint({ ID: 'gandi-hinge', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3, AX: 0, AY: 1, AZ: 0 });
@@ -303,13 +315,13 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.sphereCast({ X: 1, Y: 80, Z: 3, RADIUS: 10, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
   extension.capsuleCast({ X: 1, Y: 80, Z: 3, RADIUS: 8, HALF_HEIGHT: 16, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
   extension.raycast({ X: 1, Y: 80, Z: 3, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
-  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 60, HY: 60, HZ: 60 }), /3 colliders/);
+  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 60, HY: 60, HZ: 60 }), /5 colliders/);
   extension.showDebugOverlay();
   extension.stepWorld({ SECONDS: 1 / 30 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
 
-  assert.match(extension.worldSummary(), /2 bodies/);
+  assert.match(extension.worldSummary(), /3 bodies/);
   assert.match(extension.rigidBodySummary({ ID: 'gandi-probe' }), /gandi-probe/);
   assert.match(extension.materialSummary({ ID: 'rubber' }), /restitution:0.8/);
   assert.match(extension.jointSummary({ ID: 'gandi-joint' }), /distance-joint/);

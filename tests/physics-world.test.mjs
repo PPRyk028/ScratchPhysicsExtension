@@ -126,6 +126,20 @@ test('PhysicsWorld debug frames expose the shared primitive schema', () => {
   assert.equal(frame.primitives[0].source.materialId, 'material-default');
 });
 
+test('PhysicsWorld debug camera preserves independent target state', () => {
+  const world = new PhysicsWorld();
+  world.setDebugCameraPosition({ x: 120, y: 60, z: 320 });
+  world.setDebugCameraTarget({ x: 10, y: 20, z: 30 });
+
+  const snapshot = world.getSnapshot();
+  const frame = world.buildDebugFrame();
+
+  assert.deepEqual(snapshot.debugCamera.position, { x: 120, y: 60, z: 320 });
+  assert.deepEqual(snapshot.debugCamera.target, { x: 10, y: 20, z: 30 });
+  assert.deepEqual(frame.camera.position, { x: 120, y: 60, z: 320 });
+  assert.deepEqual(frame.camera.target, { x: 10, y: 20, z: 30 });
+});
+
 test('PhysicsWorld generates broadphase pairs and box-box convex manifold contact pairs', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({
@@ -428,6 +442,50 @@ test('PhysicsWorld normal solver supports a simple two-box stack', () => {
   assert.ok(collisionState.summary.contactCount >= 2);
 });
 
+test('PhysicsWorld offset box stacking stays on the convex manifold path', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 60,
+    solverIterations: 12
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -50, z: 0 },
+    size: 100
+  });
+  world.createBoxBody({
+    id: 'bottom',
+    position: { x: 0, y: 40, z: 0 },
+    size: 40,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'top',
+    position: { x: 30, y: 120, z: 0 },
+    size: 40,
+    mass: 1
+  });
+
+  let observedAabbFallback = false;
+  let observedConvexStackContact = false;
+  for (let stepIndex = 0; stepIndex < 240; stepIndex += 1) {
+    world.step(1 / 60);
+    const collisionState = world.getCollisionState();
+    if ((collisionState.summary.algorithms['support-mapped-aabb-v1'] ?? 0) > 0) {
+      observedAabbFallback = true;
+      break;
+    }
+
+    const stackedPair = collisionState.contactPairs.find((pair) => pair.pairKey === 'bottom:collider|top:collider');
+    if (stackedPair) {
+      observedConvexStackContact = true;
+      assert.equal(stackedPair.algorithm, 'gjk-epa-manifold-v1');
+    }
+  }
+
+  assert.equal(observedAabbFallback, false);
+  assert.equal(observedConvexStackContact, true);
+});
+
 test('PhysicsWorld off-center box impact generates angular velocity', () => {
   const world = new PhysicsWorld({
     fixedDeltaTime: 1 / 120,
@@ -555,6 +613,37 @@ test('PhysicsWorld raycast returns the nearest hit collider and stores the query
   assert.equal(snapshot.lastRaycast.colliderId, 'near-floor:collider');
 });
 
+test('PhysicsWorld convex hull raycast uses the support-mapped query path', () => {
+  const world = new PhysicsWorld();
+  world.createConvexHullBody({
+    id: 'hull',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    vertices: [
+      { x: -1, y: -1, z: -1 },
+      { x: 1, y: -1, z: -1 },
+      { x: 1, y: -1, z: 1 },
+      { x: -1, y: -1, z: 1 },
+      { x: 0, y: 1, z: 0 }
+    ]
+  });
+
+  const result = world.raycast({
+    origin: { x: 0, y: 5, z: 0 },
+    direction: { x: 0, y: -1, z: 0 },
+    maxDistance: 10
+  });
+  const snapshot = world.getSnapshot();
+
+  assert.equal(result.hit, true);
+  assert.equal(result.colliderId, 'hull:collider');
+  assert.equal(result.shapeType, 'convex-hull');
+  assert.equal(result.algorithm, 'convex-raycast-v1');
+  assert.ok(Math.abs(result.distance - 4) < 1e-3, `expected convex hull hit distance near 4, got ${result.distance}`);
+  assert.ok(Math.abs(result.point.y - 1) < 1e-3, `expected convex hull hit point y near 1, got ${result.point.y}`);
+  assert.equal(snapshot.lastRaycast.algorithm, 'convex-raycast-v1');
+});
+
 test('PhysicsWorld debug frame visualizes the last successful raycast', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({
@@ -672,6 +761,34 @@ test('PhysicsWorld sphere cast uses convex TOI against a convex hull target', ()
   const result = world.sphereCast({
     origin: { x: 0, y: 4, z: 0 },
     radius: 0.5,
+    direction: { x: 0, y: -1, z: 0 },
+    maxDistance: 10
+  });
+
+  assert.equal(result.hit, true);
+  assert.equal(result.algorithm, 'convex-toi-v1');
+  assert.equal(result.colliderId, 'hull:collider');
+});
+
+test('PhysicsWorld capsule cast uses convex TOI against a convex hull target', () => {
+  const world = new PhysicsWorld();
+  world.createConvexHullBody({
+    id: 'hull',
+    motionType: 'static',
+    position: { x: 0, y: 0, z: 0 },
+    vertices: [
+      { x: -1, y: -1, z: -1 },
+      { x: 1, y: -1, z: -1 },
+      { x: 1, y: -1, z: 1 },
+      { x: -1, y: -1, z: 1 },
+      { x: 0, y: 1, z: 0 }
+    ]
+  });
+
+  const result = world.capsuleCast({
+    origin: { x: 0, y: 4, z: 0 },
+    radius: 0.5,
+    halfHeight: 1,
     direction: { x: 0, y: -1, z: 0 },
     maxDistance: 10
   });

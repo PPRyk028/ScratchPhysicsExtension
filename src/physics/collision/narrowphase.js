@@ -1,7 +1,7 @@
 import { cloneVec3, createVec3, lengthVec3, negateVec3, normalizeVec3, subtractVec3 } from '../math/vec3.js';
 import { getAabbOverlap } from './aabb.js';
 import { buildConvexContactManifold, collideConvexPairWithGjkEpa } from './gjk-epa.js';
-import { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter, getSupportMappedPenetration } from './support.js';
+import { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter } from './support.js';
 
 function cloneContact(contact) {
   return {
@@ -220,33 +220,6 @@ function collideCapsuleSpherePair(pair, capsuleShape, capsulePose, sphereShape, 
   });
 }
 
-function collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB) {
-  if (!isSupportMappedShape(shapeA.type) || !isSupportMappedShape(shapeB.type)) {
-    return null;
-  }
-
-  const fallback = chooseDefaultNormal(pair);
-  const support = getSupportMappedPenetration(shapeA, poseA, shapeB, poseB, fallback.normal);
-  const penetration = Math.max(fallback.penetration, support.penetration);
-  if (penetration <= 0) {
-    return null;
-  }
-
-  const contactPosition = createVec3(
-    (support.supportA.x + support.supportB.x) / 2,
-    (support.supportA.y + support.supportB.y) / 2,
-    (support.supportA.z + support.supportB.z) / 2
-  );
-
-  return createSingleContactPair(pair, {
-    algorithm: 'support-mapped-aabb-v1',
-    normal: fallback.normal,
-    penetration,
-    position: contactPosition,
-    featureId: `support:${fallback.axis}`
-  });
-}
-
 function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
   if (!isSupportMappedShape(shapeA.type) || !isSupportMappedShape(shapeB.type)) {
     return null;
@@ -281,7 +254,7 @@ function collidePair(pair, shapeA, poseA, shapeB, poseB) {
     return null;
   }
 
-  return collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) ?? collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB);
+  return collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB);
 }
 
 export function createContactPair(options = {}) {

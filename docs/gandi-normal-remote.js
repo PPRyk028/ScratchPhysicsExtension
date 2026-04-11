@@ -50,6 +50,14 @@ class Base3DExtension {
     );
   }
 
+  setCameraTarget(args) {
+    this.engine.setCameraTarget(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z)
+    );
+  }
+
   setGravity(args) {
     this.engine.setGravity(
       toNumber(args.X),
@@ -96,6 +104,29 @@ class Base3DExtension {
       toNumber(args.Y),
       toNumber(args.Z),
       toNumber(args.SIZE, 100),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  createConvexHullRigidBody(args) {
+    this.engine.createConvexHullRigidBody(
+      toString(args.ID, 'body'),
+      toString(args.VERTICES, ''),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.MASS, 1),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  createStaticConvexHullCollider(args) {
+    this.engine.createStaticConvexHullCollider(
+      toString(args.ID, 'collider'),
+      toString(args.VERTICES, ''),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
       toString(args.MATERIAL, '')
     );
   }
@@ -365,8 +396,46 @@ function radiansToDegrees(value) {
   return Number(value) * (180 / Math.PI);
 }
 
+function createDefaultConvexHullVertices() {
+  return [
+    createVec3(-50, -50, -50),
+    createVec3(50, -50, -50),
+    createVec3(50, -50, 50),
+    createVec3(-50, -50, 50),
+    createVec3(0, 50, 0)
+  ];
+}
+
+function parseConvexHullVertices(verticesText) {
+  const parsedText = String(verticesText ?? '').trim();
+  if (!parsedText) {
+    return createDefaultConvexHullVertices();
+  }
+
+  const records = parsedText
+    .split(/[\n;|]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  const vertices = [];
+  for (const record of records) {
+    const parts = record
+      .split(/[\s,]+/)
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+
+    if (parts.length < 3) {
+      continue;
+    }
+
+    vertices.push(createVec3(parts[0], parts[1], parts[2]));
+  }
+
+  return vertices.length >= 4 ? vertices : createDefaultConvexHullVertices();
+}
+
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} -> ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -396,6 +465,11 @@ class Engine3D {
   setCameraPosition(x, y, z) {
     this.world.setDebugCameraPosition(createVec3(x, y, z));
     this.hostBridge.log(`Camera moved to ${x}, ${y}, ${z}`);
+  }
+
+  setCameraTarget(x, y, z) {
+    this.world.setDebugCameraTarget(createVec3(x, y, z));
+    this.hostBridge.log(`Camera target set to ${x}, ${y}, ${z}`);
   }
 
   setGravity(x, y, z) {
@@ -448,6 +522,33 @@ class Engine3D {
     });
 
     this.hostBridge.log(`Static collider ${collider.id} registered`);
+    return collider;
+  }
+
+  createConvexHullRigidBody(id, verticesText, x, y, z, mass, materialId = '') {
+    const vertices = parseConvexHullVertices(verticesText);
+    const { body, collider } = this.world.createConvexHullBody({
+      id,
+      position: createVec3(x, y, z),
+      vertices,
+      mass,
+      materialId
+    });
+
+    this.hostBridge.log(`Convex hull body ${body.id} registered with collider ${collider.id} and ${vertices.length} vertices`);
+    return body;
+  }
+
+  createStaticConvexHullCollider(id, verticesText, x, y, z, materialId = '') {
+    const vertices = parseConvexHullVertices(verticesText);
+    const { collider } = this.world.createStaticConvexHullCollider({
+      id,
+      position: createVec3(x, y, z),
+      vertices,
+      materialId
+    });
+
+    this.hostBridge.log(`Static convex hull collider ${collider.id} registered with ${vertices.length} vertices`);
     return collider;
   }
 
@@ -2489,7 +2590,7 @@ __exports.collideConvexPairWithGjkEpa = collideConvexPairWithGjkEpa;
 const { cloneVec3, createVec3, lengthVec3, negateVec3, normalizeVec3, subtractVec3 } = __require(6);
 const { getAabbOverlap } = __require(4);
 const { buildConvexContactManifold, collideConvexPairWithGjkEpa } = __require(10);
-const { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter, getSupportMappedPenetration } = __require(7);
+const { clampPointToAabb, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportPoint, getShapeWorldCenter } = __require(7);
 function cloneContact(contact) {
   return {
     id: contact.id,
@@ -2707,33 +2808,6 @@ function collideCapsuleSpherePair(pair, capsuleShape, capsulePose, sphereShape, 
   });
 }
 
-function collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB) {
-  if (!isSupportMappedShape(shapeA.type) || !isSupportMappedShape(shapeB.type)) {
-    return null;
-  }
-
-  const fallback = chooseDefaultNormal(pair);
-  const support = getSupportMappedPenetration(shapeA, poseA, shapeB, poseB, fallback.normal);
-  const penetration = Math.max(fallback.penetration, support.penetration);
-  if (penetration <= 0) {
-    return null;
-  }
-
-  const contactPosition = createVec3(
-    (support.supportA.x + support.supportB.x) / 2,
-    (support.supportA.y + support.supportB.y) / 2,
-    (support.supportA.z + support.supportB.z) / 2
-  );
-
-  return createSingleContactPair(pair, {
-    algorithm: 'support-mapped-aabb-v1',
-    normal: fallback.normal,
-    penetration,
-    position: contactPosition,
-    featureId: `support:${fallback.axis}`
-  });
-}
-
 function collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) {
   if (!isSupportMappedShape(shapeA.type) || !isSupportMappedShape(shapeB.type)) {
     return null;
@@ -2768,7 +2842,7 @@ function collidePair(pair, shapeA, poseA, shapeB, poseB) {
     return null;
   }
 
-  return collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB) ?? collideSupportMappedPair(pair, shapeA, poseA, shapeB, poseB);
+  return collideGjkEpaPair(pair, shapeA, poseA, shapeB, poseB);
 }
 function createContactPair(options = {}) {
   return {
@@ -2836,7 +2910,7 @@ __exports.cloneContactPair = cloneContactPair;
 __exports.runNarrowphase = runNarrowphase;
 },
   12: function(__require, __exports) {
-const { combineAabbs, computeShapeWorldAabb, createAabbFromCenterHalfExtents, expandAabb, intersectRayAabb, testAabbOverlap } = __require(4);
+const { combineAabbs, computeShapeWorldAabb, createAabbFromCenterHalfExtents, intersectRayAabb, testAabbOverlap } = __require(4);
 const { runEpa, runGjk } = __require(10);
 const { getClosestPointOnSegment, getShapeWorldPose } = __require(7);
 const { cloneQuat, createIdentityQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
@@ -3229,20 +3303,31 @@ function raycastCapsule(shape, worldPose, origin, direction, maxDistance) {
   return bestHit;
 }
 
-function raycastConvexHullFallback(shape, worldPose, origin, direction, maxDistance) {
-  const aabb = computeShapeWorldAabb(shape, worldPose);
-  const hit = intersectRayAabb(origin, direction, maxDistance, aabb);
-  if (!hit) {
+function raycastSupportMappedShape(shape, worldPose, origin, direction, maxDistance) {
+  const toiHit = castConvexShapesWithToi({
+    queryShape: createCastShape('sphere', 0),
+    targetShape: shape,
+    targetPose: worldPose,
+    origin,
+    rotation: createIdentityQuat(),
+    direction,
+    maxDistance,
+    distanceTolerance: Math.max(1e-6, maxDistance / 262144),
+    maxDepth: 26
+  });
+
+  if (!toiHit) {
     return null;
   }
 
+  const point = addScaledVec3(origin, direction, toiHit.distance);
   return createShapeHit({
-    distance: hit.distance,
-    point: hit.point,
-    normal: hit.normal,
-    sweepPosition: addScaledVec3(origin, direction, hit.distance),
-    algorithm: 'convex-aabb-raycast-v1',
-    featureId: `aabb:${hit.axis}`
+    distance: toiHit.distance,
+    point,
+    normal: toiHit.normal,
+    sweepPosition: point,
+    algorithm: 'convex-raycast-v1',
+    featureId: 'gjk-epa:ray'
   });
 }
 function raycastShape(options = {}) {
@@ -3272,44 +3357,10 @@ function raycastShape(options = {}) {
   }
 
   if (shape.type === 'convex-hull') {
-    return raycastConvexHullFallback(shape, worldPose, origin, direction, maxDistance);
+    return raycastSupportMappedShape(shape, worldPose, origin, direction, maxDistance);
   }
 
   return null;
-}
-
-function createInflatedBoxShape(shape, inflationRadius) {
-  return {
-    ...shape,
-    geometry: {
-      ...shape.geometry,
-      halfExtents: createVec3(
-        Number(shape.geometry.halfExtents.x ?? 0) + inflationRadius,
-        Number(shape.geometry.halfExtents.y ?? 0) + inflationRadius,
-        Number(shape.geometry.halfExtents.z ?? 0) + inflationRadius
-      )
-    }
-  };
-}
-
-function createInflatedSphereShape(shape, inflationRadius) {
-  return {
-    ...shape,
-    geometry: {
-      ...shape.geometry,
-      radius: Number(shape.geometry.radius ?? 0) + inflationRadius
-    }
-  };
-}
-
-function createInflatedCapsuleShape(shape, inflationRadius) {
-  return {
-    ...shape,
-    geometry: {
-      ...shape.geometry,
-      radius: Number(shape.geometry.radius ?? 0) + inflationRadius
-    }
-  };
 }
 
 function sphereCastShapeHit(options = {}) {
@@ -3346,72 +3397,10 @@ function sphereCastShapeHit(options = {}) {
         sampleId: options.sampleId ?? 'center'
       });
     }
-  }
 
-  let targetHit = null;
-  if (shape.type === 'box') {
-    targetHit = raycastBox(createInflatedBoxShape(shape, radius), worldPose, origin, direction, maxDistance);
-  } else if (shape.type === 'sphere') {
-    const sphereCenter = getShapeWorldPose(shape, worldPose).position;
-    targetHit = raycastSphere(origin, direction, maxDistance, sphereCenter, Number(shape.geometry.radius ?? 0) + radius);
-  } else if (shape.type === 'capsule') {
-    targetHit = raycastCapsule(createInflatedCapsuleShape(shape, radius), worldPose, origin, direction, maxDistance);
-  } else if (shape.type === 'convex-hull') {
-    const expandedAabb = expandAabb(computeShapeWorldAabb(shape, worldPose), createVec3(radius, radius, radius));
-    const aabbHit = intersectRayAabb(origin, direction, maxDistance, expandedAabb);
-    if (aabbHit) {
-      targetHit = createShapeHit({
-        distance: aabbHit.distance,
-        point: aabbHit.point,
-        normal: aabbHit.normal,
-        sweepPosition: addScaledVec3(origin, direction, aabbHit.distance),
-        algorithm: 'convex-aabb-sphere-cast-v1',
-        featureId: `aabb:${aabbHit.axis}`
-      });
-    }
-  }
-
-  if (!targetHit) {
     return null;
   }
-
-  const sweepPosition = cloneVec3(targetHit.sweepPosition ?? addScaledVec3(origin, direction, targetHit.distance));
-  return createShapeHit({
-    distance: targetHit.distance,
-    point: addScaledVec3(sweepPosition, targetHit.normal, -radius),
-    normal: targetHit.normal,
-    sweepPosition,
-    algorithm: targetHit.algorithm,
-    featureId: targetHit.featureId,
-    sampleId: options.sampleId ?? 'center'
-  });
-}
-
-function getCapsuleCastSamples(origin, halfHeight, rotation) {
-  if (halfHeight <= 1e-8) {
-    return [
-      {
-        id: 'center',
-        position: cloneVec3(origin)
-      }
-    ];
-  }
-
-  const axisOffset = rotateVec3ByQuat(rotation ?? createIdentityQuat(), createVec3(0, halfHeight, 0));
-  return [
-    {
-      id: 'center',
-      position: cloneVec3(origin)
-    },
-    {
-      id: 'top',
-      position: addVec3(origin, axisOffset)
-    },
-    {
-      id: 'bottom',
-      position: addScaledVec3(origin, axisOffset, -1)
-    }
-  ];
+  return null;
 }
 function sphereCastShape(options = {}) {
   return sphereCastShapeHit(options);
@@ -3450,47 +3439,10 @@ function capsuleCastShape(options = {}) {
         sampleId: 'capsule'
       });
     }
-  }
 
-  const sampleOrigins = getCapsuleCastSamples(origin, halfHeight, rotation);
-  let bestHit = null;
-
-  for (const sample of sampleOrigins) {
-    const sampleHit = sphereCastShapeHit({
-      ...options,
-      origin: sample.position,
-      direction,
-      maxDistance,
-      radius,
-      sampleId: sample.id
-    });
-
-    if (!sampleHit) {
-      continue;
-    }
-
-    if (!bestHit || sampleHit.distance < bestHit.distance - 1e-8) {
-      bestHit = {
-        ...sampleHit,
-        sweepPosition: addScaledVec3(origin, direction, sampleHit.distance),
-        sampleId: sample.id
-      };
-    }
-  }
-
-  if (!bestHit) {
     return null;
   }
-
-  return createShapeHit({
-    distance: bestHit.distance,
-    point: bestHit.point,
-    normal: bestHit.normal,
-    sweepPosition: bestHit.sweepPosition,
-    algorithm: `capsule-cast-fallback-v1:${bestHit.algorithm}`,
-    featureId: bestHit.featureId,
-    sampleId: bestHit.sampleId
-  });
+  return null;
 }
 function computeSweptShapeAabb(options = {}) {
   const shape = options.shape ?? null;
@@ -3662,7 +3614,8 @@ function createDebugFrame(options = {}) {
     frameNumber: toFiniteNumber(options.frameNumber, 0),
     simulationTick: toFiniteNumber(options.simulationTick, 0),
     camera: {
-      position: cloneVec3(options.camera?.position ?? createVec3())
+      position: cloneVec3(options.camera?.position ?? createVec3()),
+      target: cloneVec3(options.camera?.target ?? createVec3())
     },
     primitives,
     stats: {
@@ -5066,7 +5019,8 @@ function normalizeAngleLimits(lowerAngle, upperAngle) {
 
 function cloneCamera(camera) {
   return {
-    position: cloneVec3(camera.position)
+    position: cloneVec3(camera.position),
+    target: cloneVec3(camera.target)
   };
 }
 
@@ -5481,7 +5435,8 @@ class PhysicsWorld {
 
   resetRuntimeState() {
     this.debugCamera = {
-      position: createVec3(0, 0, 400)
+      position: createVec3(0, 0, 400),
+      target: createVec3(0, 0, 0)
     };
     this.accumulatorSeconds = 0;
     this.simulationTick = 0;
@@ -5515,6 +5470,10 @@ class PhysicsWorld {
 
   setDebugCameraPosition(position) {
     this.debugCamera.position = cloneVec3(position);
+  }
+
+  setDebugCameraTarget(target) {
+    this.debugCamera.target = cloneVec3(target);
   }
 
   setGravity(gravity) {
@@ -6130,6 +6089,31 @@ class PhysicsWorld {
     const shape = this.createBoxShape({
       id: resolvedId ? `${resolvedId}:shape` : null,
       halfExtents: createVec3(size / 2, size / 2, size / 2),
+      userData: options.shapeUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: null,
+      materialId: options.materialId,
+      localPose: {
+        position: options.position ?? createVec3(),
+        rotation: options.rotation ?? createIdentityQuat()
+      },
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      collider
+    };
+  }
+
+  createStaticConvexHullCollider(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const shape = this.createConvexHullShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      vertices: options.vertices ?? [],
       userData: options.shapeUserData ?? null
     });
     const collider = this.createCollider({
@@ -8474,6 +8458,16 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'setCameraTarget',
+        blockType: 'command',
+        text: 'set debug camera target x:[X] y:[Y] z:[Z]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
         opcode: 'createBoxRigidBody',
         blockType: 'command',
         text: 'create box rigid body [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] mass:[MASS] material:[MATERIAL]',
@@ -8488,6 +8482,20 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createConvexHullRigidBody',
+        blockType: 'command',
+        text: 'create convex hull rigid body [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] mass:[MASS] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'hull-1' },
+          VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          MASS: { type: 'number', defaultValue: 1 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
         opcode: 'createStaticBoxCollider',
         blockType: 'command',
         text: 'create static box collider [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] material:[MATERIAL]',
@@ -8497,6 +8505,19 @@ function createExtensionInfo() {
           Y: { type: 'number', defaultValue: -100 },
           Z: { type: 'number', defaultValue: 0 },
           SIZE: { type: 'number', defaultValue: 100 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createStaticConvexHullCollider',
+        blockType: 'command',
+        text: 'create static convex hull collider [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'hull-collider-1' },
+          VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: -100 },
+          Z: { type: 'number', defaultValue: 0 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
         }
       },
@@ -8904,8 +8925,9 @@ function ensureCanvasSize(canvas) {
   }
 }
 
-function buildViewBasis(cameraPosition) {
-  const forward = normalizeVec3(subtractVec3(createVec3(0, 0, 0), cameraPosition), createVec3(0, 0, -1));
+function buildViewBasis(cameraPosition, cameraTarget) {
+  const target = cameraTarget ?? createVec3(0, 0, 0);
+  const forward = normalizeVec3(subtractVec3(target, cameraPosition), createVec3(0, 0, -1));
   const worldUp = Math.abs(forward.y) > 0.98 ? createVec3(0, 0, 1) : createVec3(0, 1, 0);
   const right = normalizeVec3(crossVec3(forward, worldUp), createVec3(1, 0, 0));
   const up = normalizeVec3(crossVec3(right, forward), createVec3(0, 1, 0));
@@ -9079,7 +9101,8 @@ function createDebugOverlay(displayName) {
     clearCanvas(context2d, width, height);
 
     const cameraPosition = frame?.debugFrame?.camera?.position ?? createVec3(0, 0, 400);
-    const basis = buildViewBasis(cameraPosition);
+    const cameraTarget = frame?.debugFrame?.camera?.target ?? createVec3(0, 0, 0);
+    const basis = buildViewBasis(cameraPosition, cameraTarget);
     const primitives = Array.isArray(frame?.debugFrame?.primitives) ? frame.debugFrame.primitives : [];
 
     for (const primitive of primitives) {

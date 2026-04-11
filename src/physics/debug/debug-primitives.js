@@ -141,7 +141,8 @@ export function createDebugFrame(options = {}) {
     frameNumber: toFiniteNumber(options.frameNumber, 0),
     simulationTick: toFiniteNumber(options.simulationTick, 0),
     camera: {
-      position: cloneVec3(options.camera?.position ?? createVec3())
+      position: cloneVec3(options.camera?.position ?? createVec3()),
+      target: cloneVec3(options.camera?.target ?? createVec3())
     },
     primitives,
     stats: {

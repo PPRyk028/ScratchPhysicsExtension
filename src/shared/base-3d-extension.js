@@ -28,6 +28,14 @@ export class Base3DExtension {
     );
   }
 
+  setCameraTarget(args) {
+    this.engine.setCameraTarget(
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z)
+    );
+  }
+
   setGravity(args) {
     this.engine.setGravity(
       toNumber(args.X),
@@ -74,6 +82,29 @@ export class Base3DExtension {
       toNumber(args.Y),
       toNumber(args.Z),
       toNumber(args.SIZE, 100),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  createConvexHullRigidBody(args) {
+    this.engine.createConvexHullRigidBody(
+      toString(args.ID, 'body'),
+      toString(args.VERTICES, ''),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.MASS, 1),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  createStaticConvexHullCollider(args) {
+    this.engine.createStaticConvexHullCollider(
+      toString(args.ID, 'collider'),
+      toString(args.VERTICES, ''),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
       toString(args.MATERIAL, '')
     );
   }

@@ -90,7 +90,8 @@ function normalizeAngleLimits(lowerAngle, upperAngle) {
 
 function cloneCamera(camera) {
   return {
-    position: cloneVec3(camera.position)
+    position: cloneVec3(camera.position),
+    target: cloneVec3(camera.target)
   };
 }
 
@@ -506,7 +507,8 @@ export class PhysicsWorld {
 
   resetRuntimeState() {
     this.debugCamera = {
-      position: createVec3(0, 0, 400)
+      position: createVec3(0, 0, 400),
+      target: createVec3(0, 0, 0)
     };
     this.accumulatorSeconds = 0;
     this.simulationTick = 0;
@@ -540,6 +542,10 @@ export class PhysicsWorld {
 
   setDebugCameraPosition(position) {
     this.debugCamera.position = cloneVec3(position);
+  }
+
+  setDebugCameraTarget(target) {
+    this.debugCamera.target = cloneVec3(target);
   }
 
   setGravity(gravity) {
@@ -1155,6 +1161,31 @@ export class PhysicsWorld {
     const shape = this.createBoxShape({
       id: resolvedId ? `${resolvedId}:shape` : null,
       halfExtents: createVec3(size / 2, size / 2, size / 2),
+      userData: options.shapeUserData ?? null
+    });
+    const collider = this.createCollider({
+      id: resolvedId ? `${resolvedId}:collider` : null,
+      shapeId: shape.id,
+      bodyId: null,
+      materialId: options.materialId,
+      localPose: {
+        position: options.position ?? createVec3(),
+        rotation: options.rotation ?? createIdentityQuat()
+      },
+      userData: options.colliderUserData ?? null
+    });
+
+    return {
+      shape,
+      collider
+    };
+  }
+
+  createStaticConvexHullCollider(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const shape = this.createConvexHullShape({
+      id: resolvedId ? `${resolvedId}:shape` : null,
+      vertices: options.vertices ?? [],
       userData: options.shapeUserData ?? null
     });
     const collider = this.createCollider({

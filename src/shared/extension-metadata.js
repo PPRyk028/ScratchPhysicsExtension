@@ -64,6 +64,16 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'setCameraTarget',
+        blockType: 'command',
+        text: 'set debug camera target x:[X] y:[Y] z:[Z]',
+        arguments: {
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
         opcode: 'createBoxRigidBody',
         blockType: 'command',
         text: 'create box rigid body [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] mass:[MASS] material:[MATERIAL]',
@@ -78,6 +88,20 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createConvexHullRigidBody',
+        blockType: 'command',
+        text: 'create convex hull rigid body [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] mass:[MASS] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'hull-1' },
+          VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          MASS: { type: 'number', defaultValue: 1 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
         opcode: 'createStaticBoxCollider',
         blockType: 'command',
         text: 'create static box collider [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] material:[MATERIAL]',
@@ -87,6 +111,19 @@ export function createExtensionInfo() {
           Y: { type: 'number', defaultValue: -100 },
           Z: { type: 'number', defaultValue: 0 },
           SIZE: { type: 'number', defaultValue: 100 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createStaticConvexHullCollider',
+        blockType: 'command',
+        text: 'create static convex hull collider [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'hull-collider-1' },
+          VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: -100 },
+          Z: { type: 'number', defaultValue: 0 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
         }
       },

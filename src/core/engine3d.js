@@ -16,8 +16,46 @@ function radiansToDegrees(value) {
   return Number(value) * (180 / Math.PI);
 }
 
+function createDefaultConvexHullVertices() {
+  return [
+    createVec3(-50, -50, -50),
+    createVec3(50, -50, -50),
+    createVec3(50, -50, 50),
+    createVec3(-50, -50, 50),
+    createVec3(0, 50, 0)
+  ];
+}
+
+function parseConvexHullVertices(verticesText) {
+  const parsedText = String(verticesText ?? '').trim();
+  if (!parsedText) {
+    return createDefaultConvexHullVertices();
+  }
+
+  const records = parsedText
+    .split(/[\n;|]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  const vertices = [];
+  for (const record of records) {
+    const parts = record
+      .split(/[\s,]+/)
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+
+    if (parts.length < 3) {
+      continue;
+    }
+
+    vertices.push(createVec3(parts[0], parts[1], parts[2]));
+  }
+
+  return vertices.length >= 4 ? vertices : createDefaultConvexHullVertices();
+}
+
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera ${formatVector(snapshot.debugCamera.position)} -> ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -48,6 +86,11 @@ export class Engine3D {
   setCameraPosition(x, y, z) {
     this.world.setDebugCameraPosition(createVec3(x, y, z));
     this.hostBridge.log(`Camera moved to ${x}, ${y}, ${z}`);
+  }
+
+  setCameraTarget(x, y, z) {
+    this.world.setDebugCameraTarget(createVec3(x, y, z));
+    this.hostBridge.log(`Camera target set to ${x}, ${y}, ${z}`);
   }
 
   setGravity(x, y, z) {
@@ -100,6 +143,33 @@ export class Engine3D {
     });
 
     this.hostBridge.log(`Static collider ${collider.id} registered`);
+    return collider;
+  }
+
+  createConvexHullRigidBody(id, verticesText, x, y, z, mass, materialId = '') {
+    const vertices = parseConvexHullVertices(verticesText);
+    const { body, collider } = this.world.createConvexHullBody({
+      id,
+      position: createVec3(x, y, z),
+      vertices,
+      mass,
+      materialId
+    });
+
+    this.hostBridge.log(`Convex hull body ${body.id} registered with collider ${collider.id} and ${vertices.length} vertices`);
+    return body;
+  }
+
+  createStaticConvexHullCollider(id, verticesText, x, y, z, materialId = '') {
+    const vertices = parseConvexHullVertices(verticesText);
+    const { collider } = this.world.createStaticConvexHullCollider({
+      id,
+      position: createVec3(x, y, z),
+      vertices,
+      materialId
+    });
+
+    this.hostBridge.log(`Static convex hull collider ${collider.id} registered with ${vertices.length} vertices`);
     return collider;
   }
 

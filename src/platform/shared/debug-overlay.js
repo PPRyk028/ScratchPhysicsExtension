@@ -28,8 +28,9 @@ function ensureCanvasSize(canvas) {
   }
 }
 
-function buildViewBasis(cameraPosition) {
-  const forward = normalizeVec3(subtractVec3(createVec3(0, 0, 0), cameraPosition), createVec3(0, 0, -1));
+function buildViewBasis(cameraPosition, cameraTarget) {
+  const target = cameraTarget ?? createVec3(0, 0, 0);
+  const forward = normalizeVec3(subtractVec3(target, cameraPosition), createVec3(0, 0, -1));
   const worldUp = Math.abs(forward.y) > 0.98 ? createVec3(0, 0, 1) : createVec3(0, 1, 0);
   const right = normalizeVec3(crossVec3(forward, worldUp), createVec3(1, 0, 0));
   const up = normalizeVec3(crossVec3(right, forward), createVec3(0, 1, 0));
@@ -204,7 +205,8 @@ export function createDebugOverlay(displayName) {
     clearCanvas(context2d, width, height);
 
     const cameraPosition = frame?.debugFrame?.camera?.position ?? createVec3(0, 0, 400);
-    const basis = buildViewBasis(cameraPosition);
+    const cameraTarget = frame?.debugFrame?.camera?.target ?? createVec3(0, 0, 0);
+    const basis = buildViewBasis(cameraPosition, cameraTarget);
     const primitives = Array.isArray(frame?.debugFrame?.primitives) ? frame.debugFrame.primitives : [];
 
     for (const primitive of primitives) {
