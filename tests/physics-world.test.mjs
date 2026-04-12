@@ -467,7 +467,7 @@ test('PhysicsWorld unsupported box on a static convex ledge tips and keeps conta
   }
   assert.ok(maxTilt > 0.2, `expected unsupported box to tip, got max tilt ${maxTilt}`);
   assert.ok(maxPenetration < 1, `expected ledge tip to stay shallow, got max penetration ${maxPenetration}`);
-  assert.ok(maxUpwardVelocity < 5, `expected ledge tip to avoid catapulting upward, got max upward velocity ${maxUpwardVelocity}`);
+  assert.ok(maxUpwardVelocity < 1, `expected ledge tip to avoid catapulting upward, got max upward velocity ${maxUpwardVelocity}`);
 });
 
 test('PhysicsWorld convex hull on a static ramp keeps first manifold contacts on the actual support plane', () => {
@@ -528,7 +528,7 @@ test('PhysicsWorld convex hull on a static ramp keeps first manifold contacts on
     );
   }
   assert.ok(maxPenetration < 1, `expected ramp contact to avoid deep false penetration, got ${maxPenetration}`);
-  assert.ok(maxUpwardVelocity < 20, `expected ramp tip to avoid catapulting upward, got ${maxUpwardVelocity}`);
+  assert.ok(maxUpwardVelocity < 1, `expected ramp tip to avoid catapulting upward, got ${maxUpwardVelocity}`);
 });
 
 test('PhysicsWorld capsule-box pairs use the GJK/EPA manifold path', () => {

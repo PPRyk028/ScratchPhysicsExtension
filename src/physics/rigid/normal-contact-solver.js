@@ -158,7 +158,7 @@ function solveNormalImpulse(bodyA, bodyB, manifold, contact, deltaTime, baumgart
   const relativeVelocity = getRelativeVelocity(bodyA, bodyB, contact.position);
   const relativeNormalVelocity = dotVec3(relativeVelocity, manifold.normal);
   const separationWithSlop = Math.min(0, contact.separation + allowedPenetration);
-  const positionBias = (baumgarte * separationWithSlop) / deltaTime;
+  const positionBias = baumgarte > 1e-8 ? (baumgarte * separationWithSlop) / deltaTime : 0;
   const restitutionThreshold = Number(manifold.restitutionThreshold ?? 1);
   const bounceVelocity = manifold.restitution > 0 && relativeNormalVelocity < -restitutionThreshold
     ? -manifold.restitution * relativeNormalVelocity
@@ -240,13 +240,16 @@ export function solveNormalContactConstraints(options = {}) {
       const frictionShare = 1 / Math.max(1, manifold.contacts.length);
 
       for (const contact of manifold.contacts) {
+        const contactBaumgarte = positionCorrectionPercent > 1e-8 && manifold.contacts.length <= 2
+          ? 0
+          : baumgarte;
         solveNormalImpulse(
           bodyA,
           bodyB,
           manifold,
           contact,
           deltaTime,
-          baumgarte,
+          contactBaumgarte,
           allowedPenetration,
           stats
         );
