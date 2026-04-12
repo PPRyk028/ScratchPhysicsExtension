@@ -25,6 +25,8 @@ const REQUIRED_OPCODES = [
   'createStaticConvexHullCollider',
   'createPresetStaticConvexHullCollider',
   'convexHullPresetVertices',
+  'createClothSheet',
+  'configureCloth',
   'createDistanceJoint',
   'createPointToPointJoint',
   'createHingeJoint',
@@ -50,6 +52,7 @@ const REQUIRED_OPCODES = [
   'colliderSummary',
   'materialSummary',
   'jointSummary',
+  'clothSummary',
   'queryPointBodies',
   'queryPointColliders',
   'queryAabbBodies',
@@ -186,6 +189,8 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.createConvexHullRigidBody({ ID: 'probe-hull', VERTICES: '-8 -8 -8; 8 -8 -8; 8 -8 8; -8 -8 8; 0 8 0', X: -20, Y: 30, Z: 0, MASS: 1.5, MATERIAL: 'ice' });
   extension.createPresetConvexHullRigidBody({ ID: 'preset-hull', PRESET: 'skew-prism', X: -50, Y: 20, Z: 0, SCALE: 40, MASS: 1, MATERIAL: 'ice' });
   extension.createPresetStaticConvexHullCollider({ ID: 'preset-ramp', PRESET: 'skew-frustum', X: 60, Y: -30, Z: 0, SCALE: 30, MATERIAL: 'ice' });
+  extension.createClothSheet({ ID: 'cloth-1', ROWS: 4, COLUMNS: 5, SPACING: 10, X: -20, Y: 80, Z: 0, PIN_MODE: 'top-row' });
+  extension.configureCloth({ ID: 'cloth-1', DAMPING: 0.08, MARGIN: 4, STRETCH: 0.001, SHEAR: 0.002, BEND: 0.003, SELF_COLLISION: 'on', SELF_DISTANCE: 9 });
   extension.createDistanceJoint({ ID: 'joint-1', BODY_A: 'probe', BODY_B: 'probe-2', LENGTH: 35 });
   extension.createPointToPointJoint({ ID: 'joint-2', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7 });
   extension.createHingeJoint({ ID: 'joint-3', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7, AX: 0, AY: 1, AZ: 0 });
@@ -214,9 +219,12 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.resetDebugOverlayLayers();
 
   assert.match(extension.worldSummary(), /4 bodies/);
+  assert.match(extension.worldSummary(), /1 cloths/);
   assert.match(extension.jointSummary({ ID: 'joint-1' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'joint-3' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'joint-4' }), /break force:/);
+  assert.match(extension.clothSummary({ ID: 'cloth-1' }), /rows:4/);
+  assert.match(extension.clothSummary({ ID: 'cloth-1' }), /self:on/);
   assert.match(extension.colliderSummary({ ID: 'floor:collider' }), /body:static/);
   assert.match(extension.materialSummary({ ID: 'ice' }), /friction:0.05/);
   assert.match(extension.raycastSummary(), /Ray hit/);
@@ -275,6 +283,8 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.createConvexHullRigidBody({ ID: 'remote-hull', VERTICES: '-3 -3 -3; 3 -3 -3; 3 -3 3; -3 -3 3; 0 3 0', X: -15, Y: 6, Z: 0, MASS: 1, MATERIAL: 'material-default' });
   extension.createPresetConvexHullRigidBody({ ID: 'remote-preset-hull', PRESET: 'wedge', X: -25, Y: 12, Z: 0, SCALE: 20, MASS: 1, MATERIAL: 'material-default' });
   extension.createPresetStaticConvexHullCollider({ ID: 'remote-preset-ramp', PRESET: 'skew-frustum', X: 30, Y: -16, Z: 0, SCALE: 20, MATERIAL: 'material-default' });
+  extension.createClothSheet({ ID: 'remote-cloth', ROWS: 3, COLUMNS: 4, SPACING: 8, X: -12, Y: 40, Z: 0, PIN_MODE: 'top-corners' });
+  extension.configureCloth({ ID: 'remote-cloth', DAMPING: 0.04, MARGIN: 2.5, STRETCH: 0.0005, SHEAR: 0.001, BEND: 0.002, SELF_COLLISION: 'on', SELF_DISTANCE: 7 });
   extension.createDistanceJoint({ ID: 'remote-joint', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', LENGTH: 20 });
   extension.createPointToPointJoint({ ID: 'remote-ball', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0 });
   extension.createHingeJoint({ ID: 'remote-hinge', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0, AX: 0, AY: 1, AZ: 0 });
@@ -294,6 +304,8 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.resetDebugOverlayLayers();
 
   assert.match(extension.worldSummary(), /4 bodies/);
+  assert.match(extension.clothSummary({ ID: 'remote-cloth' }), /pin:top-corners/);
+  assert.match(extension.clothSummary({ ID: 'remote-cloth' }), /self:on/);
   assert.match(extension.jointSummary({ ID: 'remote-joint' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'remote-hinge' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'remote-fixed' }), /break force:/);
@@ -332,6 +344,8 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.createConvexHullRigidBody({ ID: 'gandi-hull', VERTICES: '-10 -10 -10; 10 -10 -10; 10 -10 10; -10 -10 10; 0 10 0', X: -30, Y: 20, Z: 3, MASS: 2, MATERIAL: 'rubber' });
   extension.createPresetConvexHullRigidBody({ ID: 'gandi-preset-hull', PRESET: 'skew-hexahedron', X: -50, Y: 30, Z: 3, SCALE: 24, MASS: 2, MATERIAL: 'rubber' });
   extension.createPresetStaticConvexHullCollider({ ID: 'gandi-preset-ramp', PRESET: 'wedge', X: 50, Y: -16, Z: 3, SCALE: 30, MATERIAL: 'rubber' });
+  extension.createClothSheet({ ID: 'gandi-cloth', ROWS: 4, COLUMNS: 5, SPACING: 10, X: -20, Y: 70, Z: 3, PIN_MODE: 'top-row' });
+  extension.configureCloth({ ID: 'gandi-cloth', DAMPING: 0.05, MARGIN: 3, STRETCH: 0.0008, SHEAR: 0.0012, BEND: 0.0025, SELF_COLLISION: 'on', SELF_DISTANCE: 8 });
   extension.createDistanceJoint({ ID: 'gandi-joint', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', LENGTH: 40 });
   extension.createPointToPointJoint({ ID: 'gandi-ball', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3 });
   extension.createHingeJoint({ ID: 'gandi-hinge', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3, AX: 0, AY: 1, AZ: 0 });
@@ -355,7 +369,10 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.resetDebugOverlayLayers();
 
   assert.match(extension.worldSummary(), /4 bodies/);
+  assert.match(extension.worldSummary(), /1 cloths/);
   assert.match(extension.rigidBodySummary({ ID: 'gandi-probe' }), /gandi-probe/);
+  assert.match(extension.clothSummary({ ID: 'gandi-cloth' }), /particles:20/);
+  assert.match(extension.clothSummary({ ID: 'gandi-cloth' }), /self:on/);
   assert.match(extension.materialSummary({ ID: 'rubber' }), /restitution:0.8/);
   assert.match(extension.jointSummary({ ID: 'gandi-joint' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'gandi-hinge' }), /motor mode:servo/);

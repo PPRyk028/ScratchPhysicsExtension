@@ -64,7 +64,7 @@ function parseConvexHullVertices(verticesText) {
 }
 
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.clothCount ?? 0} cloths | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -208,6 +208,40 @@ export class Engine3D {
       z,
       materialId
     );
+  }
+
+  createClothSheet(id, rows, columns, spacing, x, y, z, pinMode = 'top-row') {
+    const cloth = this.world.createClothSheet({
+      id,
+      rows,
+      columns,
+      spacing,
+      position: createVec3(x, y, z),
+      pinMode
+    });
+
+    this.hostBridge.log(`Cloth ${cloth.id} registered with ${cloth.rows}x${cloth.columns} particles and pin mode ${cloth.pinMode}`);
+    return cloth;
+  }
+
+  configureCloth(id, damping, margin, stretch, shear, bend, selfCollisionEnabled, selfCollisionDistance) {
+    const cloth = this.world.configureCloth(id, {
+      damping,
+      collisionMargin: margin,
+      stretchCompliance: stretch,
+      shearCompliance: shear,
+      bendCompliance: bend,
+      selfCollisionEnabled,
+      selfCollisionDistance
+    });
+
+    if (!cloth) {
+      this.hostBridge.log(`Cloth ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Cloth ${cloth.id} configured`);
+    return cloth;
   }
 
   createDistanceJoint(id, bodyAId, bodyBId, distance = 0) {
@@ -445,7 +479,8 @@ export class Engine3D {
 
   exportSceneJson() {
     const sceneDefinition = this.world.exportSceneDefinition();
-    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
+    const clothCount = sceneDefinition.xpbd?.cloths?.length ?? 0;
+    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${clothCount} cloths | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
     return JSON.stringify(sceneDefinition);
   }
 
@@ -456,7 +491,7 @@ export class Engine3D {
         reset: true
       });
       this.lastFrame = null;
-      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
+      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.clothCount ?? 0} cloths | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
       this.hostBridge.log(this.lastSceneIoSummary);
       return true;
     } catch (error) {
@@ -521,6 +556,15 @@ export class Engine3D {
       ? ` | break force:${formatOptionalNumber(joint.breakForce)} | break torque:${formatOptionalNumber(joint.breakTorque)}`
       : '';
     return `${joint.id} | type:${joint.type} | enabled:${joint.enabled !== false ? 'yes' : 'no'} | broken:${joint.broken === true ? 'yes' : 'no'} | force:${formatOptionalNumber(joint.lastAppliedForce, '0')} | torque:${formatOptionalNumber(joint.lastAppliedTorque, '0')} | bodies:${joint.bodyAId}->${joint.bodyBId} | distance:${joint.distance} | anchorA ${formatVector(anchors.anchorA)} | anchorB ${formatVector(anchors.anchorB)}${axisSummary}${rangeSummary}${hingeSummary}${fixedSummary}`;
+  }
+
+  getClothSummary(id) {
+    const cloth = this.world.getCloth(id);
+    if (!cloth) {
+      return `Cloth ${id} not found`;
+    }
+
+    return `${cloth.id} | type:${cloth.type} | rows:${cloth.rows} | columns:${cloth.columns} | particles:${cloth.particleIds.length} | pin:${cloth.pinMode} | spacing:${cloth.spacing} | damping:${cloth.damping} | margin:${cloth.collisionMargin} | stretch:${cloth.stretchCompliance} | shear:${cloth.shearCompliance} | bend:${cloth.bendCompliance} | self:${cloth.selfCollisionEnabled ? 'on' : 'off'} | self distance:${cloth.selfCollisionDistance}`;
   }
 
   queryPointBodies(x, y, z) {

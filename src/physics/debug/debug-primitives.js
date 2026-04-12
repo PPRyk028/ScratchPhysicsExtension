@@ -81,7 +81,16 @@ export const DEFAULT_DEBUG_COLORS = Object.freeze({
   brokenJoint: Object.freeze({ r: 255, g: 92, b: 92, a: 1 }),
   hingeAxisA: Object.freeze({ r: 102, g: 208, b: 255, a: 1 }),
   hingeAxisB: Object.freeze({ r: 255, g: 118, b: 118, a: 1 }),
-  hingeMotor: Object.freeze({ r: 94, g: 255, b: 156, a: 1 })
+  hingeMotor: Object.freeze({ r: 94, g: 255, b: 156, a: 1 }),
+  clothStructuralEdge: Object.freeze({ r: 127, g: 214, b: 255, a: 1 }),
+  clothShearEdge: Object.freeze({ r: 139, g: 167, b: 255, a: 0.95 }),
+  clothBendEdge: Object.freeze({ r: 194, g: 154, b: 255, a: 0.9 }),
+  clothParticle: Object.freeze({ r: 255, g: 221, b: 111, a: 1 }),
+  clothPinnedParticle: Object.freeze({ r: 255, g: 117, b: 117, a: 1 }),
+  clothContactPoint: Object.freeze({ r: 171, g: 255, b: 150, a: 1 }),
+  clothContactNormal: Object.freeze({ r: 120, g: 255, b: 214, a: 1 }),
+  clothSelfContactPoint: Object.freeze({ r: 255, g: 96, b: 214, a: 1 }),
+  clothSelfContactNormal: Object.freeze({ r: 255, g: 164, b: 224, a: 1 })
 });
 
 export function countDebugPrimitivesByType(primitives) {

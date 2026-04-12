@@ -163,6 +163,325 @@ test('PhysicsWorld debug camera preserves independent angle state', () => {
   assert.deepEqual(frame.camera.target, { x: 10, y: 20, z: 30 });
 });
 
+test('PhysicsWorld creates a cloth sheet with pinned top row debug primitives', () => {
+  const world = new PhysicsWorld();
+  const cloth = world.createClothSheet({
+    id: 'cloth-1',
+    rows: 4,
+    columns: 5,
+    spacing: 12,
+    position: { x: -24, y: 60, z: 0 },
+    pinMode: 'top-row'
+  });
+
+  const snapshot = world.getSnapshot();
+  const frame = world.buildDebugFrame();
+
+  assert.equal(cloth.rows, 4);
+  assert.equal(cloth.columns, 5);
+  assert.equal(cloth.particleIds.length, 20);
+  assert.equal(snapshot.clothCount, 1);
+  assert.equal(snapshot.particleCount, 20);
+  assert.equal(frame.stats.clothCount, 1);
+  assert.equal(frame.stats.particleCount, 20);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'cloth-structural-edge'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'cloth-pin'));
+});
+
+test('PhysicsWorld XPBD cloth keeps pinned particles fixed while lower particles sag', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120
+  });
+  world.createClothSheet({
+    id: 'cloth-1',
+    rows: 5,
+    columns: 6,
+    spacing: 10,
+    position: { x: 0, y: 80, z: 0 },
+    pinMode: 'top-row'
+  });
+
+  const before = world.getSnapshot().xpbd.particles;
+  const topLeftBefore = before.find((particle) => particle.id === 'cloth-1:particle:0:0');
+  const bottomBefore = before.find((particle) => particle.id === 'cloth-1:particle:4:3');
+
+  for (let index = 0; index < 60; index += 1) {
+    world.step(1 / 120);
+  }
+
+  const after = world.getSnapshot().xpbd.particles;
+  const topLeftAfter = after.find((particle) => particle.id === 'cloth-1:particle:0:0');
+  const bottomAfter = after.find((particle) => particle.id === 'cloth-1:particle:4:3');
+
+  assert.deepEqual(topLeftAfter.position, topLeftBefore.position);
+  assert.ok(bottomAfter.position.y < bottomBefore.position.y - 0.5, `expected bottom particle to sag, got before ${bottomBefore.position.y} after ${bottomAfter.position.y}`);
+  assert.ok(world.getSnapshot().lastXpbdStats.solvedDistanceConstraints > 0);
+});
+
+test('PhysicsWorld updates cloth parameters and reflects them in the cloth record', () => {
+  const world = new PhysicsWorld();
+  world.createClothSheet({
+    id: 'cloth-1',
+    rows: 4,
+    columns: 5,
+    spacing: 12,
+    position: { x: -24, y: 60, z: 0 },
+    pinMode: 'top-row'
+  });
+
+  const cloth = world.configureCloth('cloth-1', {
+    damping: 0.08,
+    collisionMargin: 4,
+    stretchCompliance: 0.001,
+    shearCompliance: 0.002,
+    bendCompliance: 0.003,
+    selfCollisionEnabled: true,
+    selfCollisionDistance: 9
+  });
+
+  assert.ok(cloth);
+  assert.equal(cloth.damping, 0.08);
+  assert.equal(cloth.collisionMargin, 4);
+  assert.equal(cloth.stretchCompliance, 0.001);
+  assert.equal(cloth.shearCompliance, 0.002);
+  assert.equal(cloth.bendCompliance, 0.003);
+  assert.equal(cloth.selfCollisionEnabled, true);
+  assert.equal(cloth.selfCollisionDistance, 9);
+  assert.ok(cloth.distanceConstraints.filter((constraint) => constraint.kind === 'stretch').every((constraint) => constraint.compliance === 0.001));
+  assert.ok(cloth.distanceConstraints.filter((constraint) => constraint.kind === 'shear').every((constraint) => constraint.compliance === 0.002));
+  assert.ok(cloth.distanceConstraints.filter((constraint) => constraint.kind === 'bend').every((constraint) => constraint.compliance === 0.003));
+});
+
+test('PhysicsWorld XPBD cloth self-collision separates overlapping non-neighbor particles', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    gravity: { x: 0, y: 0, z: 0 },
+    xpbdIterations: 8
+  });
+  world.createClothSheet({
+    id: 'cloth-1',
+    rows: 4,
+    columns: 4,
+    spacing: 10,
+    position: { x: 0, y: 40, z: 0 },
+    pinMode: 'none'
+  });
+  world.configureCloth('cloth-1', {
+    selfCollisionEnabled: true,
+    selfCollisionDistance: 8,
+    damping: 0
+  });
+
+  const particleA = world.particleWorld.particles.get('cloth-1:particle:0:0');
+  const particleB = world.particleWorld.particles.get('cloth-1:particle:3:3');
+  particleA.position = { x: 10, y: 40, z: 10 };
+  particleA.predictedPosition = { x: 10, y: 40, z: 10 };
+  particleA.previousPosition = { x: 10, y: 40, z: 10 };
+  particleA.velocity = { x: 0, y: 0, z: 0 };
+  particleB.position = { x: 10, y: 40, z: 10 };
+  particleB.predictedPosition = { x: 10, y: 40, z: 10 };
+  particleB.previousPosition = { x: 10, y: 40, z: 10 };
+  particleB.velocity = { x: 0, y: 0, z: 0 };
+
+  world.step(1 / 120);
+
+  const afterA = world.particleWorld.particles.get('cloth-1:particle:0:0');
+  const afterB = world.particleWorld.particles.get('cloth-1:particle:3:3');
+  const separation = Math.sqrt(
+    (afterA.position.x - afterB.position.x) ** 2 +
+    (afterA.position.y - afterB.position.y) ** 2 +
+    (afterA.position.z - afterB.position.z) ** 2
+  );
+  const snapshot = world.getSnapshot();
+  const frame = world.buildDebugFrame();
+
+  assert.ok(snapshot.lastXpbdStats.solvedSelfCollisions > 0, 'expected self-collision solver to run');
+  assert.ok(snapshot.xpbd.lastSelfCollisionContacts.length > 0, 'expected self-collision contacts to be recorded');
+  assert.ok(separation >= 7.5, `expected self-collision to separate particles, got ${separation}`);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'cloth-self-contact-point'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'cloth-self-contact-normal'));
+});
+
+test('PhysicsWorld XPBD cloth collides with static box colliders', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    xpbdIterations: 8,
+    xpbdSubsteps: 2
+  });
+  world.createStaticBoxCollider({
+    id: 'support-box',
+    position: { x: 0, y: 48, z: 20 },
+    size: 50
+  });
+  const cloth = world.createClothSheet({
+    id: 'cloth-1',
+    rows: 5,
+    columns: 5,
+    spacing: 10,
+    position: { x: -20, y: 80, z: 0 },
+    pinMode: 'top-row'
+  });
+
+  for (let index = 0; index < 180; index += 1) {
+    world.step(1 / 120);
+  }
+
+  const snapshot = world.getSnapshot();
+  const centerParticle = snapshot.xpbd.particles.find((particle) => particle.id === 'cloth-1:particle:2:2');
+  const topFaceY = 48 + 25;
+  const frame = world.buildDebugFrame();
+
+  assert.ok(centerParticle, 'expected center cloth particle to exist');
+  assert.ok(centerParticle.position.y >= topFaceY - 0.25, `expected cloth to stay above the support box top face, got ${centerParticle.position.y}`);
+  assert.ok(snapshot.lastXpbdStats.solvedStaticCollisions > 0, 'expected cloth step to solve at least one static collision');
+  assert.ok(snapshot.xpbd.lastCollisionContacts.some((contact) => contact.colliderId === 'support-box:collider' && contact.shapeType === 'box'));
+  assert.equal(cloth.collisionMargin, 1.5);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'cloth-contact-point'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'cloth-contact-normal'));
+});
+
+test('PhysicsWorld XPBD cloth collides with static convex hull colliders', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    xpbdIterations: 8,
+    xpbdSubsteps: 2
+  });
+  world.createStaticConvexHullCollider({
+    id: 'support-hull',
+    position: { x: 0, y: 48, z: 20 },
+    vertices: [
+      { x: -25, y: -25, z: -25 },
+      { x: 25, y: -25, z: -25 },
+      { x: 25, y: -25, z: 25 },
+      { x: -25, y: -25, z: 25 },
+      { x: -25, y: 25, z: -25 },
+      { x: 25, y: 25, z: -25 },
+      { x: 25, y: 25, z: 25 },
+      { x: -25, y: 25, z: 25 }
+    ]
+  });
+  world.createClothSheet({
+    id: 'cloth-1',
+    rows: 5,
+    columns: 5,
+    spacing: 10,
+    position: { x: -20, y: 80, z: 0 },
+    pinMode: 'top-row'
+  });
+
+  for (let index = 0; index < 180; index += 1) {
+    world.step(1 / 120);
+  }
+
+  const snapshot = world.getSnapshot();
+  const centerParticle = snapshot.xpbd.particles.find((particle) => particle.id === 'cloth-1:particle:2:2');
+  const topFaceY = 48 + 25;
+  const hullContacts = snapshot.xpbd.lastCollisionContacts.filter((contact) => contact.colliderId === 'support-hull:collider');
+
+  assert.ok(centerParticle, 'expected center cloth particle to exist');
+  assert.ok(centerParticle.position.y >= topFaceY - 0.25, `expected cloth to stay above the support hull top face, got ${centerParticle.position.y}`);
+  assert.ok(hullContacts.length > 0, 'expected cloth to register convex-hull collision contacts');
+  assert.ok(hullContacts.every((contact) => contact.shapeType === 'convex-hull'));
+  assert.ok(snapshot.lastXpbdStats.solvedStaticCollisions > 0, 'expected cloth step to solve at least one static collision');
+});
+
+test('PhysicsWorld XPBD cloth collides with a dynamic box rigid body and slows it down', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    gravity: { x: 0, y: 0, z: 0 },
+    xpbdIterations: 8,
+    xpbdSubsteps: 2
+  });
+  world.createBoxBody({
+    id: 'box-body',
+    position: { x: 0, y: 40, z: 20 },
+    size: 40,
+    mass: 1,
+    linearVelocity: { x: 0, y: 20, z: 0 }
+  });
+  world.createClothSheet({
+    id: 'cloth-1',
+    rows: 5,
+    columns: 5,
+    spacing: 10,
+    position: { x: -20, y: 62, z: 0 },
+    pinMode: 'top-row'
+  });
+
+  let sawDynamicCollision = false;
+  let sawBoxContact = false;
+  for (let index = 0; index < 90; index += 1) {
+    world.step(1 / 120);
+    const snapshot = world.getSnapshot();
+    const stepStats = snapshot.lastXpbdStats;
+    sawDynamicCollision = sawDynamicCollision || stepStats.solvedDynamicCollisions > 0;
+    sawBoxContact = sawBoxContact || snapshot.xpbd.lastCollisionContacts.some((contact) => (
+      contact.colliderId === 'box-body:collider' &&
+      contact.motionType === 'dynamic' &&
+      contact.bodyId === 'box-body'
+    ));
+  }
+
+  const snapshot = world.getSnapshot();
+  const body = world.getBody('box-body');
+  assert.ok(sawDynamicCollision, 'expected cloth step to solve dynamic collisions');
+  assert.ok(sawBoxContact, 'expected cloth to register contacts against the dynamic box');
+  assert.ok(body.linearVelocity.y < 20, `expected cloth to reduce upward box velocity, got ${body.linearVelocity.y}`);
+});
+
+test('PhysicsWorld XPBD cloth collides with a dynamic convex hull rigid body and slows it down', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    gravity: { x: 0, y: 0, z: 0 },
+    xpbdIterations: 8,
+    xpbdSubsteps: 2
+  });
+  world.createConvexHullBody({
+    id: 'hull-body',
+    position: { x: 0, y: 40, z: 20 },
+    mass: 1,
+    linearVelocity: { x: 0, y: 18, z: 0 },
+    vertices: [
+      { x: -20, y: -20, z: -20 },
+      { x: 20, y: -20, z: -20 },
+      { x: 20, y: -20, z: 20 },
+      { x: -20, y: -20, z: 20 },
+      { x: -20, y: 20, z: -20 },
+      { x: 20, y: 20, z: -20 },
+      { x: 20, y: 20, z: 20 },
+      { x: -20, y: 20, z: 20 }
+    ]
+  });
+  world.createClothSheet({
+    id: 'cloth-1',
+    rows: 5,
+    columns: 5,
+    spacing: 10,
+    position: { x: -20, y: 62, z: 0 },
+    pinMode: 'top-row'
+  });
+
+  let sawDynamicCollision = false;
+  let sawHullContact = false;
+  for (let index = 0; index < 90; index += 1) {
+    world.step(1 / 120);
+    const snapshot = world.getSnapshot();
+    sawDynamicCollision = sawDynamicCollision || snapshot.lastXpbdStats.solvedDynamicCollisions > 0;
+    sawHullContact = sawHullContact || snapshot.xpbd.lastCollisionContacts.some((contact) => (
+      contact.colliderId === 'hull-body:collider' &&
+      contact.motionType === 'dynamic' &&
+      contact.shapeType === 'convex-hull'
+    ));
+  }
+
+  const snapshot = world.getSnapshot();
+  const body = world.getBody('hull-body');
+
+  assert.ok(sawDynamicCollision, 'expected cloth step to solve dynamic collisions');
+  assert.ok(sawHullContact, 'expected cloth to register contacts against the dynamic convex hull');
+  assert.ok(body.linearVelocity.y < 18, `expected cloth to reduce upward hull velocity, got ${body.linearVelocity.y}`);
+});
+
 test('PhysicsWorld exports and imports scene definitions with stable ids and settings', () => {
   const world = new PhysicsWorld({
     fixedDeltaTime: 1 / 90,
@@ -217,6 +536,23 @@ test('PhysicsWorld exports and imports scene definitions with stable ids and set
     bodyBId: 'hull',
     distance: 24
   });
+  world.createClothSheet({
+    id: 'cloth-1',
+    rows: 3,
+    columns: 4,
+    spacing: 8,
+    position: { x: -16, y: 60, z: 0 },
+    pinMode: 'top-corners'
+  });
+  world.configureCloth('cloth-1', {
+    damping: 0.07,
+    collisionMargin: 4,
+    stretchCompliance: 0.001,
+    shearCompliance: 0.002,
+    bendCompliance: 0.003,
+    selfCollisionEnabled: true,
+    selfCollisionDistance: 7
+  });
 
   const scene = world.exportSceneDefinition();
   const restoredWorld = new PhysicsWorld();
@@ -228,9 +564,14 @@ test('PhysicsWorld exports and imports scene definitions with stable ids and set
   assert.equal(imported.bodyCount, 2);
   assert.equal(imported.colliderCount, 3);
   assert.equal(imported.jointCount, 1);
+  assert.equal(imported.clothCount, 1);
+  assert.equal(imported.particleCount, 12);
   assert.equal(restoredWorld.getBody('crate').mass, 2);
   assert.equal(restoredWorld.getCollider('ramp:collider').materialId, 'ice');
   assert.equal(restoredWorld.getJoint('link').type, 'distance-joint');
+  assert.equal(restoredWorld.getCloth('cloth-1').pinMode, 'top-corners');
+  assert.equal(restoredWorld.getCloth('cloth-1').selfCollisionEnabled, true);
+  assert.equal(restoredWorld.getCloth('cloth-1').selfCollisionDistance, 7);
   assert.deepEqual(restoredWorld.getSnapshot().gravity, { x: 0, y: -12, z: 0 });
   assert.deepEqual(restoredWorld.getSnapshot().debugCamera.position, { x: 200, y: 120, z: 500 });
   assert.deepEqual(restoredWorld.getSnapshot().debugCamera.target, { x: -8, y: 18, z: 0 });

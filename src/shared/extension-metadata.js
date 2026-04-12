@@ -168,6 +168,36 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createClothSheet',
+        blockType: 'command',
+        text: 'create cloth sheet [ID] rows:[ROWS] columns:[COLUMNS] spacing:[SPACING] at x:[X] y:[Y] z:[Z] pin [PIN_MODE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' },
+          ROWS: { type: 'number', defaultValue: 6 },
+          COLUMNS: { type: 'number', defaultValue: 8 },
+          SPACING: { type: 'number', defaultValue: 20 },
+          X: { type: 'number', defaultValue: -70 },
+          Y: { type: 'number', defaultValue: 120 },
+          Z: { type: 'number', defaultValue: 0 },
+          PIN_MODE: { type: 'string', menu: 'CLOTH_PIN_MODES', defaultValue: 'top-row' }
+        }
+      },
+      {
+        opcode: 'configureCloth',
+        blockType: 'command',
+        text: 'configure cloth [ID] damping:[DAMPING] margin:[MARGIN] stretch:[STRETCH] shear:[SHEAR] bend:[BEND] self collision [SELF_COLLISION] thickness:[SELF_DISTANCE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' },
+          DAMPING: { type: 'number', defaultValue: 0.03 },
+          MARGIN: { type: 'number', defaultValue: 3 },
+          STRETCH: { type: 'number', defaultValue: 0 },
+          SHEAR: { type: 'number', defaultValue: 0.00015 },
+          BEND: { type: 'number', defaultValue: 0.0005 },
+          SELF_COLLISION: { type: 'string', menu: 'ON_OFF', defaultValue: 'off' },
+          SELF_DISTANCE: { type: 'number', defaultValue: 8 }
+        }
+      },
+      {
         opcode: 'createDistanceJoint',
         blockType: 'command',
         text: 'create distance joint [ID] body a:[BODY_A] body b:[BODY_B] length:[LENGTH]',
@@ -406,6 +436,14 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'clothSummary',
+        blockType: 'reporter',
+        text: 'cloth [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' }
+        }
+      },
+      {
         opcode: 'queryPointBodies',
         blockType: 'reporter',
         text: 'bodies at point x:[X] y:[Y] z:[Z]',
@@ -538,6 +576,14 @@ export function createExtensionInfo() {
       CONVEX_HULL_PRESETS: {
         acceptReporters: true,
         items: getConvexHullPresetIds()
+      },
+      CLOTH_PIN_MODES: {
+        acceptReporters: true,
+        items: ['top-row', 'top-corners', 'corners', 'left-edge', 'right-edge', 'none']
+      },
+      ON_OFF: {
+        acceptReporters: true,
+        items: ['off', 'on']
       }
     }
   };

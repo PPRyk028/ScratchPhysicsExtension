@@ -10,6 +10,7 @@ import { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, leng
 import { buildRigidBodyIslandGraph, cloneRigidBodyIslandGraph, cloneRigidBodyIsland } from '../rigid/islands.js';
 import { solveJointConstraints } from '../rigid/distance-joint-solver.js';
 import { solveNormalContactConstraints } from '../rigid/normal-contact-solver.js';
+import { ParticleWorld } from '../xpbd/particle-world.js';
 import { BodyRegistry } from './body-registry.js';
 import { ColliderRegistry } from './collider-registry.js';
 import { JointRegistry } from './joint-registry.js';
@@ -109,7 +110,10 @@ function cloneSceneSettings(world) {
     sleepTimeThreshold: Number(world.sleepTimeThreshold),
     ccdEnabled: world.ccdEnabled !== false,
     ccdMotionThreshold: Number(world.ccdMotionThreshold),
-    ccdSafetyMargin: Number(world.ccdSafetyMargin)
+    ccdSafetyMargin: Number(world.ccdSafetyMargin),
+    xpbdIterations: Number(world.particleWorld.iterations),
+    xpbdSubsteps: Number(world.particleWorld.substeps),
+    xpbdDefaultDamping: Number(world.particleWorld.defaultDamping)
   };
 }
 
@@ -552,6 +556,12 @@ export class PhysicsWorld {
     this.colliderRegistry = new ColliderRegistry();
     this.jointRegistry = new JointRegistry();
     this.materialRegistry = new MaterialRegistry();
+    this.particleWorld = new ParticleWorld({
+      gravity: this.gravity,
+      iterations: options.xpbdIterations,
+      substeps: options.xpbdSubsteps,
+      defaultDamping: options.xpbdDefaultDamping
+    });
     this.manifoldCache = new ManifoldCache();
     this.resetRuntimeState();
     this.bootstrapDefaultMaterials();
@@ -582,6 +592,7 @@ export class PhysicsWorld {
       ccdEventCount: 0
     };
     this.lastSolverStats = createEmptySolverStats(this.solverIterations);
+    this.lastXpbdStats = this.particleWorld.getSnapshot().lastStepStats;
     this.lastRaycast = null;
     this.lastShapeCast = null;
     this.lastCcdEvents = [];
@@ -597,6 +608,7 @@ export class PhysicsWorld {
     this.colliderRegistry.clear();
     this.jointRegistry.clear();
     this.materialRegistry.clear();
+    this.particleWorld.reset();
     this.bootstrapDefaultMaterials();
     this.resetRuntimeState();
   }
@@ -611,6 +623,7 @@ export class PhysicsWorld {
 
   setGravity(gravity) {
     this.gravity = cloneVec3(gravity);
+    this.particleWorld.setGravity(this.gravity);
   }
 
   exportSceneDefinition() {
@@ -623,7 +636,8 @@ export class PhysicsWorld {
       shapes: this.shapeRegistry.list(),
       bodies: this.bodyRegistry.list(),
       colliders: this.colliderRegistry.list(),
-      joints: this.jointRegistry.list()
+      joints: this.jointRegistry.list(),
+      xpbd: this.particleWorld.exportSceneDefinition()
     };
   }
 
@@ -649,6 +663,9 @@ export class PhysicsWorld {
     this.ccdEnabled = settings.ccdEnabled !== undefined ? settings.ccdEnabled !== false : this.ccdEnabled;
     this.ccdMotionThreshold = toNonNegativeNumber(settings.ccdMotionThreshold, this.ccdMotionThreshold);
     this.ccdSafetyMargin = toNonNegativeNumber(settings.ccdSafetyMargin, this.ccdSafetyMargin);
+    this.particleWorld.iterations = Math.max(1, Math.floor(toPositiveNumber(settings.xpbdIterations, this.particleWorld.iterations)));
+    this.particleWorld.substeps = Math.max(1, Math.floor(toPositiveNumber(settings.xpbdSubsteps, this.particleWorld.substeps)));
+    this.particleWorld.defaultDamping = toNonNegativeNumber(settings.xpbdDefaultDamping, this.particleWorld.defaultDamping);
 
     if (scene.gravity) {
       this.setGravity(scene.gravity);
@@ -786,6 +803,11 @@ export class PhysicsWorld {
       }
     }
 
+    if (scene.xpbd) {
+      this.particleWorld.importSceneDefinition(scene.xpbd);
+      this.particleWorld.setGravity(this.gravity);
+    }
+
     const cameraPosition = scene.debugCamera?.position ? cloneVec3(scene.debugCamera.position) : cloneVec3(this.debugCamera.position);
     const cameraTarget = scene.debugCamera?.target ? cloneVec3(scene.debugCamera.target) : cloneVec3(this.debugCamera.target);
     this.resetRuntimeState();
@@ -798,7 +820,9 @@ export class PhysicsWorld {
       colliderCount: this.colliderRegistry.count(),
       jointCount: this.jointRegistry.count(),
       materialCount: this.materialRegistry.count(),
-      shapeCount: this.shapeRegistry.count()
+      shapeCount: this.shapeRegistry.count(),
+      clothCount: this.particleWorld.countCloths(),
+      particleCount: this.particleWorld.countParticles()
     };
   }
 
@@ -1484,6 +1508,113 @@ export class PhysicsWorld {
     };
   }
 
+  createClothSheet(options = {}) {
+    return this.particleWorld.createClothSheet({
+      id: options.id,
+      rows: options.rows,
+      columns: options.columns ?? options.cols,
+      spacing: options.spacing,
+      position: options.position ?? createVec3(),
+      pinMode: options.pinMode,
+      particleMass: options.particleMass ?? options.mass,
+      damping: options.damping,
+      collisionMargin: options.collisionMargin,
+      stretchCompliance: options.stretchCompliance,
+      shearCompliance: options.shearCompliance,
+      bendCompliance: options.bendCompliance,
+      selfCollisionEnabled: options.selfCollisionEnabled,
+      selfCollisionDistance: options.selfCollisionDistance
+    });
+  }
+
+  configureCloth(id, options = {}) {
+    return this.particleWorld.configureCloth(id, {
+      damping: options.damping,
+      collisionMargin: options.collisionMargin,
+      stretchCompliance: options.stretchCompliance,
+      shearCompliance: options.shearCompliance,
+      bendCompliance: options.bendCompliance,
+      selfCollisionEnabled: options.selfCollisionEnabled,
+      selfCollisionDistance: options.selfCollisionDistance
+    });
+  }
+
+  getCloth(id) {
+    return this.particleWorld.getCloth(id);
+  }
+
+  listCloths() {
+    return this.particleWorld.listCloths();
+  }
+
+  listStaticClothColliders() {
+    const colliders = [];
+
+    for (const collider of this.colliderRegistry.listMutable()) {
+      if (!collider?.enabled) {
+        continue;
+      }
+
+      const body = collider.bodyId ? this.bodyRegistry.getMutable(collider.bodyId) : null;
+      const isStatic = !body || body.motionType === 'static';
+      if (!isStatic) {
+        continue;
+      }
+
+      const shape = this.shapeRegistry.getMutable(collider.shapeId);
+      if (!shape || (shape.type !== 'box' && shape.type !== 'convex-hull')) {
+        continue;
+      }
+
+      const pose = this.getColliderWorldPose(collider.id);
+      if (!pose) {
+        continue;
+      }
+
+      colliders.push({
+        colliderId: collider.id,
+        bodyId: collider.bodyId ?? null,
+        materialId: collider.materialId,
+        shape,
+        pose
+      });
+    }
+
+    return colliders;
+  }
+
+  listDynamicClothColliders() {
+    const colliders = [];
+
+    for (const collider of this.colliderRegistry.listMutable()) {
+      if (!collider?.enabled || !collider.bodyId) {
+        continue;
+      }
+
+      const body = this.bodyRegistry.getMutable(collider.bodyId);
+      if (!body || !body.enabled || body.motionType !== 'dynamic') {
+        continue;
+      }
+
+      const shape = this.shapeRegistry.getMutable(collider.shapeId);
+      if (!shape || (shape.type !== 'box' && shape.type !== 'convex-hull')) {
+        continue;
+      }
+
+      colliders.push({
+        colliderId: collider.id,
+        bodyId: collider.bodyId,
+        materialId: collider.materialId,
+        shape,
+        body,
+        motionType: body.motionType,
+        getPose: () => this.getColliderWorldPose(collider.id)
+      });
+    }
+
+    return colliders;
+  }
+
   getBody(id) {
     return this.bodyRegistry.get(id);
   }
@@ -1857,6 +1988,8 @@ export class PhysicsWorld {
 
     return {
       bodyCount: this.bodyRegistry.count(),
+      clothCount: this.particleWorld.countCloths(),
+      particleCount: this.particleWorld.countParticles(),
       shapeCount: this.shapeRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
       jointCount: this.jointRegistry.count(),
@@ -1888,12 +2021,21 @@ export class PhysicsWorld {
     let performedSubsteps = 0;
     const aggregatedSolverStats = createEmptySolverStats(this.solverIterations);
     let ccdEventCount = 0;
+    const staticClothColliders = this.listStaticClothColliders();
 
     while (this.accumulatorSeconds + 1e-12 >= this.fixedDeltaTime && performedSubsteps < this.maxSubsteps) {
       this.wakeBodiesFromExternalActivity();
       const ccdEvents = this.integrateRigidBodies(this.fixedDeltaTime);
       ccdEventCount += ccdEvents.length;
       const solverStats = this.solveRigidContacts(this.fixedDeltaTime, this.simulationTick + 1);
+      const dynamicClothColliders = this.listDynamicClothColliders();
+      this.lastXpbdStats = this.particleWorld.step(this.fixedDeltaTime, {
+        staticColliders: staticClothColliders,
+        dynamicColliders: dynamicClothColliders
+      });
+      if ((this.lastXpbdStats.solvedDynamicCollisions ?? 0) > 0) {
+        this.markCollisionStateDirty();
+      }
       mergeSolverStats(aggregatedSolverStats, solverStats);
       this.accumulatorSeconds -= this.fixedDeltaTime;
       this.simulationTick += 1;
@@ -3095,6 +3237,10 @@ export class PhysicsWorld {
       }
     }
 
+    primitives.push(...this.particleWorld.buildDebugPrimitives());
+
+    const xpbdSnapshot = this.particleWorld.getSnapshot();
+
     return createDebugFrame({
       frameNumber: this.renderFrameCount,
       simulationTick: this.simulationTick,
@@ -3102,6 +3248,8 @@ export class PhysicsWorld {
       primitives,
       stats: {
         bodyCount: this.bodyRegistry.count(),
+        clothCount: xpbdSnapshot.clothCount,
+        particleCount: xpbdSnapshot.particleCount,
         shapeCount: this.shapeRegistry.count(),
         colliderCount: this.colliderRegistry.count(),
         jointCount: this.jointRegistry.count(),
@@ -3123,6 +3271,11 @@ export class PhysicsWorld {
         raycastHit: this.lastRaycast?.hit ?? false,
         shapeCastHit: this.lastShapeCast?.hit ?? false,
         ccdEventCount: this.lastCcdEvents.length,
+        xpbdSolvedDistanceConstraints: xpbdSnapshot.lastStepStats.solvedDistanceConstraints,
+        xpbdSolvedPinConstraints: xpbdSnapshot.lastStepStats.solvedPinConstraints,
+        xpbdSolvedStaticCollisions: xpbdSnapshot.lastStepStats.solvedStaticCollisions,
+        xpbdSolvedDynamicCollisions: xpbdSnapshot.lastStepStats.solvedDynamicCollisions,
+        xpbdSolvedSelfCollisions: xpbdSnapshot.lastStepStats.solvedSelfCollisions,
         fixedDeltaTime: this.fixedDeltaTime,
         performedSubsteps: this.lastStepStats.performedSubsteps
       }
@@ -3135,6 +3288,8 @@ export class PhysicsWorld {
     return {
       debugCamera: cloneCamera(this.debugCamera),
       bodyCount: this.bodyRegistry.count(),
+      clothCount: this.particleWorld.countCloths(),
+      particleCount: this.particleWorld.countParticles(),
       shapeCount: this.shapeRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
       jointCount: this.jointRegistry.count(),
@@ -3144,6 +3299,8 @@ export class PhysicsWorld {
       colliders: this.colliderRegistry.list(),
       joints: this.jointRegistry.list(),
       materials: this.materialRegistry.list(),
+      cloths: this.particleWorld.listCloths(),
+      xpbd: this.particleWorld.getSnapshot(),
       collision: collisionState,
       simulationTick: this.simulationTick,
       renderFrameCount: this.renderFrameCount,
@@ -3156,7 +3313,10 @@ export class PhysicsWorld {
       lastStepStats: {
         ...this.lastStepStats
       },
-      lastSolverStats: cloneSolverStats(this.lastSolverStats)
+      lastSolverStats: cloneSolverStats(this.lastSolverStats),
+      lastXpbdStats: {
+        ...this.lastXpbdStats
+      }
     };
   }
 }

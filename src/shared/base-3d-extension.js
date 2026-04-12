@@ -134,6 +134,32 @@ export class Base3DExtension {
     );
   }
 
+  createClothSheet(args) {
+    this.engine.createClothSheet(
+      toString(args.ID, 'cloth'),
+      toNumber(args.ROWS, 6),
+      toNumber(args.COLUMNS, 8),
+      toNumber(args.SPACING, 20),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toString(args.PIN_MODE, 'top-row')
+    );
+  }
+
+  configureCloth(args) {
+    this.engine.configureCloth(
+      toString(args.ID, 'cloth'),
+      toNumber(args.DAMPING, 0.03),
+      toNumber(args.MARGIN, 1),
+      toNumber(args.STRETCH, 0),
+      toNumber(args.SHEAR, 0.00015),
+      toNumber(args.BEND, 0.0005),
+      toString(args.SELF_COLLISION, 'off').toLowerCase() === 'on',
+      toNumber(args.SELF_DISTANCE, 6)
+    );
+  }
+
   convexHullPresetVertices(args) {
     return this.engine.getConvexHullPresetVertices(
       toString(args.PRESET, 'pyramid'),
@@ -332,6 +358,12 @@ export class Base3DExtension {
   jointSummary(args) {
     return this.engine.getJointSummary(
       toString(args.ID, 'joint')
+    );
+  }
+
+  clothSummary(args) {
+    return this.engine.getClothSummary(
+      toString(args.ID, 'cloth')
     );
   }
 
