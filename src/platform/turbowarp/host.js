@@ -27,6 +27,12 @@ export function createTurboWarpHost(scratchApi) {
     hideDebugOverlay() {
       overlay.hide();
     },
+    setDebugOverlayLayers(layersText) {
+      overlay.setLayers(layersText);
+    },
+    resetDebugOverlayLayers() {
+      overlay.resetLayers();
+    },
     getDebugOverlaySummary() {
       return overlay.getSummary();
     },

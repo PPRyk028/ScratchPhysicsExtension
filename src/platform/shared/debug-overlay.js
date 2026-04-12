@@ -1,6 +1,51 @@
 import { createIdentityQuat, createQuatFromAxisAngle, multiplyQuat, normalizeQuat, rotateVec3ByQuat } from '../../physics/math/quat.js';
 import { addVec3, createVec3, crossVec3, dotVec3, normalizeVec3, subtractVec3 } from '../../physics/math/vec3.js';
 
+const LAYER_GROUPS = {
+  bodies: new Set(['rigid-body', 'center-of-mass']),
+  static: new Set(['static-collider', 'collider-origin']),
+  aabb: new Set(['broadphase-aabb']),
+  contacts: new Set(['contact-point', 'contact-normal']),
+  joints: new Set([
+    'distance-joint',
+    'distance-joint-anchor',
+    'point-to-point-joint',
+    'point-to-point-joint-anchor',
+    'hinge-joint',
+    'hinge-joint-anchor',
+    'fixed-joint',
+    'fixed-joint-anchor',
+    'hinge-axis-a',
+    'hinge-axis-b',
+    'fixed-axis-a',
+    'fixed-axis-b',
+    'hinge-motor'
+  ]),
+  queries: new Set([
+    'raycast-line',
+    'raycast-hit-point',
+    'raycast-hit-normal',
+    'shape-cast-line',
+    'shape-cast-hit-point',
+    'shape-cast-hit-normal'
+  ]),
+  ccd: new Set(['ccd-path', 'ccd-hit-point', 'ccd-hit-normal'])
+};
+
+const LAYER_ALIASES = {
+  body: 'bodies',
+  rigid: 'bodies',
+  rigidbody: 'bodies',
+  statics: 'static',
+  bounds: 'aabb',
+  boxes: 'aabb',
+  joints: 'joints',
+  joint: 'joints',
+  query: 'queries',
+  casts: 'queries',
+  contact: 'contacts'
+};
+
 function rgba(color) {
   const r = Math.max(0, Math.min(255, Math.round(Number(color?.r ?? 255))));
   const g = Math.max(0, Math.min(255, Math.round(Number(color?.g ?? 255))));
@@ -15,6 +60,45 @@ function getDomGlobals() {
     window: root,
     document: root?.document ?? null
   };
+}
+
+function normalizeLayerName(value) {
+  const normalizedValue = String(value ?? '').trim().toLowerCase();
+  return LAYER_ALIASES[normalizedValue] ?? normalizedValue;
+}
+
+function parseLayerFilter(text) {
+  const raw = String(text ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  const names = raw
+    .split(/[\s,;|]+/)
+    .map((entry) => normalizeLayerName(entry))
+    .filter(Boolean)
+    .filter((entry, index, values) => values.indexOf(entry) === index);
+
+  if (!names.length || names.includes('all') || names.includes('default')) {
+    return null;
+  }
+
+  const supportedNames = names.filter((entry) => Object.prototype.hasOwnProperty.call(LAYER_GROUPS, entry));
+  return supportedNames.length ? supportedNames : null;
+}
+
+function formatLayerSummary(layerNames) {
+  return layerNames?.length ? layerNames.join(', ') : 'all';
+}
+
+function resolvePrimitiveLayer(category) {
+  for (const [layerName, categories] of Object.entries(LAYER_GROUPS)) {
+    if (categories.has(category)) {
+      return layerName;
+    }
+  }
+
+  return 'bodies';
 }
 
 function ensureCanvasSize(canvas) {
@@ -115,7 +199,8 @@ export function createDebugOverlay(displayName) {
   const state = {
     available: false,
     visible: false,
-    lastSummary: 'overlay unavailable',
+    activeLayers: null,
+    lastSummary: `${displayName} overlay unavailable | layers all`,
     container: null,
     canvas: null,
     label: null
@@ -128,7 +213,7 @@ export function createDebugOverlay(displayName) {
 
     const { document } = getDomGlobals();
     if (!document?.body) {
-      state.lastSummary = `${displayName} overlay unavailable`;
+      state.lastSummary = `${displayName} overlay unavailable | layers ${formatLayerSummary(state.activeLayers)}`;
       return false;
     }
 
@@ -171,7 +256,7 @@ export function createDebugOverlay(displayName) {
     state.container = container;
     state.canvas = canvas;
     state.label = label;
-    state.lastSummary = `${displayName} overlay hidden`;
+    state.lastSummary = `${displayName} overlay hidden | layers ${formatLayerSummary(state.activeLayers)}`;
     return true;
   }
 
@@ -182,7 +267,7 @@ export function createDebugOverlay(displayName) {
 
     state.visible = true;
     state.container.style.display = 'block';
-    state.lastSummary = `${displayName} overlay visible`;
+    state.lastSummary = `${displayName} overlay visible | layers ${formatLayerSummary(state.activeLayers)}`;
     return true;
   }
 
@@ -193,8 +278,20 @@ export function createDebugOverlay(displayName) {
 
     state.visible = false;
     state.container.style.display = 'none';
-    state.lastSummary = `${displayName} overlay hidden`;
+    state.lastSummary = `${displayName} overlay hidden | layers ${formatLayerSummary(state.activeLayers)}`;
     return true;
+  }
+
+  function setLayers(layersText) {
+    state.activeLayers = parseLayerFilter(layersText);
+    state.lastSummary = `${displayName} overlay ${state.visible ? 'visible' : 'hidden'} | layers ${formatLayerSummary(state.activeLayers)}`;
+    return formatLayerSummary(state.activeLayers);
+  }
+
+  function resetLayers() {
+    state.activeLayers = null;
+    state.lastSummary = `${displayName} overlay ${state.visible ? 'visible' : 'hidden'} | layers all`;
+    return 'all';
   }
 
   function clearCanvas(context2d, width, height) {
@@ -220,8 +317,11 @@ export function createDebugOverlay(displayName) {
     const cameraAngles = frame?.debugFrame?.camera?.target ?? createVec3(0, 0, 0);
     const basis = buildViewBasis(cameraAngles);
     const primitives = Array.isArray(frame?.debugFrame?.primitives) ? frame.debugFrame.primitives : [];
+    const visiblePrimitives = state.activeLayers
+      ? primitives.filter((primitive) => state.activeLayers.includes(resolvePrimitiveLayer(primitive.category)))
+      : primitives;
 
-    for (const primitive of primitives) {
+    for (const primitive of visiblePrimitives) {
       const color = rgba(primitive.color);
 
       if (primitive.type === 'line') {
@@ -252,14 +352,16 @@ export function createDebugOverlay(displayName) {
       }
     }
 
-    state.label.textContent = `${displayName} debug overlay | ${primitives.length} primitives | frame ${frame?.frameNumber ?? 0}`;
-    state.lastSummary = `${displayName} overlay visible | ${primitives.length} primitives | frame ${frame?.frameNumber ?? 0}`;
+    state.label.textContent = `${displayName} debug overlay | ${visiblePrimitives.length}/${primitives.length} primitives | layers ${formatLayerSummary(state.activeLayers)} | frame ${frame?.frameNumber ?? 0}`;
+    state.lastSummary = `${displayName} overlay visible | ${visiblePrimitives.length}/${primitives.length} primitives | layers ${formatLayerSummary(state.activeLayers)} | frame ${frame?.frameNumber ?? 0}`;
     return true;
   }
 
   return {
     show,
     hide,
+    setLayers,
+    resetLayers,
     render,
     isAvailable() {
       return ensureDom();

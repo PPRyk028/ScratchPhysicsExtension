@@ -20,8 +20,11 @@ const REQUIRED_OPCODES = [
   'setCameraTarget',
   'createBoxRigidBody',
   'createConvexHullRigidBody',
+  'createPresetConvexHullRigidBody',
   'createStaticBoxCollider',
   'createStaticConvexHullCollider',
+  'createPresetStaticConvexHullCollider',
+  'convexHullPresetVertices',
   'createDistanceJoint',
   'createPointToPointJoint',
   'createHingeJoint',
@@ -36,9 +39,13 @@ const REQUIRED_OPCODES = [
   'capsuleCast',
   'raycast',
   'renderDebugFrame',
+  'loadSceneJson',
   'showDebugOverlay',
   'hideDebugOverlay',
+  'setDebugOverlayLayers',
+  'resetDebugOverlayLayers',
   'worldSummary',
+  'sceneJson',
   'rigidBodySummary',
   'colliderSummary',
   'materialSummary',
@@ -47,11 +54,14 @@ const REQUIRED_OPCODES = [
   'queryPointColliders',
   'queryAabbBodies',
   'queryAabbColliders',
+  'queryBodyContacts',
+  'queryColliderContacts',
   'raycastSummary',
   'shapeCastSummary',
   'ccdSummary',
   'debugFrameSummary',
   'debugOverlaySummary',
+  'sceneIoSummary',
   'hostSummary',
   'resetScene',
   'addCube',
@@ -174,6 +184,8 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.createBoxRigidBody({ ID: 'probe', X: 5, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
   extension.createBoxRigidBody({ ID: 'probe-2', X: 40, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
   extension.createConvexHullRigidBody({ ID: 'probe-hull', VERTICES: '-8 -8 -8; 8 -8 -8; 8 -8 8; -8 -8 8; 0 8 0', X: -20, Y: 30, Z: 0, MASS: 1.5, MATERIAL: 'ice' });
+  extension.createPresetConvexHullRigidBody({ ID: 'preset-hull', PRESET: 'skew-prism', X: -50, Y: 20, Z: 0, SCALE: 40, MASS: 1, MATERIAL: 'ice' });
+  extension.createPresetStaticConvexHullCollider({ ID: 'preset-ramp', PRESET: 'skew-frustum', X: 60, Y: -30, Z: 0, SCALE: 30, MATERIAL: 'ice' });
   extension.createDistanceJoint({ ID: 'joint-1', BODY_A: 'probe', BODY_B: 'probe-2', LENGTH: 35 });
   extension.createPointToPointJoint({ ID: 'joint-2', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7 });
   extension.createHingeJoint({ ID: 'joint-3', BODY_A: 'probe', BODY_B: 'probe-2', X: 20, Y: 6, Z: 7, AX: 0, AY: 1, AZ: 0 });
@@ -183,17 +195,25 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.configureFixedJoint({ ID: 'joint-4', BREAK_FORCE: 2500, BREAK_TORQUE: 1800 });
   extension.configureHingeMotor({ ID: 'joint-3', SPEED: 180, MAX_TORQUE: 25 });
   extension.configureHingeServo({ ID: 'joint-3', TARGET: 30, MAX_SPEED: 240, MAX_TORQUE: 25 });
+  const exportedScene = extension.sceneJson();
+  assert.match(exportedScene, /physics-scene@1/);
+  extension.loadSceneJson({ SCENE_JSON: exportedScene });
+  extension.setDebugOverlayLayers({ LAYERS: 'contacts joints' });
   extension.sphereCast({ X: 0, Y: 120, Z: 0, RADIUS: 10, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
   extension.capsuleCast({ X: 0, Y: 120, Z: 0, RADIUS: 8, HALF_HEIGHT: 20, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
   extension.raycast({ X: 0, Y: 120, Z: 0, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
   extension.showDebugOverlay();
   assert.match(extension.queryPointBodies({ X: 5, Y: 6, Z: 7 }), /1 bodies/);
-  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /5 colliders/);
+  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /7 colliders/);
+  assert.match(extension.queryBodyContacts({ ID: 'probe' }), /(bodies touching|not found)/);
+  assert.match(extension.queryColliderContacts({ ID: 'probe:collider' }), /(colliders touching|not found)/);
+  assert.match(extension.convexHullPresetVertices({ PRESET: 'pyramid', SCALE: 50 }), /;/);
   extension.stepWorld({ SECONDS: 1 / 60 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
+  extension.resetDebugOverlayLayers();
 
-  assert.match(extension.worldSummary(), /3 bodies/);
+  assert.match(extension.worldSummary(), /4 bodies/);
   assert.match(extension.jointSummary({ ID: 'joint-1' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'joint-3' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'joint-4' }), /break force:/);
@@ -204,6 +224,7 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   assert.match(extension.ccdSummary(), /(No CCD events|CCD events)/);
   assert.match(extension.debugFrameSummary(), /TurboWarp frame 1/);
   assert.match(extension.debugOverlaySummary(), /overlay/);
+  assert.match(extension.sceneIoSummary(), /Scene loaded/);
   assert.match(extension.hostSummary(), /TurboWarp/);
   assert.match(extension.hostSummary(), /runtime:yes/);
   assert.match(extension.hostSummary(), /renderer:yes/);
@@ -252,6 +273,8 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.createBoxRigidBody({ ID: 'remote-probe', X: 0, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
   extension.createBoxRigidBody({ ID: 'remote-probe-2', X: 20, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
   extension.createConvexHullRigidBody({ ID: 'remote-hull', VERTICES: '-3 -3 -3; 3 -3 -3; 3 -3 3; -3 -3 3; 0 3 0', X: -15, Y: 6, Z: 0, MASS: 1, MATERIAL: 'material-default' });
+  extension.createPresetConvexHullRigidBody({ ID: 'remote-preset-hull', PRESET: 'wedge', X: -25, Y: 12, Z: 0, SCALE: 20, MASS: 1, MATERIAL: 'material-default' });
+  extension.createPresetStaticConvexHullCollider({ ID: 'remote-preset-ramp', PRESET: 'skew-frustum', X: 30, Y: -16, Z: 0, SCALE: 20, MATERIAL: 'material-default' });
   extension.createDistanceJoint({ ID: 'remote-joint', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', LENGTH: 20 });
   extension.createPointToPointJoint({ ID: 'remote-ball', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0 });
   extension.createHingeJoint({ ID: 'remote-hinge', BODY_A: 'remote-probe', BODY_B: 'remote-probe-2', X: 10, Y: 0, Z: 0, AX: 0, AY: 1, AZ: 0 });
@@ -264,15 +287,19 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.sphereCast({ X: 0, Y: 40, Z: 0, RADIUS: 5, DX: 0, DY: -1, DZ: 0, LENGTH: 100 });
   extension.capsuleCast({ X: 0, Y: 40, Z: 0, RADIUS: 4, HALF_HEIGHT: 8, DX: 0, DY: -1, DZ: 0, LENGTH: 100 });
   extension.raycast({ X: 0, Y: 40, Z: 0, DX: 0, DY: -1, DZ: 0, LENGTH: 100 });
+  extension.setDebugOverlayLayers({ LAYERS: 'contacts queries' });
   extension.showDebugOverlay();
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
+  extension.resetDebugOverlayLayers();
 
-  assert.match(extension.worldSummary(), /3 bodies/);
+  assert.match(extension.worldSummary(), /4 bodies/);
   assert.match(extension.jointSummary({ ID: 'remote-joint' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'remote-hinge' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'remote-fixed' }), /break force:/);
   assert.match(extension.queryPointColliders({ X: 0, Y: 0, Z: 0 }), /2 colliders/);
+  assert.match(extension.queryBodyContacts({ ID: 'remote-probe' }), /(bodies touching|not found)/);
+  assert.match(extension.queryColliderContacts({ ID: 'remote-probe:collider' }), /(colliders touching|not found)/);
   assert.match(extension.raycastSummary(), /Ray hit/);
   assert.match(extension.shapeCastSummary(), /cast hit/);
   assert.match(extension.debugFrameSummary(), /Gandi Remote frame 1/);
@@ -303,6 +330,8 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.createBoxRigidBody({ ID: 'gandi-probe', X: 1, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
   extension.createBoxRigidBody({ ID: 'gandi-link', X: 40, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
   extension.createConvexHullRigidBody({ ID: 'gandi-hull', VERTICES: '-10 -10 -10; 10 -10 -10; 10 -10 10; -10 -10 10; 0 10 0', X: -30, Y: 20, Z: 3, MASS: 2, MATERIAL: 'rubber' });
+  extension.createPresetConvexHullRigidBody({ ID: 'gandi-preset-hull', PRESET: 'skew-hexahedron', X: -50, Y: 30, Z: 3, SCALE: 24, MASS: 2, MATERIAL: 'rubber' });
+  extension.createPresetStaticConvexHullCollider({ ID: 'gandi-preset-ramp', PRESET: 'wedge', X: 50, Y: -16, Z: 3, SCALE: 30, MATERIAL: 'rubber' });
   extension.createDistanceJoint({ ID: 'gandi-joint', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', LENGTH: 40 });
   extension.createPointToPointJoint({ ID: 'gandi-ball', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3 });
   extension.createHingeJoint({ ID: 'gandi-hinge', BODY_A: 'gandi-probe', BODY_B: 'gandi-link', X: 20, Y: 2, Z: 3, AX: 0, AY: 1, AZ: 0 });
@@ -312,25 +341,32 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.configureFixedJoint({ ID: 'gandi-fixed', BREAK_FORCE: 2000, BREAK_TORQUE: 1500 });
   extension.configureHingeMotor({ ID: 'gandi-hinge', SPEED: 120, MAX_TORQUE: 12 });
   extension.configureHingeServo({ ID: 'gandi-hinge', TARGET: 20, MAX_SPEED: 180, MAX_TORQUE: 12 });
+  const gandiScene = extension.sceneJson();
+  extension.loadSceneJson({ SCENE_JSON: gandiScene });
   extension.sphereCast({ X: 1, Y: 80, Z: 3, RADIUS: 10, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
   extension.capsuleCast({ X: 1, Y: 80, Z: 3, RADIUS: 8, HALF_HEIGHT: 16, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
   extension.raycast({ X: 1, Y: 80, Z: 3, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
-  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 60, HY: 60, HZ: 60 }), /5 colliders/);
+  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 90, HY: 90, HZ: 90 }), /7 colliders/);
+  extension.setDebugOverlayLayers({ LAYERS: 'bodies contacts joints' });
   extension.showDebugOverlay();
   extension.stepWorld({ SECONDS: 1 / 30 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
+  extension.resetDebugOverlayLayers();
 
-  assert.match(extension.worldSummary(), /3 bodies/);
+  assert.match(extension.worldSummary(), /4 bodies/);
   assert.match(extension.rigidBodySummary({ ID: 'gandi-probe' }), /gandi-probe/);
   assert.match(extension.materialSummary({ ID: 'rubber' }), /restitution:0.8/);
   assert.match(extension.jointSummary({ ID: 'gandi-joint' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'gandi-hinge' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'gandi-fixed' }), /break force:/);
+  assert.match(extension.queryBodyContacts({ ID: 'gandi-probe' }), /(bodies touching|not found)/);
+  assert.match(extension.queryColliderContacts({ ID: 'gandi-probe:collider' }), /(colliders touching|not found)/);
   assert.match(extension.raycastSummary(), /Ray hit/);
   assert.match(extension.shapeCastSummary(), /cast hit/);
   assert.match(extension.debugFrameSummary(), /Gandi Approved frame 1/);
   assert.match(extension.debugOverlaySummary(), /overlay/);
+  assert.match(extension.sceneIoSummary(), /Scene loaded/);
   assert.match(extension.hostSummary(), /Gandi Approved/);
   assert.match(extension.hostSummary(), /runtime:yes/);
   assert.match(extension.hostSummary(), /renderer:yes/);

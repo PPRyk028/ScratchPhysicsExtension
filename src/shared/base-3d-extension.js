@@ -98,6 +98,19 @@ export class Base3DExtension {
     );
   }
 
+  createPresetConvexHullRigidBody(args) {
+    this.engine.createPresetConvexHullRigidBody(
+      toString(args.ID, 'body'),
+      toString(args.PRESET, 'pyramid'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SCALE, 100),
+      toNumber(args.MASS, 1),
+      toString(args.MATERIAL, '')
+    );
+  }
+
   createStaticConvexHullCollider(args) {
     this.engine.createStaticConvexHullCollider(
       toString(args.ID, 'collider'),
@@ -106,6 +119,25 @@ export class Base3DExtension {
       toNumber(args.Y),
       toNumber(args.Z),
       toString(args.MATERIAL, '')
+    );
+  }
+
+  createPresetStaticConvexHullCollider(args) {
+    this.engine.createPresetStaticConvexHullCollider(
+      toString(args.ID, 'collider'),
+      toString(args.PRESET, 'pyramid'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SCALE, 100),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  convexHullPresetVertices(args) {
+    return this.engine.getConvexHullPresetVertices(
+      toString(args.PRESET, 'pyramid'),
+      toNumber(args.SCALE, 100)
     );
   }
 
@@ -247,6 +279,22 @@ export class Base3DExtension {
     this.engine.renderDebugFrame();
   }
 
+  loadSceneJson(args) {
+    this.engine.loadSceneJson(
+      toString(args.SCENE_JSON, '{}')
+    );
+  }
+
+  setDebugOverlayLayers(args) {
+    this.engine.setDebugOverlayLayers(
+      toString(args.LAYERS, 'all')
+    );
+  }
+
+  resetDebugOverlayLayers() {
+    this.engine.resetDebugOverlayLayers();
+  }
+
   showDebugOverlay() {
     this.engine.showDebugOverlay();
   }
@@ -325,6 +373,22 @@ export class Base3DExtension {
     );
   }
 
+  queryBodyContacts(args) {
+    return this.engine.queryBodyContacts(
+      toString(args.ID, 'body')
+    );
+  }
+
+  queryColliderContacts(args) {
+    return this.engine.queryColliderContacts(
+      toString(args.ID, 'collider')
+    );
+  }
+
+  sceneJson() {
+    return this.engine.exportSceneJson();
+  }
+
   raycastSummary() {
     return this.engine.getLastRaycastSummary();
   }
@@ -343,6 +407,10 @@ export class Base3DExtension {
 
   debugOverlaySummary() {
     return this.engine.getDebugOverlaySummary();
+  }
+
+  sceneIoSummary() {
+    return this.engine.getSceneIoSummary();
   }
 
   lastFrameSummary() {

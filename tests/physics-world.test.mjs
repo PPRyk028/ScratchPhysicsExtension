@@ -163,6 +163,81 @@ test('PhysicsWorld debug camera preserves independent angle state', () => {
   assert.deepEqual(frame.camera.target, { x: 10, y: 20, z: 30 });
 });
 
+test('PhysicsWorld exports and imports scene definitions with stable ids and settings', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 90,
+    maxSubsteps: 3,
+    solverIterations: 12
+  });
+  world.setGravity({ x: 0, y: -12, z: 0 });
+  world.setDebugCameraPosition({ x: 200, y: 120, z: 500 });
+  world.setDebugCameraTarget({ x: -8, y: 18, z: 0 });
+  world.createMaterial({
+    id: 'ice',
+    friction: 0.05,
+    restitution: 0.1,
+    density: 0.8
+  });
+  world.createStaticConvexHullCollider({
+    id: 'ramp',
+    position: { x: 0, y: -20, z: 0 },
+    vertices: [
+      { x: -40, y: -20, z: -20 },
+      { x: 40, y: -20, z: -20 },
+      { x: 40, y: -20, z: 20 },
+      { x: -40, y: -20, z: 20 },
+      { x: -40, y: 10, z: -20 },
+      { x: -40, y: 10, z: 20 }
+    ],
+    materialId: 'ice'
+  });
+  world.createBoxBody({
+    id: 'crate',
+    position: { x: 0, y: 20, z: 0 },
+    size: 10,
+    mass: 2,
+    materialId: 'ice'
+  });
+  world.createConvexHullBody({
+    id: 'hull',
+    position: { x: 20, y: 35, z: 0 },
+    mass: 1,
+    materialId: 'ice',
+    vertices: [
+      { x: -5, y: -5, z: -5 },
+      { x: 5, y: -5, z: -5 },
+      { x: 5, y: -5, z: 5 },
+      { x: -5, y: -5, z: 5 },
+      { x: 0, y: 7, z: 0 }
+    ]
+  });
+  world.createDistanceJoint({
+    id: 'link',
+    bodyAId: 'crate',
+    bodyBId: 'hull',
+    distance: 24
+  });
+
+  const scene = world.exportSceneDefinition();
+  const restoredWorld = new PhysicsWorld();
+  const imported = restoredWorld.importSceneDefinition(scene, {
+    reset: true
+  });
+
+  assert.equal(scene.schemaVersion, 'physics-scene@1');
+  assert.equal(imported.bodyCount, 2);
+  assert.equal(imported.colliderCount, 3);
+  assert.equal(imported.jointCount, 1);
+  assert.equal(restoredWorld.getBody('crate').mass, 2);
+  assert.equal(restoredWorld.getCollider('ramp:collider').materialId, 'ice');
+  assert.equal(restoredWorld.getJoint('link').type, 'distance-joint');
+  assert.deepEqual(restoredWorld.getSnapshot().gravity, { x: 0, y: -12, z: 0 });
+  assert.deepEqual(restoredWorld.getSnapshot().debugCamera.position, { x: 200, y: 120, z: 500 });
+  assert.deepEqual(restoredWorld.getSnapshot().debugCamera.target, { x: -8, y: 18, z: 0 });
+  assert.equal(restoredWorld.fixedDeltaTime, 1 / 90);
+  assert.equal(restoredWorld.solverIterations, 12);
+});
+
 test('PhysicsWorld generates broadphase pairs and box-box convex manifold contact pairs', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({
@@ -751,6 +826,34 @@ test('PhysicsWorld point and AABB queries return overlapping bodies and collider
   assert.equal(pointResult.bodies[0].id, 'query-box');
   assert.equal(aabbResult.count.bodies, 1);
   assert.equal(aabbResult.count.colliders, 2);
+});
+
+test('PhysicsWorld contact queries list touching bodies and colliders', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'box-a',
+    position: { x: 0, y: 0, z: 0 },
+    size: 4,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'box-b',
+    position: { x: 2.5, y: 0, z: 0 },
+    size: 4,
+    mass: 1
+  });
+
+  const touchingBodies = world.getBodiesTouchingBody('box-a');
+  const touchingColliders = world.getCollidersTouchingCollider('box-a:collider');
+
+  assert.equal(touchingBodies.count, 1);
+  assert.equal(touchingBodies.bodies[0].id, 'box-b');
+  assert.equal(touchingBodies.pairs.length, 1);
+  assert.equal(touchingColliders.count, 1);
+  assert.equal(touchingColliders.colliders[0].id, 'box-b:collider');
+  assert.equal(touchingColliders.pairs[0].pairKey, 'box-a:collider|box-b:collider');
 });
 
 test('PhysicsWorld exposes collider world poses, body collider lookup, and world summary', () => {

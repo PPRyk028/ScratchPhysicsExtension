@@ -3,7 +3,7 @@
 const __modules = {
   0: function(__require, __exports) {
 const { Base3DExtension } = __require(1);
-const { createGandiRemoteHost } = __require(27);
+const { createGandiRemoteHost } = __require(28);
 const ScratchApi = globalThis.Scratch;
 
 if (!ScratchApi) {
@@ -22,8 +22,8 @@ ScratchApi.extensions.register(new GandiRemote3DExtension());
 },
   1: function(__require, __exports) {
 const { Engine3D } = __require(2);
-const { toNumber, toString } = __require(25);
-const { createExtensionInfo } = __require(26);
+const { toNumber, toString } = __require(26);
+const { createExtensionInfo } = __require(27);
 class Base3DExtension {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
@@ -120,6 +120,19 @@ class Base3DExtension {
     );
   }
 
+  createPresetConvexHullRigidBody(args) {
+    this.engine.createPresetConvexHullRigidBody(
+      toString(args.ID, 'body'),
+      toString(args.PRESET, 'pyramid'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SCALE, 100),
+      toNumber(args.MASS, 1),
+      toString(args.MATERIAL, '')
+    );
+  }
+
   createStaticConvexHullCollider(args) {
     this.engine.createStaticConvexHullCollider(
       toString(args.ID, 'collider'),
@@ -128,6 +141,25 @@ class Base3DExtension {
       toNumber(args.Y),
       toNumber(args.Z),
       toString(args.MATERIAL, '')
+    );
+  }
+
+  createPresetStaticConvexHullCollider(args) {
+    this.engine.createPresetStaticConvexHullCollider(
+      toString(args.ID, 'collider'),
+      toString(args.PRESET, 'pyramid'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SCALE, 100),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  convexHullPresetVertices(args) {
+    return this.engine.getConvexHullPresetVertices(
+      toString(args.PRESET, 'pyramid'),
+      toNumber(args.SCALE, 100)
     );
   }
 
@@ -269,6 +301,22 @@ class Base3DExtension {
     this.engine.renderDebugFrame();
   }
 
+  loadSceneJson(args) {
+    this.engine.loadSceneJson(
+      toString(args.SCENE_JSON, '{}')
+    );
+  }
+
+  setDebugOverlayLayers(args) {
+    this.engine.setDebugOverlayLayers(
+      toString(args.LAYERS, 'all')
+    );
+  }
+
+  resetDebugOverlayLayers() {
+    this.engine.resetDebugOverlayLayers();
+  }
+
   showDebugOverlay() {
     this.engine.showDebugOverlay();
   }
@@ -347,6 +395,22 @@ class Base3DExtension {
     );
   }
 
+  queryBodyContacts(args) {
+    return this.engine.queryBodyContacts(
+      toString(args.ID, 'body')
+    );
+  }
+
+  queryColliderContacts(args) {
+    return this.engine.queryColliderContacts(
+      toString(args.ID, 'collider')
+    );
+  }
+
+  sceneJson() {
+    return this.engine.exportSceneJson();
+  }
+
   raycastSummary() {
     return this.engine.getLastRaycastSummary();
   }
@@ -367,6 +431,10 @@ class Base3DExtension {
     return this.engine.getDebugOverlaySummary();
   }
 
+  sceneIoSummary() {
+    return this.engine.getSceneIoSummary();
+  }
+
   lastFrameSummary() {
     return this.engine.getLastFrameSummary();
   }
@@ -380,6 +448,7 @@ __exports.Base3DExtension = Base3DExtension;
 },
   2: function(__require, __exports) {
 const { PhysicsWorld, createVec3 } = __require(3);
+const { getConvexHullPresetVertexText } = __require(25);
 function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
 }
@@ -390,6 +459,14 @@ function formatOptionalNumber(value, fallback = 'none') {
   }
 
   return Number.isFinite(Number(value)) ? `${Number(value)}` : fallback;
+}
+
+function formatIdentifierList(records) {
+  if (!Array.isArray(records) || records.length === 0) {
+    return 'none';
+  }
+
+  return records.map((record) => record.id).join(', ');
 }
 
 function radiansToDegrees(value) {
@@ -450,6 +527,7 @@ class Engine3D {
     this.hostBridge = hostBridge;
     this.world = new PhysicsWorld();
     this.lastFrame = null;
+    this.lastSceneIoSummary = 'No scene import/export yet';
   }
 
   resetScene() {
@@ -460,6 +538,10 @@ class Engine3D {
 
   resetWorld() {
     this.resetScene();
+  }
+
+  getConvexHullPresetVertices(presetId, scale) {
+    return getConvexHullPresetVertexText(presetId, scale);
   }
 
   setCameraPosition(x, y, z) {
@@ -539,6 +621,18 @@ class Engine3D {
     return body;
   }
 
+  createPresetConvexHullRigidBody(id, presetId, x, y, z, scale, mass, materialId = '') {
+    return this.createConvexHullRigidBody(
+      id,
+      this.getConvexHullPresetVertices(presetId, scale),
+      x,
+      y,
+      z,
+      mass,
+      materialId
+    );
+  }
+
   createStaticConvexHullCollider(id, verticesText, x, y, z, materialId = '') {
     const vertices = parseConvexHullVertices(verticesText);
     const { collider } = this.world.createStaticConvexHullCollider({
@@ -550,6 +644,17 @@ class Engine3D {
 
     this.hostBridge.log(`Static convex hull collider ${collider.id} registered with ${vertices.length} vertices`);
     return collider;
+  }
+
+  createPresetStaticConvexHullCollider(id, presetId, x, y, z, scale, materialId = '') {
+    return this.createStaticConvexHullCollider(
+      id,
+      this.getConvexHullPresetVertices(presetId, scale),
+      x,
+      y,
+      z,
+      materialId
+    );
   }
 
   createDistanceJoint(id, bodyAId, bodyBId, distance = 0) {
@@ -773,6 +878,42 @@ class Engine3D {
     }
   }
 
+  setDebugOverlayLayers(layersText) {
+    if (typeof this.hostBridge.setDebugOverlayLayers === 'function') {
+      this.hostBridge.setDebugOverlayLayers(layersText);
+    }
+  }
+
+  resetDebugOverlayLayers() {
+    if (typeof this.hostBridge.resetDebugOverlayLayers === 'function') {
+      this.hostBridge.resetDebugOverlayLayers();
+    }
+  }
+
+  exportSceneJson() {
+    const sceneDefinition = this.world.exportSceneDefinition();
+    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
+    return JSON.stringify(sceneDefinition);
+  }
+
+  loadSceneJson(sceneJsonText) {
+    try {
+      const parsedScene = JSON.parse(String(sceneJsonText ?? '').trim() || '{}');
+      const imported = this.world.importSceneDefinition(parsedScene, {
+        reset: true
+      });
+      this.lastFrame = null;
+      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
+      this.hostBridge.log(this.lastSceneIoSummary);
+      return true;
+    } catch (error) {
+      const message = `Scene load failed | ${error?.message ?? 'invalid JSON'}`;
+      this.lastSceneIoSummary = message;
+      this.hostBridge.log(message);
+      return false;
+    }
+  }
+
   getSceneSummary() {
     return summarizeSnapshot(this.world.getSnapshot());
   }
@@ -857,6 +998,26 @@ class Engine3D {
     return `${result.count.colliders} colliders in AABB ${x}, ${y}, ${z} | ${joinIds(result.colliders)}`;
   }
 
+  queryBodyContacts(id) {
+    const body = this.world.getBody(id);
+    if (!body) {
+      return `Rigid body ${id} not found`;
+    }
+
+    const result = this.world.getBodiesTouchingBody(id);
+    return `${result.count} bodies touching ${id} | ${formatIdentifierList(result.bodies)}`;
+  }
+
+  queryColliderContacts(id) {
+    const collider = this.world.getCollider(id);
+    if (!collider) {
+      return `Collider ${id} not found`;
+    }
+
+    const result = this.world.getCollidersTouchingCollider(id);
+    return `${result.count} colliders touching ${id} | ${formatIdentifierList(result.colliders)}`;
+  }
+
   getLastRaycastSummary() {
     const raycast = this.world.getLastRaycast();
     if (!raycast) {
@@ -907,6 +1068,10 @@ class Engine3D {
     }
 
     return this.hostBridge.getDebugOverlaySummary();
+  }
+
+  getSceneIoSummary() {
+    return this.lastSceneIoSummary;
   }
 
   getHostSummary() {
@@ -6073,6 +6238,24 @@ function cloneCamera(camera) {
   };
 }
 
+function cloneSceneSettings(world) {
+  return {
+    fixedDeltaTime: Number(world.fixedDeltaTime),
+    maxSubsteps: Number(world.maxSubsteps),
+    solverIterations: Number(world.solverIterations),
+    solverBaumgarte: Number(world.solverBaumgarte),
+    allowedPenetration: Number(world.allowedPenetration),
+    positionCorrectionPercent: Number(world.positionCorrectionPercent),
+    sleepEnabled: world.sleepEnabled !== false,
+    sleepLinearThreshold: Number(world.sleepLinearThreshold),
+    sleepAngularThreshold: Number(world.sleepAngularThreshold),
+    sleepTimeThreshold: Number(world.sleepTimeThreshold),
+    ccdEnabled: world.ccdEnabled !== false,
+    ccdMotionThreshold: Number(world.ccdMotionThreshold),
+    ccdSafetyMargin: Number(world.ccdSafetyMargin)
+  };
+}
+
 function getBodyVelocityAtPoint(body, contactPosition) {
   if (!body) {
     return createVec3();
@@ -6570,6 +6753,195 @@ class PhysicsWorld {
 
   setGravity(gravity) {
     this.gravity = cloneVec3(gravity);
+  }
+
+  exportSceneDefinition() {
+    return {
+      schemaVersion: 'physics-scene@1',
+      settings: cloneSceneSettings(this),
+      gravity: cloneVec3(this.gravity),
+      debugCamera: cloneCamera(this.debugCamera),
+      materials: this.materialRegistry.list(),
+      shapes: this.shapeRegistry.list(),
+      bodies: this.bodyRegistry.list(),
+      colliders: this.colliderRegistry.list(),
+      joints: this.jointRegistry.list()
+    };
+  }
+
+  importSceneDefinition(sceneDefinition = {}, options = {}) {
+    const shouldReset = options.reset !== false;
+    const scene = typeof sceneDefinition === 'object' && sceneDefinition !== null ? sceneDefinition : {};
+
+    if (shouldReset) {
+      this.reset();
+    }
+
+    const settings = typeof scene.settings === 'object' && scene.settings !== null ? scene.settings : {};
+    this.fixedDeltaTime = toPositiveNumber(settings.fixedDeltaTime, this.fixedDeltaTime);
+    this.maxSubsteps = Math.max(1, Math.floor(toPositiveNumber(settings.maxSubsteps, this.maxSubsteps)));
+    this.solverIterations = Math.max(1, Math.floor(toPositiveNumber(settings.solverIterations, this.solverIterations)));
+    this.solverBaumgarte = toNonNegativeNumber(settings.solverBaumgarte, this.solverBaumgarte);
+    this.allowedPenetration = toNonNegativeNumber(settings.allowedPenetration, this.allowedPenetration);
+    this.positionCorrectionPercent = toNonNegativeNumber(settings.positionCorrectionPercent, this.positionCorrectionPercent);
+    this.sleepEnabled = settings.sleepEnabled !== undefined ? settings.sleepEnabled !== false : this.sleepEnabled;
+    this.sleepLinearThreshold = toNonNegativeNumber(settings.sleepLinearThreshold, this.sleepLinearThreshold);
+    this.sleepAngularThreshold = toNonNegativeNumber(settings.sleepAngularThreshold, this.sleepAngularThreshold);
+    this.sleepTimeThreshold = toNonNegativeNumber(settings.sleepTimeThreshold, this.sleepTimeThreshold);
+    this.ccdEnabled = settings.ccdEnabled !== undefined ? settings.ccdEnabled !== false : this.ccdEnabled;
+    this.ccdMotionThreshold = toNonNegativeNumber(settings.ccdMotionThreshold, this.ccdMotionThreshold);
+    this.ccdSafetyMargin = toNonNegativeNumber(settings.ccdSafetyMargin, this.ccdSafetyMargin);
+
+    if (scene.gravity) {
+      this.setGravity(scene.gravity);
+    }
+
+    if (scene.debugCamera?.position) {
+      this.setDebugCameraPosition(scene.debugCamera.position);
+    }
+
+    if (scene.debugCamera?.target) {
+      this.setDebugCameraTarget(scene.debugCamera.target);
+    }
+
+    for (const material of Array.isArray(scene.materials) ? scene.materials : []) {
+      this.createMaterial(material);
+    }
+
+    for (const shape of Array.isArray(scene.shapes) ? scene.shapes : []) {
+      if (!shape?.id || !shape?.type) {
+        continue;
+      }
+
+      if (shape.type === 'box') {
+        this.createBoxShape({
+          id: shape.id,
+          halfExtents: shape.geometry?.halfExtents,
+          localPose: shape.localPose,
+          userData: shape.userData
+        });
+        continue;
+      }
+
+      if (shape.type === 'sphere') {
+        this.createSphereShape({
+          id: shape.id,
+          radius: shape.geometry?.radius,
+          localPose: shape.localPose,
+          userData: shape.userData
+        });
+        continue;
+      }
+
+      if (shape.type === 'capsule') {
+        this.createCapsuleShape({
+          id: shape.id,
+          radius: shape.geometry?.radius,
+          halfHeight: shape.geometry?.halfHeight,
+          localPose: shape.localPose,
+          userData: shape.userData
+        });
+        continue;
+      }
+
+      if (shape.type === 'convex-hull') {
+        this.createConvexHullShape({
+          id: shape.id,
+          vertices: shape.geometry?.vertices,
+          localPose: shape.localPose,
+          userData: shape.userData
+        });
+      }
+    }
+
+    for (const body of Array.isArray(scene.bodies) ? scene.bodies : []) {
+      if (!body?.id) {
+        continue;
+      }
+
+      this.createRigidBody({
+        id: body.id,
+        motionType: body.motionType,
+        shapeId: body.shapeId,
+        primaryColliderId: body.primaryColliderId,
+        colliderIds: body.colliderIds,
+        position: body.position,
+        rotation: body.rotation,
+        linearVelocity: body.linearVelocity,
+        angularVelocity: body.angularVelocity,
+        forceAccumulator: body.forceAccumulator,
+        torqueAccumulator: body.torqueAccumulator,
+        mass: body.mass,
+        canSleep: body.canSleep,
+        sleeping: body.sleeping,
+        sleepTimer: body.sleepTimer,
+        enabled: body.enabled,
+        userData: body.userData
+      });
+    }
+
+    for (const collider of Array.isArray(scene.colliders) ? scene.colliders : []) {
+      if (!collider?.id) {
+        continue;
+      }
+
+      this.createCollider({
+        id: collider.id,
+        shapeId: collider.shapeId,
+        bodyId: collider.bodyId,
+        materialId: collider.materialId,
+        enabled: collider.enabled,
+        isSensor: collider.isSensor,
+        localPose: collider.localPose,
+        userData: collider.userData
+      });
+    }
+
+    for (const joint of Array.isArray(scene.joints) ? scene.joints : []) {
+      if (!joint?.id || !joint?.type) {
+        continue;
+      }
+
+      let createdJoint = null;
+      if (joint.type === 'distance-joint') {
+        createdJoint = this.jointRegistry.createDistanceJoint(joint);
+      } else if (joint.type === 'point-to-point-joint') {
+        createdJoint = this.jointRegistry.createPointToPointJoint(joint);
+      } else if (joint.type === 'hinge-joint') {
+        createdJoint = this.jointRegistry.createHingeJoint(joint);
+      } else if (joint.type === 'fixed-joint') {
+        createdJoint = this.jointRegistry.createFixedJoint(joint);
+      }
+
+      if (createdJoint) {
+        const mutableJoint = this.jointRegistry.getMutable(createdJoint.id);
+        if (mutableJoint) {
+          mutableJoint.enabled = joint.enabled !== false;
+          mutableJoint.broken = joint.broken === true;
+          mutableJoint.lastAppliedForce = 0;
+          mutableJoint.lastAppliedTorque = 0;
+          mutableJoint.accumulatedImpulse = 0;
+          mutableJoint.accumulatedLinearImpulse = createVec3();
+          mutableJoint.accumulatedAngularImpulse = createVec3();
+          mutableJoint.accumulatedMotorImpulse = 0;
+        }
+      }
+    }
+
+    const cameraPosition = scene.debugCamera?.position ? cloneVec3(scene.debugCamera.position) : cloneVec3(this.debugCamera.position);
+    const cameraTarget = scene.debugCamera?.target ? cloneVec3(scene.debugCamera.target) : cloneVec3(this.debugCamera.target);
+    this.resetRuntimeState();
+    this.debugCamera.position = cameraPosition;
+    this.debugCamera.target = cameraTarget;
+    this.markCollisionStateDirty();
+
+    return {
+      bodyCount: this.bodyRegistry.count(),
+      colliderCount: this.colliderRegistry.count(),
+      jointCount: this.jointRegistry.count(),
+      materialCount: this.materialRegistry.count(),
+      shapeCount: this.shapeRegistry.count()
+    };
   }
 
   markCollisionStateDirty() {
@@ -8139,6 +8511,72 @@ class PhysicsWorld {
         halfExtents
       }
     });
+  }
+
+  getContactPairsForBody(bodyId) {
+    const resolvedBodyId = String(bodyId ?? '').trim();
+    if (!resolvedBodyId) {
+      return [];
+    }
+
+    return this.ensureCollisionState().contactPairs
+      .filter((contactPair) => contactPair.bodyAId === resolvedBodyId || contactPair.bodyBId === resolvedBodyId)
+      .map((contactPair) => cloneContactPair(contactPair));
+  }
+
+  getBodiesTouchingBody(bodyId) {
+    const resolvedBodyId = String(bodyId ?? '').trim();
+    const pairs = this.getContactPairsForBody(resolvedBodyId);
+    const touchedBodyIds = new Set();
+
+    for (const pair of pairs) {
+      const otherBodyId = pair.bodyAId === resolvedBodyId ? pair.bodyBId : pair.bodyAId;
+      if (otherBodyId) {
+        touchedBodyIds.add(otherBodyId);
+      }
+    }
+
+    return {
+      bodyId: resolvedBodyId,
+      pairs,
+      bodies: Array.from(touchedBodyIds)
+        .map((otherBodyId) => this.getBody(otherBodyId))
+        .filter(Boolean),
+      count: touchedBodyIds.size
+    };
+  }
+
+  getContactPairsForCollider(colliderId) {
+    const resolvedColliderId = String(colliderId ?? '').trim();
+    if (!resolvedColliderId) {
+      return [];
+    }
+
+    return this.ensureCollisionState().contactPairs
+      .filter((contactPair) => contactPair.colliderAId === resolvedColliderId || contactPair.colliderBId === resolvedColliderId)
+      .map((contactPair) => cloneContactPair(contactPair));
+  }
+
+  getCollidersTouchingCollider(colliderId) {
+    const resolvedColliderId = String(colliderId ?? '').trim();
+    const pairs = this.getContactPairsForCollider(resolvedColliderId);
+    const touchedColliderIds = new Set();
+
+    for (const pair of pairs) {
+      const otherColliderId = pair.colliderAId === resolvedColliderId ? pair.colliderBId : pair.colliderAId;
+      if (otherColliderId) {
+        touchedColliderIds.add(otherColliderId);
+      }
+    }
+
+    return {
+      colliderId: resolvedColliderId,
+      pairs,
+      colliders: Array.from(touchedColliderIds)
+        .map((otherColliderId) => this.getCollider(otherColliderId))
+        .filter(Boolean),
+      count: touchedColliderIds.size
+    };
   }
 
   shapeCastAgainstWorld(options = {}) {
@@ -9802,6 +10240,107 @@ class ShapeRegistry extends BaseRegistry {
 __exports.ShapeRegistry = ShapeRegistry;
 },
   25: function(__require, __exports) {
+const PRESET_LIBRARY = {
+  pyramid: [
+    [-0.5, -0.5, -0.5],
+    [0.5, -0.5, -0.5],
+    [0.5, -0.5, 0.5],
+    [-0.5, -0.5, 0.5],
+    [0, 0.55, 0]
+  ],
+  'skew-prism': [
+    [-0.5, -0.35, -0.4],
+    [0.55, -0.25, -0.15],
+    [-0.1, -0.2, 0.6],
+    [-0.3, 0.55, -0.3],
+    [0.75, 0.65, -0.05],
+    [0.1, 0.7, 0.7]
+  ],
+  'skew-hexahedron': [
+    [-0.5, -0.35, -0.3],
+    [0.6, -0.25, -0.15],
+    [-0.3, 0.5, -0.25],
+    [0.8, 0.6, -0.1],
+    [-0.45, -0.2, 0.65],
+    [0.65, -0.1, 0.8],
+    [-0.25, 0.65, 0.7],
+    [0.85, 0.75, 0.85]
+  ],
+  'skew-frustum': [
+    [-0.6, -0.4, -0.5],
+    [0.5, -0.35, -0.45],
+    [0.6, -0.3, 0.55],
+    [-0.55, -0.45, 0.6],
+    [-0.2, 0.45, -0.15],
+    [0.3, 0.5, -0.1],
+    [0.35, 0.48, 0.3],
+    [-0.25, 0.42, 0.35]
+  ],
+  wedge: [
+    [-0.55, -0.45, -0.5],
+    [0.55, -0.45, -0.5],
+    [0.55, -0.45, 0.5],
+    [-0.55, -0.45, 0.5],
+    [-0.55, 0.45, -0.5],
+    [-0.55, 0.45, 0.5]
+  ],
+  octahedron: [
+    [0, 0.7, 0],
+    [0.6, 0, 0],
+    [0, 0, 0.6],
+    [-0.6, 0, 0],
+    [0, 0, -0.6],
+    [0, -0.7, 0]
+  ]
+};
+
+const DEFAULT_PRESET_ID = 'pyramid';
+
+function toPositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizePresetId(value) {
+  const presetId = String(value ?? '').trim().toLowerCase();
+  return PRESET_LIBRARY[presetId] ? presetId : DEFAULT_PRESET_ID;
+}
+
+function formatCoordinate(value) {
+  const rounded = Math.round(Number(value) * 1000) / 1000;
+  return Number.isInteger(rounded) ? `${rounded}` : `${rounded}`;
+}
+function getConvexHullPresetIds() {
+  return Object.keys(PRESET_LIBRARY);
+}
+function getDefaultConvexHullPresetId() {
+  return DEFAULT_PRESET_ID;
+}
+function resolveConvexHullPresetVertices(presetId, scale = 100) {
+  const resolvedPresetId = normalizePresetId(presetId);
+  const resolvedScale = toPositiveNumber(scale, 100);
+  return PRESET_LIBRARY[resolvedPresetId].map(([x, y, z]) => ({
+    x: x * resolvedScale,
+    y: y * resolvedScale,
+    z: z * resolvedScale
+  }));
+}
+function formatConvexHullVertices(vertices) {
+  return (Array.isArray(vertices) ? vertices : [])
+    .map((vertex) => `${formatCoordinate(vertex.x)} ${formatCoordinate(vertex.y)} ${formatCoordinate(vertex.z)}`)
+    .join('; ');
+}
+function getConvexHullPresetVertexText(presetId, scale = 100) {
+  return formatConvexHullVertices(resolveConvexHullPresetVertices(presetId, scale));
+}
+
+__exports.getConvexHullPresetIds = getConvexHullPresetIds;
+__exports.getDefaultConvexHullPresetId = getDefaultConvexHullPresetId;
+__exports.resolveConvexHullPresetVertices = resolveConvexHullPresetVertices;
+__exports.formatConvexHullVertices = formatConvexHullVertices;
+__exports.getConvexHullPresetVertexText = getConvexHullPresetVertexText;
+},
+  26: function(__require, __exports) {
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -9815,7 +10354,8 @@ function toString(value, fallback = '') {
 __exports.toNumber = toNumber;
 __exports.toString = toString;
 },
-  26: function(__require, __exports) {
+  27: function(__require, __exports) {
+const { getConvexHullPresetIds, getDefaultConvexHullPresetId } = __require(25);
 const EXTENSION_ID = 'engine3d';
 const GANDI_EXTENSION_METADATA = {
   name: 'engine3d.meta.name',
@@ -9917,6 +10457,21 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createPresetConvexHullRigidBody',
+        blockType: 'command',
+        text: 'create preset convex hull rigid body [ID] preset [PRESET] at x:[X] y:[Y] z:[Z] scale:[SCALE] mass:[MASS] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'preset-hull-1' },
+          PRESET: { type: 'string', menu: 'CONVEX_HULL_PRESETS', defaultValue: getDefaultConvexHullPresetId() },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SCALE: { type: 'number', defaultValue: 100 },
+          MASS: { type: 'number', defaultValue: 1 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
         opcode: 'createStaticBoxCollider',
         blockType: 'command',
         text: 'create static box collider [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] material:[MATERIAL]',
@@ -9940,6 +10495,29 @@ function createExtensionInfo() {
           Y: { type: 'number', defaultValue: -100 },
           Z: { type: 'number', defaultValue: 0 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createPresetStaticConvexHullCollider',
+        blockType: 'command',
+        text: 'create preset static convex hull collider [ID] preset [PRESET] at x:[X] y:[Y] z:[Z] scale:[SCALE] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'preset-collider-1' },
+          PRESET: { type: 'string', menu: 'CONVEX_HULL_PRESETS', defaultValue: getDefaultConvexHullPresetId() },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: -100 },
+          Z: { type: 'number', defaultValue: 0 },
+          SCALE: { type: 'number', defaultValue: 100 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'convexHullPresetVertices',
+        blockType: 'reporter',
+        text: 'convex hull preset [PRESET] vertices scale:[SCALE]',
+        arguments: {
+          PRESET: { type: 'string', menu: 'CONVEX_HULL_PRESETS', defaultValue: getDefaultConvexHullPresetId() },
+          SCALE: { type: 'number', defaultValue: 100 }
         }
       },
       {
@@ -10108,6 +10686,14 @@ function createExtensionInfo() {
         text: 'render debug frame'
       },
       {
+        opcode: 'loadSceneJson',
+        blockType: 'command',
+        text: 'load physics scene json [SCENE_JSON]',
+        arguments: {
+          SCENE_JSON: { type: 'string', defaultValue: '{}' }
+        }
+      },
+      {
         opcode: 'showDebugOverlay',
         blockType: 'command',
         text: 'show debug overlay'
@@ -10118,9 +10704,27 @@ function createExtensionInfo() {
         text: 'hide debug overlay'
       },
       {
+        opcode: 'setDebugOverlayLayers',
+        blockType: 'command',
+        text: 'set debug overlay layers [LAYERS]',
+        arguments: {
+          LAYERS: { type: 'string', defaultValue: 'bodies static contacts joints queries' }
+        }
+      },
+      {
+        opcode: 'resetDebugOverlayLayers',
+        blockType: 'command',
+        text: 'reset debug overlay layers'
+      },
+      {
         opcode: 'worldSummary',
         blockType: 'reporter',
         text: 'physics world summary'
+      },
+      {
+        opcode: 'sceneJson',
+        blockType: 'reporter',
+        text: 'scene json'
       },
       {
         opcode: 'rigidBodySummary',
@@ -10201,6 +10805,22 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'queryBodyContacts',
+        blockType: 'reporter',
+        text: 'bodies touching body [ID]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'queryColliderContacts',
+        blockType: 'reporter',
+        text: 'colliders touching collider [ID]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1:collider' }
+        }
+      },
+      {
         opcode: 'raycastSummary',
         blockType: 'reporter',
         text: 'last raycast summary'
@@ -10224,6 +10844,11 @@ function createExtensionInfo() {
         opcode: 'debugOverlaySummary',
         blockType: 'reporter',
         text: 'debug overlay summary'
+      },
+      {
+        opcode: 'sceneIoSummary',
+        blockType: 'reporter',
+        text: 'scene io summary'
       },
       {
         opcode: 'hostSummary',
@@ -10261,7 +10886,13 @@ function createExtensionInfo() {
         text: 'last frame summary',
         hideFromPalette: true
       }
-    ]
+    ],
+    menus: {
+      CONVEX_HULL_PRESETS: {
+        acceptReporters: true,
+        items: getConvexHullPresetIds()
+      }
+    }
   };
 }
 
@@ -10270,8 +10901,8 @@ __exports.EXTENSION_ID = EXTENSION_ID;
 __exports.GANDI_EXTENSION_METADATA = GANDI_EXTENSION_METADATA;
 __exports.GANDI_L10N = GANDI_L10N;
 },
-  27: function(__require, __exports) {
-const { createDebugOverlay } = __require(28);
+  28: function(__require, __exports) {
+const { createDebugOverlay } = __require(29);
 function createHost(displayName, runtime, renderer, sandbox) {
   const overlay = createDebugOverlay(displayName);
 
@@ -10297,6 +10928,12 @@ function createHost(displayName, runtime, renderer, sandbox) {
     hideDebugOverlay() {
       overlay.hide();
     },
+    setDebugOverlayLayers(layersText) {
+      overlay.setLayers(layersText);
+    },
+    resetDebugOverlayLayers() {
+      overlay.resetLayers();
+    },
     getDebugOverlaySummary() {
       return overlay.getSummary();
     },
@@ -10316,9 +10953,54 @@ function createGandiRemoteHost() {
 __exports.createGandiApprovedHost = createGandiApprovedHost;
 __exports.createGandiRemoteHost = createGandiRemoteHost;
 },
-  28: function(__require, __exports) {
+  29: function(__require, __exports) {
 const { createIdentityQuat, createQuatFromAxisAngle, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
 const { addVec3, createVec3, crossVec3, dotVec3, normalizeVec3, subtractVec3 } = __require(6);
+const LAYER_GROUPS = {
+  bodies: new Set(['rigid-body', 'center-of-mass']),
+  static: new Set(['static-collider', 'collider-origin']),
+  aabb: new Set(['broadphase-aabb']),
+  contacts: new Set(['contact-point', 'contact-normal']),
+  joints: new Set([
+    'distance-joint',
+    'distance-joint-anchor',
+    'point-to-point-joint',
+    'point-to-point-joint-anchor',
+    'hinge-joint',
+    'hinge-joint-anchor',
+    'fixed-joint',
+    'fixed-joint-anchor',
+    'hinge-axis-a',
+    'hinge-axis-b',
+    'fixed-axis-a',
+    'fixed-axis-b',
+    'hinge-motor'
+  ]),
+  queries: new Set([
+    'raycast-line',
+    'raycast-hit-point',
+    'raycast-hit-normal',
+    'shape-cast-line',
+    'shape-cast-hit-point',
+    'shape-cast-hit-normal'
+  ]),
+  ccd: new Set(['ccd-path', 'ccd-hit-point', 'ccd-hit-normal'])
+};
+
+const LAYER_ALIASES = {
+  body: 'bodies',
+  rigid: 'bodies',
+  rigidbody: 'bodies',
+  statics: 'static',
+  bounds: 'aabb',
+  boxes: 'aabb',
+  joints: 'joints',
+  joint: 'joints',
+  query: 'queries',
+  casts: 'queries',
+  contact: 'contacts'
+};
+
 function rgba(color) {
   const r = Math.max(0, Math.min(255, Math.round(Number(color?.r ?? 255))));
   const g = Math.max(0, Math.min(255, Math.round(Number(color?.g ?? 255))));
@@ -10333,6 +11015,45 @@ function getDomGlobals() {
     window: root,
     document: root?.document ?? null
   };
+}
+
+function normalizeLayerName(value) {
+  const normalizedValue = String(value ?? '').trim().toLowerCase();
+  return LAYER_ALIASES[normalizedValue] ?? normalizedValue;
+}
+
+function parseLayerFilter(text) {
+  const raw = String(text ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  const names = raw
+    .split(/[\s,;|]+/)
+    .map((entry) => normalizeLayerName(entry))
+    .filter(Boolean)
+    .filter((entry, index, values) => values.indexOf(entry) === index);
+
+  if (!names.length || names.includes('all') || names.includes('default')) {
+    return null;
+  }
+
+  const supportedNames = names.filter((entry) => Object.prototype.hasOwnProperty.call(LAYER_GROUPS, entry));
+  return supportedNames.length ? supportedNames : null;
+}
+
+function formatLayerSummary(layerNames) {
+  return layerNames?.length ? layerNames.join(', ') : 'all';
+}
+
+function resolvePrimitiveLayer(category) {
+  for (const [layerName, categories] of Object.entries(LAYER_GROUPS)) {
+    if (categories.has(category)) {
+      return layerName;
+    }
+  }
+
+  return 'bodies';
 }
 
 function ensureCanvasSize(canvas) {
@@ -10432,7 +11153,8 @@ function createDebugOverlay(displayName) {
   const state = {
     available: false,
     visible: false,
-    lastSummary: 'overlay unavailable',
+    activeLayers: null,
+    lastSummary: `${displayName} overlay unavailable | layers all`,
     container: null,
     canvas: null,
     label: null
@@ -10445,7 +11167,7 @@ function createDebugOverlay(displayName) {
 
     const { document } = getDomGlobals();
     if (!document?.body) {
-      state.lastSummary = `${displayName} overlay unavailable`;
+      state.lastSummary = `${displayName} overlay unavailable | layers ${formatLayerSummary(state.activeLayers)}`;
       return false;
     }
 
@@ -10488,7 +11210,7 @@ function createDebugOverlay(displayName) {
     state.container = container;
     state.canvas = canvas;
     state.label = label;
-    state.lastSummary = `${displayName} overlay hidden`;
+    state.lastSummary = `${displayName} overlay hidden | layers ${formatLayerSummary(state.activeLayers)}`;
     return true;
   }
 
@@ -10499,7 +11221,7 @@ function createDebugOverlay(displayName) {
 
     state.visible = true;
     state.container.style.display = 'block';
-    state.lastSummary = `${displayName} overlay visible`;
+    state.lastSummary = `${displayName} overlay visible | layers ${formatLayerSummary(state.activeLayers)}`;
     return true;
   }
 
@@ -10510,8 +11232,20 @@ function createDebugOverlay(displayName) {
 
     state.visible = false;
     state.container.style.display = 'none';
-    state.lastSummary = `${displayName} overlay hidden`;
+    state.lastSummary = `${displayName} overlay hidden | layers ${formatLayerSummary(state.activeLayers)}`;
     return true;
+  }
+
+  function setLayers(layersText) {
+    state.activeLayers = parseLayerFilter(layersText);
+    state.lastSummary = `${displayName} overlay ${state.visible ? 'visible' : 'hidden'} | layers ${formatLayerSummary(state.activeLayers)}`;
+    return formatLayerSummary(state.activeLayers);
+  }
+
+  function resetLayers() {
+    state.activeLayers = null;
+    state.lastSummary = `${displayName} overlay ${state.visible ? 'visible' : 'hidden'} | layers all`;
+    return 'all';
   }
 
   function clearCanvas(context2d, width, height) {
@@ -10537,8 +11271,11 @@ function createDebugOverlay(displayName) {
     const cameraAngles = frame?.debugFrame?.camera?.target ?? createVec3(0, 0, 0);
     const basis = buildViewBasis(cameraAngles);
     const primitives = Array.isArray(frame?.debugFrame?.primitives) ? frame.debugFrame.primitives : [];
+    const visiblePrimitives = state.activeLayers
+      ? primitives.filter((primitive) => state.activeLayers.includes(resolvePrimitiveLayer(primitive.category)))
+      : primitives;
 
-    for (const primitive of primitives) {
+    for (const primitive of visiblePrimitives) {
       const color = rgba(primitive.color);
 
       if (primitive.type === 'line') {
@@ -10569,14 +11306,16 @@ function createDebugOverlay(displayName) {
       }
     }
 
-    state.label.textContent = `${displayName} debug overlay | ${primitives.length} primitives | frame ${frame?.frameNumber ?? 0}`;
-    state.lastSummary = `${displayName} overlay visible | ${primitives.length} primitives | frame ${frame?.frameNumber ?? 0}`;
+    state.label.textContent = `${displayName} debug overlay | ${visiblePrimitives.length}/${primitives.length} primitives | layers ${formatLayerSummary(state.activeLayers)} | frame ${frame?.frameNumber ?? 0}`;
+    state.lastSummary = `${displayName} overlay visible | ${visiblePrimitives.length}/${primitives.length} primitives | layers ${formatLayerSummary(state.activeLayers)} | frame ${frame?.frameNumber ?? 0}`;
     return true;
   }
 
   return {
     show,
     hide,
+    setLayers,
+    resetLayers,
     render,
     isAvailable() {
       return ensureDom();

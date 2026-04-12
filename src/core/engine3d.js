@@ -1,4 +1,5 @@
 import { PhysicsWorld, createVec3 } from '../physics/index.js';
+import { getConvexHullPresetVertexText } from '../shared/convex-hull-presets.js';
 
 function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
@@ -10,6 +11,14 @@ function formatOptionalNumber(value, fallback = 'none') {
   }
 
   return Number.isFinite(Number(value)) ? `${Number(value)}` : fallback;
+}
+
+function formatIdentifierList(records) {
+  if (!Array.isArray(records) || records.length === 0) {
+    return 'none';
+  }
+
+  return records.map((record) => record.id).join(', ');
 }
 
 function radiansToDegrees(value) {
@@ -71,6 +80,7 @@ export class Engine3D {
     this.hostBridge = hostBridge;
     this.world = new PhysicsWorld();
     this.lastFrame = null;
+    this.lastSceneIoSummary = 'No scene import/export yet';
   }
 
   resetScene() {
@@ -81,6 +91,10 @@ export class Engine3D {
 
   resetWorld() {
     this.resetScene();
+  }
+
+  getConvexHullPresetVertices(presetId, scale) {
+    return getConvexHullPresetVertexText(presetId, scale);
   }
 
   setCameraPosition(x, y, z) {
@@ -160,6 +174,18 @@ export class Engine3D {
     return body;
   }
 
+  createPresetConvexHullRigidBody(id, presetId, x, y, z, scale, mass, materialId = '') {
+    return this.createConvexHullRigidBody(
+      id,
+      this.getConvexHullPresetVertices(presetId, scale),
+      x,
+      y,
+      z,
+      mass,
+      materialId
+    );
+  }
+
   createStaticConvexHullCollider(id, verticesText, x, y, z, materialId = '') {
     const vertices = parseConvexHullVertices(verticesText);
     const { collider } = this.world.createStaticConvexHullCollider({
@@ -171,6 +197,17 @@ export class Engine3D {
 
     this.hostBridge.log(`Static convex hull collider ${collider.id} registered with ${vertices.length} vertices`);
     return collider;
+  }
+
+  createPresetStaticConvexHullCollider(id, presetId, x, y, z, scale, materialId = '') {
+    return this.createStaticConvexHullCollider(
+      id,
+      this.getConvexHullPresetVertices(presetId, scale),
+      x,
+      y,
+      z,
+      materialId
+    );
   }
 
   createDistanceJoint(id, bodyAId, bodyBId, distance = 0) {
@@ -394,6 +431,42 @@ export class Engine3D {
     }
   }
 
+  setDebugOverlayLayers(layersText) {
+    if (typeof this.hostBridge.setDebugOverlayLayers === 'function') {
+      this.hostBridge.setDebugOverlayLayers(layersText);
+    }
+  }
+
+  resetDebugOverlayLayers() {
+    if (typeof this.hostBridge.resetDebugOverlayLayers === 'function') {
+      this.hostBridge.resetDebugOverlayLayers();
+    }
+  }
+
+  exportSceneJson() {
+    const sceneDefinition = this.world.exportSceneDefinition();
+    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
+    return JSON.stringify(sceneDefinition);
+  }
+
+  loadSceneJson(sceneJsonText) {
+    try {
+      const parsedScene = JSON.parse(String(sceneJsonText ?? '').trim() || '{}');
+      const imported = this.world.importSceneDefinition(parsedScene, {
+        reset: true
+      });
+      this.lastFrame = null;
+      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
+      this.hostBridge.log(this.lastSceneIoSummary);
+      return true;
+    } catch (error) {
+      const message = `Scene load failed | ${error?.message ?? 'invalid JSON'}`;
+      this.lastSceneIoSummary = message;
+      this.hostBridge.log(message);
+      return false;
+    }
+  }
+
   getSceneSummary() {
     return summarizeSnapshot(this.world.getSnapshot());
   }
@@ -478,6 +551,26 @@ export class Engine3D {
     return `${result.count.colliders} colliders in AABB ${x}, ${y}, ${z} | ${joinIds(result.colliders)}`;
   }
 
+  queryBodyContacts(id) {
+    const body = this.world.getBody(id);
+    if (!body) {
+      return `Rigid body ${id} not found`;
+    }
+
+    const result = this.world.getBodiesTouchingBody(id);
+    return `${result.count} bodies touching ${id} | ${formatIdentifierList(result.bodies)}`;
+  }
+
+  queryColliderContacts(id) {
+    const collider = this.world.getCollider(id);
+    if (!collider) {
+      return `Collider ${id} not found`;
+    }
+
+    const result = this.world.getCollidersTouchingCollider(id);
+    return `${result.count} colliders touching ${id} | ${formatIdentifierList(result.colliders)}`;
+  }
+
   getLastRaycastSummary() {
     const raycast = this.world.getLastRaycast();
     if (!raycast) {
@@ -528,6 +621,10 @@ export class Engine3D {
     }
 
     return this.hostBridge.getDebugOverlaySummary();
+  }
+
+  getSceneIoSummary() {
+    return this.lastSceneIoSummary;
   }
 
   getHostSummary() {

@@ -25,6 +25,12 @@ function createHost(displayName, runtime, renderer, sandbox) {
     hideDebugOverlay() {
       overlay.hide();
     },
+    setDebugOverlayLayers(layersText) {
+      overlay.setLayers(layersText);
+    },
+    resetDebugOverlayLayers() {
+      overlay.resetLayers();
+    },
     getDebugOverlaySummary() {
       return overlay.getSummary();
     },

@@ -1,3 +1,5 @@
+import { getConvexHullPresetIds, getDefaultConvexHullPresetId } from './convex-hull-presets.js';
+
 export const EXTENSION_ID = 'engine3d';
 
 export const GANDI_EXTENSION_METADATA = {
@@ -102,6 +104,21 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createPresetConvexHullRigidBody',
+        blockType: 'command',
+        text: 'create preset convex hull rigid body [ID] preset [PRESET] at x:[X] y:[Y] z:[Z] scale:[SCALE] mass:[MASS] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'preset-hull-1' },
+          PRESET: { type: 'string', menu: 'CONVEX_HULL_PRESETS', defaultValue: getDefaultConvexHullPresetId() },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SCALE: { type: 'number', defaultValue: 100 },
+          MASS: { type: 'number', defaultValue: 1 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
         opcode: 'createStaticBoxCollider',
         blockType: 'command',
         text: 'create static box collider [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] material:[MATERIAL]',
@@ -125,6 +142,29 @@ export function createExtensionInfo() {
           Y: { type: 'number', defaultValue: -100 },
           Z: { type: 'number', defaultValue: 0 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createPresetStaticConvexHullCollider',
+        blockType: 'command',
+        text: 'create preset static convex hull collider [ID] preset [PRESET] at x:[X] y:[Y] z:[Z] scale:[SCALE] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'preset-collider-1' },
+          PRESET: { type: 'string', menu: 'CONVEX_HULL_PRESETS', defaultValue: getDefaultConvexHullPresetId() },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: -100 },
+          Z: { type: 'number', defaultValue: 0 },
+          SCALE: { type: 'number', defaultValue: 100 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'convexHullPresetVertices',
+        blockType: 'reporter',
+        text: 'convex hull preset [PRESET] vertices scale:[SCALE]',
+        arguments: {
+          PRESET: { type: 'string', menu: 'CONVEX_HULL_PRESETS', defaultValue: getDefaultConvexHullPresetId() },
+          SCALE: { type: 'number', defaultValue: 100 }
         }
       },
       {
@@ -293,6 +333,14 @@ export function createExtensionInfo() {
         text: 'render debug frame'
       },
       {
+        opcode: 'loadSceneJson',
+        blockType: 'command',
+        text: 'load physics scene json [SCENE_JSON]',
+        arguments: {
+          SCENE_JSON: { type: 'string', defaultValue: '{}' }
+        }
+      },
+      {
         opcode: 'showDebugOverlay',
         blockType: 'command',
         text: 'show debug overlay'
@@ -303,9 +351,27 @@ export function createExtensionInfo() {
         text: 'hide debug overlay'
       },
       {
+        opcode: 'setDebugOverlayLayers',
+        blockType: 'command',
+        text: 'set debug overlay layers [LAYERS]',
+        arguments: {
+          LAYERS: { type: 'string', defaultValue: 'bodies static contacts joints queries' }
+        }
+      },
+      {
+        opcode: 'resetDebugOverlayLayers',
+        blockType: 'command',
+        text: 'reset debug overlay layers'
+      },
+      {
         opcode: 'worldSummary',
         blockType: 'reporter',
         text: 'physics world summary'
+      },
+      {
+        opcode: 'sceneJson',
+        blockType: 'reporter',
+        text: 'scene json'
       },
       {
         opcode: 'rigidBodySummary',
@@ -386,6 +452,22 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'queryBodyContacts',
+        blockType: 'reporter',
+        text: 'bodies touching body [ID]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'queryColliderContacts',
+        blockType: 'reporter',
+        text: 'colliders touching collider [ID]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1:collider' }
+        }
+      },
+      {
         opcode: 'raycastSummary',
         blockType: 'reporter',
         text: 'last raycast summary'
@@ -409,6 +491,11 @@ export function createExtensionInfo() {
         opcode: 'debugOverlaySummary',
         blockType: 'reporter',
         text: 'debug overlay summary'
+      },
+      {
+        opcode: 'sceneIoSummary',
+        blockType: 'reporter',
+        text: 'scene io summary'
       },
       {
         opcode: 'hostSummary',
@@ -446,6 +533,12 @@ export function createExtensionInfo() {
         text: 'last frame summary',
         hideFromPalette: true
       }
-    ]
+    ],
+    menus: {
+      CONVEX_HULL_PRESETS: {
+        acceptReporters: true,
+        items: getConvexHullPresetIds()
+      }
+    }
   };
 }

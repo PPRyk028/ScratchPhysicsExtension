@@ -95,6 +95,24 @@ function cloneCamera(camera) {
   };
 }
 
+function cloneSceneSettings(world) {
+  return {
+    fixedDeltaTime: Number(world.fixedDeltaTime),
+    maxSubsteps: Number(world.maxSubsteps),
+    solverIterations: Number(world.solverIterations),
+    solverBaumgarte: Number(world.solverBaumgarte),
+    allowedPenetration: Number(world.allowedPenetration),
+    positionCorrectionPercent: Number(world.positionCorrectionPercent),
+    sleepEnabled: world.sleepEnabled !== false,
+    sleepLinearThreshold: Number(world.sleepLinearThreshold),
+    sleepAngularThreshold: Number(world.sleepAngularThreshold),
+    sleepTimeThreshold: Number(world.sleepTimeThreshold),
+    ccdEnabled: world.ccdEnabled !== false,
+    ccdMotionThreshold: Number(world.ccdMotionThreshold),
+    ccdSafetyMargin: Number(world.ccdSafetyMargin)
+  };
+}
+
 function getBodyVelocityAtPoint(body, contactPosition) {
   if (!body) {
     return createVec3();
@@ -593,6 +611,195 @@ export class PhysicsWorld {
 
   setGravity(gravity) {
     this.gravity = cloneVec3(gravity);
+  }
+
+  exportSceneDefinition() {
+    return {
+      schemaVersion: 'physics-scene@1',
+      settings: cloneSceneSettings(this),
+      gravity: cloneVec3(this.gravity),
+      debugCamera: cloneCamera(this.debugCamera),
+      materials: this.materialRegistry.list(),
+      shapes: this.shapeRegistry.list(),
+      bodies: this.bodyRegistry.list(),
+      colliders: this.colliderRegistry.list(),
+      joints: this.jointRegistry.list()
+    };
+  }
+
+  importSceneDefinition(sceneDefinition = {}, options = {}) {
+    const shouldReset = options.reset !== false;
+    const scene = typeof sceneDefinition === 'object' && sceneDefinition !== null ? sceneDefinition : {};
+
+    if (shouldReset) {
+      this.reset();
+    }
+
+    const settings = typeof scene.settings === 'object' && scene.settings !== null ? scene.settings : {};
+    this.fixedDeltaTime = toPositiveNumber(settings.fixedDeltaTime, this.fixedDeltaTime);
+    this.maxSubsteps = Math.max(1, Math.floor(toPositiveNumber(settings.maxSubsteps, this.maxSubsteps)));
+    this.solverIterations = Math.max(1, Math.floor(toPositiveNumber(settings.solverIterations, this.solverIterations)));
+    this.solverBaumgarte = toNonNegativeNumber(settings.solverBaumgarte, this.solverBaumgarte);
+    this.allowedPenetration = toNonNegativeNumber(settings.allowedPenetration, this.allowedPenetration);
+    this.positionCorrectionPercent = toNonNegativeNumber(settings.positionCorrectionPercent, this.positionCorrectionPercent);
+    this.sleepEnabled = settings.sleepEnabled !== undefined ? settings.sleepEnabled !== false : this.sleepEnabled;
+    this.sleepLinearThreshold = toNonNegativeNumber(settings.sleepLinearThreshold, this.sleepLinearThreshold);
+    this.sleepAngularThreshold = toNonNegativeNumber(settings.sleepAngularThreshold, this.sleepAngularThreshold);
+    this.sleepTimeThreshold = toNonNegativeNumber(settings.sleepTimeThreshold, this.sleepTimeThreshold);
+    this.ccdEnabled = settings.ccdEnabled !== undefined ? settings.ccdEnabled !== false : this.ccdEnabled;
+    this.ccdMotionThreshold = toNonNegativeNumber(settings.ccdMotionThreshold, this.ccdMotionThreshold);
+    this.ccdSafetyMargin = toNonNegativeNumber(settings.ccdSafetyMargin, this.ccdSafetyMargin);
+
+    if (scene.gravity) {
+      this.setGravity(scene.gravity);
+    }
+
+    if (scene.debugCamera?.position) {
+      this.setDebugCameraPosition(scene.debugCamera.position);
+    }
+
+    if (scene.debugCamera?.target) {
+      this.setDebugCameraTarget(scene.debugCamera.target);
+    }
+
+    for (const material of Array.isArray(scene.materials) ? scene.materials : []) {
+      this.createMaterial(material);
+    }
+
+    for (const shape of Array.isArray(scene.shapes) ? scene.shapes : []) {
+      if (!shape?.id || !shape?.type) {
+        continue;
+      }
+
+      if (shape.type === 'box') {
+        this.createBoxShape({
+          id: shape.id,
+          halfExtents: shape.geometry?.halfExtents,
+          localPose: shape.localPose,
+          userData: shape.userData
+        });
+        continue;
+      }
+
+      if (shape.type === 'sphere') {
+        this.createSphereShape({
+          id: shape.id,
+          radius: shape.geometry?.radius,
+          localPose: shape.localPose,
+          userData: shape.userData
+        });
+        continue;
+      }
+
+      if (shape.type === 'capsule') {
+        this.createCapsuleShape({
+          id: shape.id,
+          radius: shape.geometry?.radius,
+          halfHeight: shape.geometry?.halfHeight,
+          localPose: shape.localPose,
+          userData: shape.userData
+        });
+        continue;
+      }
+
+      if (shape.type === 'convex-hull') {
+        this.createConvexHullShape({
+          id: shape.id,
+          vertices: shape.geometry?.vertices,
+          localPose: shape.localPose,
+          userData: shape.userData
+        });
+      }
+    }
+
+    for (const body of Array.isArray(scene.bodies) ? scene.bodies : []) {
+      if (!body?.id) {
+        continue;
+      }
+
+      this.createRigidBody({
+        id: body.id,
+        motionType: body.motionType,
+        shapeId: body.shapeId,
+        primaryColliderId: body.primaryColliderId,
+        colliderIds: body.colliderIds,
+        position: body.position,
+        rotation: body.rotation,
+        linearVelocity: body.linearVelocity,
+        angularVelocity: body.angularVelocity,
+        forceAccumulator: body.forceAccumulator,
+        torqueAccumulator: body.torqueAccumulator,
+        mass: body.mass,
+        canSleep: body.canSleep,
+        sleeping: body.sleeping,
+        sleepTimer: body.sleepTimer,
+        enabled: body.enabled,
+        userData: body.userData
+      });
+    }
+
+    for (const collider of Array.isArray(scene.colliders) ? scene.colliders : []) {
+      if (!collider?.id) {
+        continue;
+      }
+
+      this.createCollider({
+        id: collider.id,
+        shapeId: collider.shapeId,
+        bodyId: collider.bodyId,
+        materialId: collider.materialId,
+        enabled: collider.enabled,
+        isSensor: collider.isSensor,
+        localPose: collider.localPose,
+        userData: collider.userData
+      });
+    }
+
+    for (const joint of Array.isArray(scene.joints) ? scene.joints : []) {
+      if (!joint?.id || !joint?.type) {
+        continue;
+      }
+
+      let createdJoint = null;
+      if (joint.type === 'distance-joint') {
+        createdJoint = this.jointRegistry.createDistanceJoint(joint);
+      } else if (joint.type === 'point-to-point-joint') {
+        createdJoint = this.jointRegistry.createPointToPointJoint(joint);
+      } else if (joint.type === 'hinge-joint') {
+        createdJoint = this.jointRegistry.createHingeJoint(joint);
+      } else if (joint.type === 'fixed-joint') {
+        createdJoint = this.jointRegistry.createFixedJoint(joint);
+      }
+
+      if (createdJoint) {
+        const mutableJoint = this.jointRegistry.getMutable(createdJoint.id);
+        if (mutableJoint) {
+          mutableJoint.enabled = joint.enabled !== false;
+          mutableJoint.broken = joint.broken === true;
+          mutableJoint.lastAppliedForce = 0;
+          mutableJoint.lastAppliedTorque = 0;
+          mutableJoint.accumulatedImpulse = 0;
+          mutableJoint.accumulatedLinearImpulse = createVec3();
+          mutableJoint.accumulatedAngularImpulse = createVec3();
+          mutableJoint.accumulatedMotorImpulse = 0;
+        }
+      }
+    }
+
+    const cameraPosition = scene.debugCamera?.position ? cloneVec3(scene.debugCamera.position) : cloneVec3(this.debugCamera.position);
+    const cameraTarget = scene.debugCamera?.target ? cloneVec3(scene.debugCamera.target) : cloneVec3(this.debugCamera.target);
+    this.resetRuntimeState();
+    this.debugCamera.position = cameraPosition;
+    this.debugCamera.target = cameraTarget;
+    this.markCollisionStateDirty();
+
+    return {
+      bodyCount: this.bodyRegistry.count(),
+      colliderCount: this.colliderRegistry.count(),
+      jointCount: this.jointRegistry.count(),
+      materialCount: this.materialRegistry.count(),
+      shapeCount: this.shapeRegistry.count()
+    };
   }
 
   markCollisionStateDirty() {
@@ -2162,6 +2369,72 @@ export class PhysicsWorld {
         halfExtents
       }
     });
+  }
+
+  getContactPairsForBody(bodyId) {
+    const resolvedBodyId = String(bodyId ?? '').trim();
+    if (!resolvedBodyId) {
+      return [];
+    }
+
+    return this.ensureCollisionState().contactPairs
+      .filter((contactPair) => contactPair.bodyAId === resolvedBodyId || contactPair.bodyBId === resolvedBodyId)
+      .map((contactPair) => cloneContactPair(contactPair));
+  }
+
+  getBodiesTouchingBody(bodyId) {
+    const resolvedBodyId = String(bodyId ?? '').trim();
+    const pairs = this.getContactPairsForBody(resolvedBodyId);
+    const touchedBodyIds = new Set();
+
+    for (const pair of pairs) {
+      const otherBodyId = pair.bodyAId === resolvedBodyId ? pair.bodyBId : pair.bodyAId;
+      if (otherBodyId) {
+        touchedBodyIds.add(otherBodyId);
+      }
+    }
+
+    return {
+      bodyId: resolvedBodyId,
+      pairs,
+      bodies: Array.from(touchedBodyIds)
+        .map((otherBodyId) => this.getBody(otherBodyId))
+        .filter(Boolean),
+      count: touchedBodyIds.size
+    };
+  }
+
+  getContactPairsForCollider(colliderId) {
+    const resolvedColliderId = String(colliderId ?? '').trim();
+    if (!resolvedColliderId) {
+      return [];
+    }
+
+    return this.ensureCollisionState().contactPairs
+      .filter((contactPair) => contactPair.colliderAId === resolvedColliderId || contactPair.colliderBId === resolvedColliderId)
+      .map((contactPair) => cloneContactPair(contactPair));
+  }
+
+  getCollidersTouchingCollider(colliderId) {
+    const resolvedColliderId = String(colliderId ?? '').trim();
+    const pairs = this.getContactPairsForCollider(resolvedColliderId);
+    const touchedColliderIds = new Set();
+
+    for (const pair of pairs) {
+      const otherColliderId = pair.colliderAId === resolvedColliderId ? pair.colliderBId : pair.colliderAId;
+      if (otherColliderId) {
+        touchedColliderIds.add(otherColliderId);
+      }
+    }
+
+    return {
+      colliderId: resolvedColliderId,
+      pairs,
+      colliders: Array.from(touchedColliderIds)
+        .map((otherColliderId) => this.getCollider(otherColliderId))
+        .filter(Boolean),
+      count: touchedColliderIds.size
+    };
   }
 
   shapeCastAgainstWorld(options = {}) {
