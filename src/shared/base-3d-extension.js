@@ -147,6 +147,20 @@ export class Base3DExtension {
     );
   }
 
+  createSoftBodyCube(args) {
+    this.engine.createSoftBodyCube(
+      toString(args.ID, 'soft-body'),
+      toNumber(args.ROWS, 4),
+      toNumber(args.COLUMNS, 4),
+      toNumber(args.LAYERS, 4),
+      toNumber(args.SPACING, 20),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toString(args.PIN_MODE, 'none')
+    );
+  }
+
   configureCloth(args) {
     this.engine.configureCloth(
       toString(args.ID, 'cloth'),
@@ -178,6 +192,18 @@ export class Base3DExtension {
     this.engine.configureClothPreset(
       toString(args.ID, 'cloth'),
       'wrinkle'
+    );
+  }
+
+  configureSoftBody(args) {
+    this.engine.configureSoftBody(
+      toString(args.ID, 'soft-body'),
+      toNumber(args.DAMPING, 0.04),
+      toNumber(args.MARGIN, 3),
+      toNumber(args.STRETCH, 0),
+      toNumber(args.SHEAR, 0.0002),
+      toNumber(args.BEND, 0.0008),
+      toNumber(args.VOLUME, 0.00008)
     );
   }
 
@@ -385,6 +411,12 @@ export class Base3DExtension {
   clothSummary(args) {
     return this.engine.getClothSummary(
       toString(args.ID, 'cloth')
+    );
+  }
+
+  softBodySummary(args) {
+    return this.engine.getSoftBodySummary(
+      toString(args.ID, 'soft-body')
     );
   }
 

@@ -183,6 +183,22 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createSoftBodyCube',
+        blockType: 'command',
+        text: 'create soft body cube [ID] rows:[ROWS] columns:[COLUMNS] layers:[LAYERS] spacing:[SPACING] at x:[X] y:[Y] z:[Z] pin [PIN_MODE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' },
+          ROWS: { type: 'number', defaultValue: 4 },
+          COLUMNS: { type: 'number', defaultValue: 4 },
+          LAYERS: { type: 'number', defaultValue: 4 },
+          SPACING: { type: 'number', defaultValue: 20 },
+          X: { type: 'number', defaultValue: -30 },
+          Y: { type: 'number', defaultValue: 120 },
+          Z: { type: 'number', defaultValue: -30 },
+          PIN_MODE: { type: 'string', menu: 'SOFT_BODY_PIN_MODES', defaultValue: 'none' }
+        }
+      },
+      {
         opcode: 'configureCloth',
         blockType: 'command',
         text: 'configure cloth [ID] damping:[DAMPING] margin:[MARGIN] stretch:[STRETCH] shear:[SHEAR] bend:[BEND] self collision [SELF_COLLISION] thickness:[SELF_DISTANCE]',
@@ -195,6 +211,20 @@ export function createExtensionInfo() {
           BEND: { type: 'number', defaultValue: 0.0005 },
           SELF_COLLISION: { type: 'string', menu: 'ON_OFF', defaultValue: 'off' },
           SELF_DISTANCE: { type: 'number', defaultValue: 8 }
+        }
+      },
+      {
+        opcode: 'configureSoftBody',
+        blockType: 'command',
+        text: 'configure soft body [ID] damping:[DAMPING] margin:[MARGIN] stretch:[STRETCH] shear:[SHEAR] bend:[BEND] volume:[VOLUME]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' },
+          DAMPING: { type: 'number', defaultValue: 0.04 },
+          MARGIN: { type: 'number', defaultValue: 3 },
+          STRETCH: { type: 'number', defaultValue: 0 },
+          SHEAR: { type: 'number', defaultValue: 0.0002 },
+          BEND: { type: 'number', defaultValue: 0.0008 },
+          VOLUME: { type: 'number', defaultValue: 0.00008 }
         }
       },
       {
@@ -468,6 +498,14 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'softBodySummary',
+        blockType: 'reporter',
+        text: 'soft body [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' }
+        }
+      },
+      {
         opcode: 'queryPointBodies',
         blockType: 'reporter',
         text: 'bodies at point x:[X] y:[Y] z:[Z]',
@@ -604,6 +642,10 @@ export function createExtensionInfo() {
       CLOTH_PIN_MODES: {
         acceptReporters: true,
         items: ['top-row', 'top-corners', 'corners', 'left-edge', 'right-edge', 'none']
+      },
+      SOFT_BODY_PIN_MODES: {
+        acceptReporters: true,
+        items: ['none', 'top-layer', 'top-corners', 'corners']
       },
       ON_OFF: {
         acceptReporters: true,

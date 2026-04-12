@@ -2,7 +2,8 @@ import { createDebugLine, createDebugPoint, DEFAULT_DEBUG_COLORS } from '../debu
 import { integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } from '../math/quat.js';
 import { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, scaleVec3, subtractVec3 } from '../math/vec3.js';
 import { createClothSheetDefinition } from './cloth.js';
-import { cloneXpbdConstraint, resetConstraintLambdas, solveDistanceConstraint, solvePinConstraint } from './constraints.js';
+import { createSoftBodyCubeDefinition } from './soft-body.js';
+import { cloneXpbdConstraint, resetConstraintLambdas, solveDistanceConstraint, solvePinConstraint, solveVolumeConstraint } from './constraints.js';
 
 function toPositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -39,17 +40,36 @@ function cloneCloth(cloth) {
   };
 }
 
+function cloneSoftBody(softBody) {
+  return {
+    ...softBody,
+    position: cloneVec3(softBody.position),
+    particleIds: [...softBody.particleIds],
+    particleIdGrid: softBody.particleIdGrid.map((layer) => layer.map((row) => [...row])),
+    structuralEdges: softBody.structuralEdges.map((edge) => ({ ...edge })),
+    shearEdges: softBody.shearEdges.map((edge) => ({ ...edge })),
+    bendEdges: softBody.bendEdges.map((edge) => ({ ...edge })),
+    distanceConstraints: softBody.distanceConstraints.map((constraint) => cloneXpbdConstraint(constraint)),
+    volumeConstraints: (softBody.volumeConstraints ?? []).map((constraint) => cloneXpbdConstraint(constraint)),
+    pinConstraints: softBody.pinConstraints.map((constraint) => cloneXpbdConstraint(constraint))
+  };
+}
+
 function createEmptyStepStats(iterations) {
   return {
     requestedDeltaSeconds: 0,
     substeps: 0,
     iterations,
     solvedDistanceConstraints: 0,
+    solvedVolumeConstraints: 0,
     solvedPinConstraints: 0,
     solvedStaticCollisions: 0,
+    solvedStaticFrictionCollisions: 0,
     solvedDynamicCollisions: 0,
+    solvedDynamicFrictionCollisions: 0,
     solvedSelfCollisions: 0,
     activeParticleCount: 0,
+    activeSoftBodyCount: 0,
     activeStaticColliderCount: 0,
     activeDynamicColliderCount: 0,
     affectedDynamicBodyCount: 0
@@ -72,6 +92,23 @@ function cloneClothSelfCollisionContact(contact) {
     normal: cloneVec3(contact.normal),
     particleAPosition: cloneVec3(contact.particleAPosition),
     particleBPosition: cloneVec3(contact.particleBPosition)
+  };
+}
+
+function createDeformableCollisionContactRecord(deformable, particle, collision) {
+  return {
+    deformableId: deformable.id,
+    deformableType: deformable.type,
+    clothId: deformable.type === 'cloth-sheet' ? deformable.id : null,
+    softBodyId: deformable.type === 'soft-body-cube' ? deformable.id : null,
+    particleId: particle.id,
+    colliderId: collision.colliderId,
+    bodyId: collision.bodyId,
+    motionType: collision.motionType,
+    shapeType: collision.shapeType,
+    point: cloneVec3(collision.point),
+    normal: cloneVec3(collision.normal),
+    particlePosition: cloneVec3(particle.predictedPosition)
   };
 }
 
@@ -122,6 +159,10 @@ function getBodyPointVelocity(body, worldPoint) {
 }
 
 function computeDynamicCollisionEffectiveMass(body, contactPoint, normal, particleInverseMass) {
+  return computeCollisionEffectiveMass(body, contactPoint, normal, particleInverseMass);
+}
+
+function computeCollisionEffectiveMass(body, contactPoint, direction, particleInverseMass) {
   let inverseMassSum = Number(particleInverseMass ?? 0);
   if (!body || body.motionType !== 'dynamic') {
     return inverseMassSum;
@@ -129,21 +170,130 @@ function computeDynamicCollisionEffectiveMass(body, contactPoint, normal, partic
 
   inverseMassSum += Number(body.inverseMass ?? 0);
   const offset = subtractVec3(contactPoint, body.position);
-  const angularTerm = crossVec3(offset, normal);
+  const angularTerm = crossVec3(offset, direction);
   const angularMass = applyBodyInverseInertiaWorld(body, angularTerm);
-  inverseMassSum += dotVec3(normal, crossVec3(angularMass, offset));
+  inverseMassSum += dotVec3(direction, crossVec3(angularMass, offset));
   return inverseMassSum;
 }
 
-function collectConstraints(cloths) {
+function applyImpulseToDynamicBody(body, contactPoint, impulse) {
+  if (!body || body.motionType !== 'dynamic') {
+    return;
+  }
+
+  body.linearVelocity = addScaledVec3(body.linearVelocity, impulse, Number(body.inverseMass ?? 0));
+  const offset = subtractVec3(contactPoint, body.position);
+  body.angularVelocity = addVec3(
+    body.angularVelocity,
+    applyBodyInverseInertiaWorld(body, crossVec3(offset, impulse))
+  );
+  body.sleeping = false;
+  body.sleepTimer = 0;
+}
+
+function resolveCollisionFriction(collider) {
+  return toNonNegativeNumber(collider?.material?.friction, 0.5);
+}
+
+function applyStaticCollisionFriction(particle, normal, friction, supportSpeed, deltaTime) {
+  if (!particle || friction <= 1e-8) {
+    return false;
+  }
+
+  const tangentialVelocity = subtractVec3(
+    particle.velocity,
+    scaleVec3(normal, dotVec3(particle.velocity, normal))
+  );
+  const tangentSpeedSquared = lengthSquaredVec3(tangentialVelocity);
+  if (tangentSpeedSquared <= 1e-10) {
+    return false;
+  }
+
+  const tangentSpeed = Math.sqrt(tangentSpeedSquared);
+  const tangentDirection = scaleVec3(tangentialVelocity, 1 / tangentSpeed);
+  const tangentialSpeedReduction = Math.min(
+    tangentSpeed,
+    Math.max(0, friction * Math.max(0, Number(supportSpeed ?? 0)))
+  );
+  if (tangentialSpeedReduction <= 1e-8) {
+    return false;
+  }
+
+  particle.velocity = addScaledVec3(particle.velocity, tangentDirection, -tangentialSpeedReduction);
+  particle.predictedPosition = addScaledVec3(
+    particle.predictedPosition,
+    tangentDirection,
+    -tangentialSpeedReduction * deltaTime
+  );
+  return true;
+}
+
+function applyDynamicCollisionFriction(particle, body, contactPoint, normal, friction, normalImpulseMagnitude, deltaTime) {
+  if (!particle || !body || friction <= 1e-8) {
+    return 0;
+  }
+
+  const bodyPointVelocity = getBodyPointVelocity(body, contactPoint);
+  const relativeVelocity = subtractVec3(particle.velocity, bodyPointVelocity);
+  const relativeNormalVelocity = dotVec3(relativeVelocity, normal);
+  const tangentialVelocity = subtractVec3(relativeVelocity, scaleVec3(normal, relativeNormalVelocity));
+  const tangentSpeedSquared = lengthSquaredVec3(tangentialVelocity);
+  if (tangentSpeedSquared <= 1e-10) {
+    return 0;
+  }
+
+  const tangentSpeed = Math.sqrt(tangentSpeedSquared);
+  const tangentDirection = scaleVec3(tangentialVelocity, 1 / tangentSpeed);
+  const tangentEffectiveMass = computeCollisionEffectiveMass(body, contactPoint, tangentDirection, particle.inverseMass);
+  if (tangentEffectiveMass <= 1e-8) {
+    return 0;
+  }
+
+  const maxFrictionImpulse = Math.max(0, friction * Math.max(0, normalImpulseMagnitude));
+  if (maxFrictionImpulse <= 1e-8) {
+    return 0;
+  }
+
+  const desiredImpulse = tangentSpeed / tangentEffectiveMass;
+  const appliedImpulseMagnitude = Math.min(desiredImpulse, maxFrictionImpulse);
+  if (appliedImpulseMagnitude <= 1e-8) {
+    return 0;
+  }
+
+  const particleImpulse = scaleVec3(tangentDirection, -appliedImpulseMagnitude);
+  particle.velocity = addScaledVec3(particle.velocity, particleImpulse, particle.inverseMass);
+  applyImpulseToDynamicBody(body, contactPoint, scaleVec3(particleImpulse, -1));
+
+  particle.predictedPosition = addScaledVec3(
+    particle.predictedPosition,
+    tangentDirection,
+    -appliedImpulseMagnitude * particle.inverseMass * deltaTime
+  );
+  if (body.inverseMass > 0) {
+    body.position = addScaledVec3(
+      body.position,
+      tangentDirection,
+      appliedImpulseMagnitude * body.inverseMass * deltaTime
+    );
+  }
+
+  return appliedImpulseMagnitude;
+}
+
+function collectConstraints(groups) {
   const distanceConstraints = [];
+  const volumeConstraints = [];
   const pinConstraints = [];
-  for (const cloth of cloths.values()) {
-    distanceConstraints.push(...cloth.distanceConstraints);
-    pinConstraints.push(...cloth.pinConstraints);
+  for (const group of groups) {
+    for (const record of group.values()) {
+      distanceConstraints.push(...record.distanceConstraints);
+      volumeConstraints.push(...(record.volumeConstraints ?? []));
+      pinConstraints.push(...record.pinConstraints);
+    }
   }
   return {
     distanceConstraints,
+    volumeConstraints,
     pinConstraints
   };
 }
@@ -160,6 +310,7 @@ export class ParticleWorld {
   reset() {
     this.particles = new Map();
     this.cloths = new Map();
+    this.softBodies = new Map();
     this.simulationTick = 0;
     this.lastStepStats = createEmptyStepStats(this.iterations);
     this.lastCollisionContacts = [];
@@ -186,6 +337,24 @@ export class ParticleWorld {
     };
     this.cloths.set(storedCloth.id, storedCloth);
     return this.getCloth(storedCloth.id);
+  }
+
+  createSoftBodyCube(options = {}) {
+    const softBody = createSoftBodyCubeDefinition({
+      ...options,
+      damping: options.damping ?? this.defaultDamping
+    });
+
+    for (const particle of softBody.particles) {
+      this.particles.set(particle.id, particle);
+    }
+
+    const storedSoftBody = {
+      ...softBody,
+      particles: undefined
+    };
+    this.softBodies.set(storedSoftBody.id, storedSoftBody);
+    return this.getSoftBody(storedSoftBody.id);
   }
 
   configureCloth(id, options = {}) {
@@ -234,8 +403,58 @@ export class ParticleWorld {
     return this.getCloth(cloth.id);
   }
 
+  configureSoftBody(id, options = {}) {
+    const softBody = this.softBodies.get(String(id ?? '').trim());
+    if (!softBody) {
+      return null;
+    }
+
+    if (options.damping !== undefined) {
+      softBody.damping = toNonNegativeNumber(options.damping, softBody.damping);
+    }
+    if (options.collisionMargin !== undefined) {
+      softBody.collisionMargin = toPositiveNumber(options.collisionMargin, softBody.collisionMargin);
+    }
+    if (options.stretchCompliance !== undefined) {
+      softBody.stretchCompliance = toNonNegativeNumber(options.stretchCompliance, softBody.stretchCompliance);
+      for (const constraint of softBody.distanceConstraints) {
+        if (constraint.kind === 'stretch') {
+          constraint.compliance = softBody.stretchCompliance;
+        }
+      }
+    }
+    if (options.shearCompliance !== undefined) {
+      softBody.shearCompliance = toNonNegativeNumber(options.shearCompliance, softBody.shearCompliance);
+      for (const constraint of softBody.distanceConstraints) {
+        if (constraint.kind === 'shear') {
+          constraint.compliance = softBody.shearCompliance;
+        }
+      }
+    }
+    if (options.bendCompliance !== undefined) {
+      softBody.bendCompliance = toNonNegativeNumber(options.bendCompliance, softBody.bendCompliance);
+      for (const constraint of softBody.distanceConstraints) {
+        if (constraint.kind === 'bend') {
+          constraint.compliance = softBody.bendCompliance;
+        }
+      }
+    }
+    if (options.volumeCompliance !== undefined) {
+      softBody.volumeCompliance = toNonNegativeNumber(options.volumeCompliance, softBody.volumeCompliance);
+      for (const constraint of softBody.volumeConstraints ?? []) {
+        constraint.compliance = softBody.volumeCompliance;
+      }
+    }
+
+    return this.getSoftBody(softBody.id);
+  }
+
   hasCloth(id) {
     return this.cloths.has(id);
+  }
+
+  hasSoftBody(id) {
+    return this.softBodies.has(id);
   }
 
   getCloth(id) {
@@ -245,6 +464,15 @@ export class ParticleWorld {
 
   listCloths() {
     return Array.from(this.cloths.values(), (cloth) => cloneCloth(cloth));
+  }
+
+  getSoftBody(id) {
+    const softBody = this.softBodies.get(id);
+    return softBody ? cloneSoftBody(softBody) : null;
+  }
+
+  listSoftBodies() {
+    return Array.from(this.softBodies.values(), (softBody) => cloneSoftBody(softBody));
   }
 
   getParticle(id) {
@@ -260,6 +488,10 @@ export class ParticleWorld {
     return this.cloths.size;
   }
 
+  countSoftBodies() {
+    return this.softBodies.size;
+  }
+
   countParticles() {
     return this.particles.size;
   }
@@ -273,6 +505,7 @@ export class ParticleWorld {
         defaultDamping: this.defaultDamping
       },
       cloths: this.listCloths(),
+      softBodies: this.listSoftBodies(),
       particles: this.listParticles()
     };
   }
@@ -325,8 +558,36 @@ export class ParticleWorld {
       }
     }
 
+    for (const softBodyRecord of Array.isArray(scene.softBodies) ? scene.softBodies : []) {
+      if (!softBodyRecord?.id) {
+        continue;
+      }
+
+      const softBody = cloneSoftBody({
+        ...softBodyRecord,
+        position: softBodyRecord.position ?? createVec3(),
+        particleIds: Array.isArray(softBodyRecord.particleIds) ? softBodyRecord.particleIds : [],
+        particleIdGrid: Array.isArray(softBodyRecord.particleIdGrid) ? softBodyRecord.particleIdGrid : [],
+        structuralEdges: Array.isArray(softBodyRecord.structuralEdges) ? softBodyRecord.structuralEdges : [],
+        shearEdges: Array.isArray(softBodyRecord.shearEdges) ? softBodyRecord.shearEdges : [],
+        bendEdges: Array.isArray(softBodyRecord.bendEdges) ? softBodyRecord.bendEdges : [],
+        distanceConstraints: Array.isArray(softBodyRecord.distanceConstraints) ? softBodyRecord.distanceConstraints : [],
+        volumeConstraints: Array.isArray(softBodyRecord.volumeConstraints) ? softBodyRecord.volumeConstraints : [],
+        pinConstraints: Array.isArray(softBodyRecord.pinConstraints) ? softBodyRecord.pinConstraints : []
+      });
+
+      this.softBodies.set(softBody.id, softBody);
+      for (const particleId of softBody.particleIds) {
+        const particle = particlesById.get(particleId);
+        if (particle) {
+          this.particles.set(particleId, particle);
+        }
+      }
+    }
+
     return {
       clothCount: this.countCloths(),
+      softBodyCount: this.countSoftBodies(),
       particleCount: this.countParticles()
     };
   }
@@ -434,15 +695,15 @@ export class ParticleWorld {
     return null;
   }
 
-  solveStaticCollisions(cloths, staticColliders, stepStats) {
+  solveStaticCollisions(deformables, staticColliders, stepStats, deltaTime) {
     if (!Array.isArray(staticColliders) || !staticColliders.length) {
       return;
     }
 
     stepStats.activeStaticColliderCount = staticColliders.length;
 
-    for (const cloth of cloths) {
-      for (const particleId of cloth.particleIds) {
+    for (const deformable of deformables) {
+      for (const particleId of deformable.particleIds) {
         const particle = this.particles.get(particleId);
         if (!particle || particle.inverseMass <= 0) {
           continue;
@@ -451,7 +712,7 @@ export class ParticleWorld {
         for (const staticCollider of staticColliders) {
           const collision = this.resolveParticleCollision(
             particle,
-            Number(cloth.collisionMargin ?? 0.5),
+            Number(deformable.collisionMargin ?? 0.5),
             staticCollider
           );
 
@@ -465,26 +726,30 @@ export class ParticleWorld {
             particle.velocity = addScaledVec3(particle.velocity, collision.normal, -inwardVelocity);
           }
 
+          const supportSpeed = Math.max(0, -inwardVelocity) + (
+            collision.penetration / Math.max(deltaTime, 1e-6)
+          );
+          const frictionApplied = applyStaticCollisionFriction(
+            particle,
+            collision.normal,
+            resolveCollisionFriction(staticCollider),
+            supportSpeed,
+            deltaTime
+          );
+
           stepStats.solvedStaticCollisions += 1;
+          if (frictionApplied) {
+            stepStats.solvedStaticFrictionCollisions += 1;
+          }
           if (this.lastCollisionContacts.length < 256) {
-            this.lastCollisionContacts.push({
-              clothId: cloth.id,
-              particleId: particle.id,
-              colliderId: collision.colliderId,
-              bodyId: collision.bodyId,
-              motionType: collision.motionType,
-              shapeType: collision.shapeType,
-              point: cloneVec3(collision.point),
-              normal: cloneVec3(collision.normal),
-              particlePosition: cloneVec3(particle.predictedPosition)
-            });
+            this.lastCollisionContacts.push(createDeformableCollisionContactRecord(deformable, particle, collision));
           }
         }
       }
     }
   }
 
-  solveDynamicCollisions(cloths, dynamicColliders, stepStats) {
+  solveDynamicCollisions(deformables, dynamicColliders, stepStats, deltaTime) {
     if (!Array.isArray(dynamicColliders) || !dynamicColliders.length) {
       return;
     }
@@ -492,9 +757,9 @@ export class ParticleWorld {
     stepStats.activeDynamicColliderCount = dynamicColliders.length;
     const affectedBodies = new Set();
 
-    for (const cloth of cloths) {
-      const collisionMargin = Number(cloth.collisionMargin ?? 0.5);
-      for (const particleId of cloth.particleIds) {
+    for (const deformable of deformables) {
+      const collisionMargin = Number(deformable.collisionMargin ?? 0.5);
+      for (const particleId of deformable.particleIds) {
         const particle = this.particles.get(particleId);
         if (!particle || particle.inverseMass <= 0) {
           continue;
@@ -521,6 +786,7 @@ export class ParticleWorld {
             continue;
           }
 
+          const inverseDeltaTime = 1 / Math.max(deltaTime, 1e-6);
           const correctionImpulse = collision.penetration / effectiveMass;
           particle.predictedPosition = addScaledVec3(
             particle.predictedPosition,
@@ -541,34 +807,35 @@ export class ParticleWorld {
 
           const relativeVelocity = subtractVec3(particle.velocity, getBodyPointVelocity(body, collision.point));
           const relativeNormalVelocity = dotVec3(relativeVelocity, collision.normal);
+          let normalImpulseMagnitude = 0;
           if (relativeNormalVelocity < 0) {
-            const impulseMagnitude = -relativeNormalVelocity / effectiveMass;
-            const particleImpulse = scaleVec3(collision.normal, impulseMagnitude);
+            normalImpulseMagnitude = -relativeNormalVelocity / effectiveMass;
+            const particleImpulse = scaleVec3(collision.normal, normalImpulseMagnitude);
             particle.velocity = addScaledVec3(particle.velocity, particleImpulse, particle.inverseMass);
-            body.linearVelocity = addScaledVec3(body.linearVelocity, particleImpulse, -body.inverseMass);
-            body.angularVelocity = addVec3(
-              body.angularVelocity,
-              applyBodyInverseInertiaWorld(body, crossVec3(offset, scaleVec3(particleImpulse, -1)))
-            );
+            applyImpulseToDynamicBody(body, collision.point, scaleVec3(particleImpulse, -1));
           }
+
+          const supportImpulseMagnitude = normalImpulseMagnitude + (correctionImpulse * inverseDeltaTime);
+          const frictionImpulseMagnitude = applyDynamicCollisionFriction(
+            particle,
+            body,
+            collision.point,
+            collision.normal,
+            resolveCollisionFriction(dynamicCollider),
+            supportImpulseMagnitude,
+            deltaTime
+          );
 
           body.sleeping = false;
           body.sleepTimer = 0;
           affectedBodies.add(body.id);
           stepStats.solvedDynamicCollisions += 1;
+          if (frictionImpulseMagnitude > 0) {
+            stepStats.solvedDynamicFrictionCollisions += 1;
+          }
 
           if (this.lastCollisionContacts.length < 256) {
-            this.lastCollisionContacts.push({
-              clothId: cloth.id,
-              particleId: particle.id,
-              colliderId: collision.colliderId,
-              bodyId: collision.bodyId,
-              motionType: collision.motionType,
-              shapeType: collision.shapeType,
-              point: cloneVec3(collision.point),
-              normal: cloneVec3(collision.normal),
-              particlePosition: cloneVec3(particle.predictedPosition)
-            });
+            this.lastCollisionContacts.push(createDeformableCollisionContactRecord(deformable, particle, collision));
           }
         }
       }
@@ -674,7 +941,7 @@ export class ParticleWorld {
 
   step(deltaSeconds, options = {}) {
     const requestedDeltaSeconds = toNonNegativeNumber(deltaSeconds, 0);
-    if (requestedDeltaSeconds <= 0 || this.particles.size === 0 || this.cloths.size === 0) {
+    if (requestedDeltaSeconds <= 0 || this.particles.size === 0 || (this.cloths.size === 0 && this.softBodies.size === 0)) {
       this.lastStepStats = createEmptyStepStats(this.iterations);
       this.lastStepStats.requestedDeltaSeconds = requestedDeltaSeconds;
       this.lastCollisionContacts = [];
@@ -693,14 +960,17 @@ export class ParticleWorld {
     this.lastSelfCollisionContacts = [];
 
     const cloths = Array.from(this.cloths.values());
-    const { distanceConstraints, pinConstraints } = collectConstraints(this.cloths);
+    const softBodies = Array.from(this.softBodies.values());
+    const deformables = [...cloths, ...softBodies];
+    stepStats.activeSoftBodyCount = softBodies.length;
+    const { distanceConstraints, volumeConstraints, pinConstraints } = collectConstraints([this.cloths, this.softBodies]);
     const staticColliders = Array.isArray(options.staticColliders) ? options.staticColliders : [];
     const dynamicColliders = Array.isArray(options.dynamicColliders) ? options.dynamicColliders : [];
 
     for (let substepIndex = 0; substepIndex < substeps; substepIndex += 1) {
-      for (const cloth of cloths) {
-        const dampingFactor = Math.max(0, 1 - cloth.damping * substepDelta);
-        for (const particleId of cloth.particleIds) {
+      for (const deformable of deformables) {
+        const dampingFactor = Math.max(0, 1 - deformable.damping * substepDelta);
+        for (const particleId of deformable.particleIds) {
           const particle = this.particles.get(particleId);
           if (!particle) {
             continue;
@@ -721,6 +991,7 @@ export class ParticleWorld {
       }
 
       resetConstraintLambdas(distanceConstraints);
+      resetConstraintLambdas(volumeConstraints);
       resetConstraintLambdas(pinConstraints);
 
       for (let iteration = 0; iteration < this.iterations; iteration += 1) {
@@ -732,6 +1003,16 @@ export class ParticleWorld {
           }
         }
 
+        for (const constraint of volumeConstraints) {
+          const particleA = this.particles.get(constraint.particleAId);
+          const particleB = this.particles.get(constraint.particleBId);
+          const particleC = this.particles.get(constraint.particleCId);
+          const particleD = this.particles.get(constraint.particleDId);
+          if (solveVolumeConstraint(constraint, particleA, particleB, particleC, particleD, substepDelta)) {
+            stepStats.solvedVolumeConstraints += 1;
+          }
+        }
+
         for (const constraint of pinConstraints) {
           const particle = this.particles.get(constraint.particleId);
           if (solvePinConstraint(constraint, particle, substepDelta)) {
@@ -739,13 +1020,13 @@ export class ParticleWorld {
           }
         }
 
-        this.solveStaticCollisions(cloths, staticColliders, stepStats);
-        this.solveDynamicCollisions(cloths, dynamicColliders, stepStats);
+        this.solveStaticCollisions(deformables, staticColliders, stepStats, substepDelta);
+        this.solveDynamicCollisions(deformables, dynamicColliders, stepStats, substepDelta);
         this.solveSelfCollisions(cloths, stepStats);
       }
 
-      for (const cloth of cloths) {
-        for (const particleId of cloth.particleIds) {
+      for (const deformable of deformables) {
+        for (const particleId of deformable.particleIds) {
           const particle = this.particles.get(particleId);
           if (!particle) {
             continue;
@@ -948,16 +1229,156 @@ export class ParticleWorld {
       }
     }
 
+    for (const softBody of this.softBodies.values()) {
+      for (const edge of softBody.structuralEdges) {
+        const particleA = this.particles.get(edge.particleAId);
+        const particleB = this.particles.get(edge.particleBId);
+        if (!particleA || !particleB) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugLine({
+            id: edge.id,
+            category: 'soft-body-structural-edge',
+            start: particleA.position,
+            end: particleB.position,
+            color: DEFAULT_DEBUG_COLORS.softBodyStructuralEdge,
+            source: {
+              softBodyId: softBody.id,
+              particleAId: edge.particleAId,
+              particleBId: edge.particleBId,
+              edgeKind: 'structural'
+            }
+          })
+        );
+      }
+
+      for (const edge of softBody.shearEdges) {
+        const particleA = this.particles.get(edge.particleAId);
+        const particleB = this.particles.get(edge.particleBId);
+        if (!particleA || !particleB) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugLine({
+            id: edge.id,
+            category: 'soft-body-shear-edge',
+            start: particleA.position,
+            end: particleB.position,
+            color: DEFAULT_DEBUG_COLORS.softBodyShearEdge,
+            source: {
+              softBodyId: softBody.id,
+              particleAId: edge.particleAId,
+              particleBId: edge.particleBId,
+              edgeKind: 'shear'
+            }
+          })
+        );
+      }
+
+      for (const edge of softBody.bendEdges) {
+        const particleA = this.particles.get(edge.particleAId);
+        const particleB = this.particles.get(edge.particleBId);
+        if (!particleA || !particleB) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugLine({
+            id: edge.id,
+            category: 'soft-body-bend-edge',
+            start: particleA.position,
+            end: particleB.position,
+            color: DEFAULT_DEBUG_COLORS.softBodyBendEdge,
+            source: {
+              softBodyId: softBody.id,
+              particleAId: edge.particleAId,
+              particleBId: edge.particleBId,
+              edgeKind: 'bend'
+            }
+          })
+        );
+      }
+
+      for (const particleId of softBody.particleIds) {
+        const particle = this.particles.get(particleId);
+        if (!particle) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugPoint({
+            id: `${particle.id}:point`,
+            category: particle.pinned ? 'soft-body-pin' : 'soft-body-particle',
+            position: particle.position,
+            color: particle.pinned ? DEFAULT_DEBUG_COLORS.softBodyPinnedParticle : DEFAULT_DEBUG_COLORS.softBodyParticle,
+            size: particle.pinned ? 4.5 : 3.25,
+            source: {
+              softBodyId: softBody.id,
+              particleId: particle.id,
+              pinned: particle.pinned
+            }
+          })
+        );
+      }
+
+      for (const contact of this.lastCollisionContacts) {
+        if (contact.softBodyId !== softBody.id) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugPoint({
+            id: `${contact.particleId}:soft-body-contact-point`,
+            category: 'soft-body-contact-point',
+            position: contact.point,
+            color: DEFAULT_DEBUG_COLORS.softBodyContactPoint,
+            size: 4.25,
+            source: {
+              softBodyId: contact.softBodyId,
+              particleId: contact.particleId,
+              colliderId: contact.colliderId,
+              bodyId: contact.bodyId,
+              motionType: contact.motionType,
+              shapeType: contact.shapeType
+            }
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${contact.particleId}:soft-body-contact-normal`,
+            category: 'soft-body-contact-normal',
+            start: contact.point,
+            end: addScaledVec3(contact.point, contact.normal, 12),
+            color: DEFAULT_DEBUG_COLORS.softBodyContactNormal,
+            source: {
+              softBodyId: contact.softBodyId,
+              particleId: contact.particleId,
+              colliderId: contact.colliderId,
+              bodyId: contact.bodyId,
+              motionType: contact.motionType,
+              shapeType: contact.shapeType
+            }
+          })
+        );
+      }
+    }
+
     return primitives;
   }
 
   getSnapshot() {
     return {
       clothCount: this.countCloths(),
+      softBodyCount: this.countSoftBodies(),
       particleCount: this.countParticles(),
       gravity: cloneVec3(this.gravity),
       simulationTick: this.simulationTick,
       cloths: this.listCloths(),
+      softBodies: this.listSoftBodies(),
       particles: this.listParticles(),
       lastCollisionContacts: this.lastCollisionContacts.map((contact) => cloneClothCollisionContact(contact)),
       lastSelfCollisionContacts: this.lastSelfCollisionContacts.map((contact) => cloneClothSelfCollisionContact(contact)),

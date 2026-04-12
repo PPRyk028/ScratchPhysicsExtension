@@ -65,7 +65,7 @@ function parseConvexHullVertices(verticesText) {
 }
 
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.clothCount ?? 0} cloths | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.clothCount ?? 0} cloths | ${snapshot.softBodyCount ?? 0} soft bodies | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -74,6 +74,28 @@ function joinIds(records) {
   }
 
   return records.map((record) => record.id).join(', ');
+}
+
+function summarizeDeformableContacts(snapshot, deformableId) {
+  const contacts = Array.isArray(snapshot?.xpbd?.lastCollisionContacts)
+    ? snapshot.xpbd.lastCollisionContacts.filter((contact) => contact.deformableId === deformableId)
+    : [];
+
+  let staticCount = 0;
+  let dynamicCount = 0;
+  for (const contact of contacts) {
+    if (contact.motionType === 'dynamic') {
+      dynamicCount += 1;
+    } else {
+      staticCount += 1;
+    }
+  }
+
+  return {
+    total: contacts.length,
+    staticCount,
+    dynamicCount
+  };
 }
 
 export class Engine3D {
@@ -225,6 +247,21 @@ export class Engine3D {
     return cloth;
   }
 
+  createSoftBodyCube(id, rows, columns, layers, spacing, x, y, z, pinMode = 'none') {
+    const softBody = this.world.createSoftBodyCube({
+      id,
+      rows,
+      columns,
+      layers,
+      spacing,
+      position: createVec3(x, y, z),
+      pinMode
+    });
+
+    this.hostBridge.log(`Soft body ${softBody.id} registered with ${softBody.layers}x${softBody.rows}x${softBody.columns} particles and pin mode ${softBody.pinMode}`);
+    return softBody;
+  }
+
   configureCloth(id, damping, margin, stretch, shear, bend, selfCollisionEnabled, selfCollisionDistance) {
     const cloth = this.world.configureCloth(id, {
       damping,
@@ -264,6 +301,25 @@ export class Engine3D {
 
     this.hostBridge.log(`Cloth ${cloth.id} configured with preset ${preset.id}`);
     return cloth;
+  }
+
+  configureSoftBody(id, damping, margin, stretch, shear, bend, volume) {
+    const softBody = this.world.configureSoftBody(id, {
+      damping,
+      collisionMargin: margin,
+      stretchCompliance: stretch,
+      shearCompliance: shear,
+      bendCompliance: bend,
+      volumeCompliance: volume
+    });
+
+    if (!softBody) {
+      this.hostBridge.log(`Soft body ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Soft body ${softBody.id} configured`);
+    return softBody;
   }
 
   createDistanceJoint(id, bodyAId, bodyBId, distance = 0) {
@@ -502,7 +558,8 @@ export class Engine3D {
   exportSceneJson() {
     const sceneDefinition = this.world.exportSceneDefinition();
     const clothCount = sceneDefinition.xpbd?.cloths?.length ?? 0;
-    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${clothCount} cloths | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
+    const softBodyCount = sceneDefinition.xpbd?.softBodies?.length ?? 0;
+    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${clothCount} cloths | ${softBodyCount} soft bodies | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
     return JSON.stringify(sceneDefinition);
   }
 
@@ -513,7 +570,7 @@ export class Engine3D {
         reset: true
       });
       this.lastFrame = null;
-      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.clothCount ?? 0} cloths | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
+      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.clothCount ?? 0} cloths | ${imported.softBodyCount ?? 0} soft bodies | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
       this.hostBridge.log(this.lastSceneIoSummary);
       return true;
     } catch (error) {
@@ -587,6 +644,18 @@ export class Engine3D {
     }
 
     return `${cloth.id} | type:${cloth.type} | rows:${cloth.rows} | columns:${cloth.columns} | particles:${cloth.particleIds.length} | pin:${cloth.pinMode} | spacing:${cloth.spacing} | damping:${cloth.damping} | margin:${cloth.collisionMargin} | stretch:${cloth.stretchCompliance} | shear:${cloth.shearCompliance} | bend:${cloth.bendCompliance} | self:${cloth.selfCollisionEnabled ? 'on' : 'off'} | self distance:${cloth.selfCollisionDistance}`;
+  }
+
+  getSoftBodySummary(id) {
+    const softBody = this.world.getSoftBody(id);
+    if (!softBody) {
+      return `Soft body ${id} not found`;
+    }
+
+    const snapshot = this.world.getSnapshot();
+    const contacts = summarizeDeformableContacts(snapshot, softBody.id);
+
+    return `${softBody.id} | type:${softBody.type} | layers:${softBody.layers} | rows:${softBody.rows} | columns:${softBody.columns} | particles:${softBody.particleIds.length} | pin:${softBody.pinMode} | spacing:${softBody.spacing} | damping:${softBody.damping} | margin:${softBody.collisionMargin} | stretch:${softBody.stretchCompliance} | shear:${softBody.shearCompliance} | bend:${softBody.bendCompliance} | volume:${softBody.volumeCompliance} | contacts:${contacts.total} | static contacts:${contacts.staticCount} | dynamic contacts:${contacts.dynamicCount}`;
   }
 
   queryPointBodies(x, y, z) {

@@ -1,4 +1,4 @@
-import { addScaledVec3, cloneVec3, createVec3, lengthVec3, normalizeVec3, subtractVec3 } from '../math/vec3.js';
+import { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, lengthVec3, normalizeVec3, scaleVec3, subtractVec3 } from '../math/vec3.js';
 
 function toNonNegativeNumber(value, fallback) {
   const parsed = Number(value);
@@ -45,6 +45,21 @@ export function createPinConstraint(options = {}) {
     kind: String(options.kind ?? 'pin').trim() || 'pin',
     particleId: String(options.particleId ?? '').trim(),
     targetPosition: cloneVec3(options.targetPosition ?? createVec3()),
+    compliance: toNonNegativeNumber(options.compliance, 0),
+    lambda: 0
+  };
+}
+
+export function createVolumeConstraint(options = {}) {
+  return {
+    id: String(options.id ?? '').trim() || 'volume-constraint',
+    type: 'volume',
+    kind: String(options.kind ?? 'volume').trim() || 'volume',
+    particleAId: String(options.particleAId ?? '').trim(),
+    particleBId: String(options.particleBId ?? '').trim(),
+    particleCId: String(options.particleCId ?? '').trim(),
+    particleDId: String(options.particleDId ?? '').trim(),
+    restVolume: Number(options.restVolume ?? 0),
     compliance: toNonNegativeNumber(options.compliance, 0),
     lambda: 0
   };
@@ -126,6 +141,64 @@ export function solvePinConstraint(constraint, particle, deltaTime) {
     gradient,
     inverseMass * deltaLambda
   );
+
+  return true;
+}
+
+function computeSignedTetraVolume(pointA, pointB, pointC, pointD) {
+  const edgeAB = subtractVec3(pointB, pointA);
+  const edgeAC = subtractVec3(pointC, pointA);
+  const edgeAD = subtractVec3(pointD, pointA);
+  return dotVec3(crossVec3(edgeAB, edgeAC), edgeAD) / 6;
+}
+
+export function solveVolumeConstraint(constraint, particleA, particleB, particleC, particleD, deltaTime) {
+  if (!constraint || !particleA || !particleB || !particleC || !particleD) {
+    return false;
+  }
+
+  const predictedA = particleA.predictedPosition;
+  const predictedB = particleB.predictedPosition;
+  const predictedC = particleC.predictedPosition;
+  const predictedD = particleD.predictedPosition;
+
+  const gradientB = scaleVec3(crossVec3(subtractVec3(predictedC, predictedA), subtractVec3(predictedD, predictedA)), 1 / 6);
+  const gradientC = scaleVec3(crossVec3(subtractVec3(predictedD, predictedA), subtractVec3(predictedB, predictedA)), 1 / 6);
+  const gradientD = scaleVec3(crossVec3(subtractVec3(predictedB, predictedA), subtractVec3(predictedC, predictedA)), 1 / 6);
+  const gradientA = scaleVec3(addVec3(addVec3(gradientB, gradientC), gradientD), -1);
+
+  const inverseMassA = Number(particleA.inverseMass ?? 0);
+  const inverseMassB = Number(particleB.inverseMass ?? 0);
+  const inverseMassC = Number(particleC.inverseMass ?? 0);
+  const inverseMassD = Number(particleD.inverseMass ?? 0);
+  const denominator =
+    inverseMassA * lengthSquaredVec3(gradientA) +
+    inverseMassB * lengthSquaredVec3(gradientB) +
+    inverseMassC * lengthSquaredVec3(gradientC) +
+    inverseMassD * lengthSquaredVec3(gradientD) +
+    getConstraintAlpha(constraint, deltaTime);
+  if (denominator <= 1e-8) {
+    return false;
+  }
+
+  const volume = computeSignedTetraVolume(predictedA, predictedB, predictedC, predictedD);
+  const constraintError = volume - Number(constraint.restVolume ?? 0);
+  const alpha = getConstraintAlpha(constraint, deltaTime);
+  const deltaLambda = (-constraintError - alpha * Number(constraint.lambda ?? 0)) / denominator;
+  constraint.lambda = Number(constraint.lambda ?? 0) + deltaLambda;
+
+  if (inverseMassA > 0) {
+    particleA.predictedPosition = addScaledVec3(particleA.predictedPosition, gradientA, inverseMassA * deltaLambda);
+  }
+  if (inverseMassB > 0) {
+    particleB.predictedPosition = addScaledVec3(particleB.predictedPosition, gradientB, inverseMassB * deltaLambda);
+  }
+  if (inverseMassC > 0) {
+    particleC.predictedPosition = addScaledVec3(particleC.predictedPosition, gradientC, inverseMassC * deltaLambda);
+  }
+  if (inverseMassD > 0) {
+    particleD.predictedPosition = addScaledVec3(particleD.predictedPosition, gradientD, inverseMassD * deltaLambda);
+  }
 
   return true;
 }

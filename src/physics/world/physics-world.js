@@ -822,6 +822,7 @@ export class PhysicsWorld {
       materialCount: this.materialRegistry.count(),
       shapeCount: this.shapeRegistry.count(),
       clothCount: this.particleWorld.countCloths(),
+      softBodyCount: this.particleWorld.countSoftBodies(),
       particleCount: this.particleWorld.countParticles()
     };
   }
@@ -1527,6 +1528,25 @@ export class PhysicsWorld {
     });
   }
 
+  createSoftBodyCube(options = {}) {
+    return this.particleWorld.createSoftBodyCube({
+      id: options.id,
+      rows: options.rows,
+      columns: options.columns ?? options.cols,
+      layers: options.layers ?? options.depth,
+      spacing: options.spacing,
+      position: options.position ?? createVec3(),
+      pinMode: options.pinMode,
+      particleMass: options.particleMass ?? options.mass,
+      damping: options.damping,
+      collisionMargin: options.collisionMargin,
+      stretchCompliance: options.stretchCompliance,
+      shearCompliance: options.shearCompliance,
+      bendCompliance: options.bendCompliance,
+      volumeCompliance: options.volumeCompliance
+    });
+  }
+
   configureCloth(id, options = {}) {
     return this.particleWorld.configureCloth(id, {
       damping: options.damping,
@@ -1539,12 +1559,31 @@ export class PhysicsWorld {
     });
   }
 
+  configureSoftBody(id, options = {}) {
+    return this.particleWorld.configureSoftBody(id, {
+      damping: options.damping,
+      collisionMargin: options.collisionMargin,
+      stretchCompliance: options.stretchCompliance,
+      shearCompliance: options.shearCompliance,
+      bendCompliance: options.bendCompliance,
+      volumeCompliance: options.volumeCompliance
+    });
+  }
+
   getCloth(id) {
     return this.particleWorld.getCloth(id);
   }
 
+  getSoftBody(id) {
+    return this.particleWorld.getSoftBody(id);
+  }
+
   listCloths() {
     return this.particleWorld.listCloths();
+  }
+
+  listSoftBodies() {
+    return this.particleWorld.listSoftBodies();
   }
 
   listStaticClothColliders() {
@@ -1575,6 +1614,7 @@ export class PhysicsWorld {
         colliderId: collider.id,
         bodyId: collider.bodyId ?? null,
         materialId: collider.materialId,
+        material: this.getEffectiveMaterialForCollider(collider.id),
         shape,
         pose
       });
@@ -1605,6 +1645,7 @@ export class PhysicsWorld {
         colliderId: collider.id,
         bodyId: collider.bodyId,
         materialId: collider.materialId,
+        material: this.getEffectiveMaterialForCollider(collider.id),
         shape,
         body,
         motionType: body.motionType,
@@ -1989,6 +2030,7 @@ export class PhysicsWorld {
     return {
       bodyCount: this.bodyRegistry.count(),
       clothCount: this.particleWorld.countCloths(),
+      softBodyCount: this.particleWorld.countSoftBodies(),
       particleCount: this.particleWorld.countParticles(),
       shapeCount: this.shapeRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
@@ -3247,9 +3289,10 @@ export class PhysicsWorld {
       camera: cloneCamera(this.debugCamera),
       primitives,
       stats: {
-        bodyCount: this.bodyRegistry.count(),
-        clothCount: xpbdSnapshot.clothCount,
-        particleCount: xpbdSnapshot.particleCount,
+      bodyCount: this.bodyRegistry.count(),
+      clothCount: xpbdSnapshot.clothCount,
+      softBodyCount: xpbdSnapshot.softBodyCount ?? 0,
+      particleCount: xpbdSnapshot.particleCount,
         shapeCount: this.shapeRegistry.count(),
         colliderCount: this.colliderRegistry.count(),
         jointCount: this.jointRegistry.count(),
@@ -3272,9 +3315,12 @@ export class PhysicsWorld {
         shapeCastHit: this.lastShapeCast?.hit ?? false,
         ccdEventCount: this.lastCcdEvents.length,
         xpbdSolvedDistanceConstraints: xpbdSnapshot.lastStepStats.solvedDistanceConstraints,
+        xpbdSolvedVolumeConstraints: xpbdSnapshot.lastStepStats.solvedVolumeConstraints,
         xpbdSolvedPinConstraints: xpbdSnapshot.lastStepStats.solvedPinConstraints,
         xpbdSolvedStaticCollisions: xpbdSnapshot.lastStepStats.solvedStaticCollisions,
+        xpbdSolvedStaticFrictionCollisions: xpbdSnapshot.lastStepStats.solvedStaticFrictionCollisions,
         xpbdSolvedDynamicCollisions: xpbdSnapshot.lastStepStats.solvedDynamicCollisions,
+        xpbdSolvedDynamicFrictionCollisions: xpbdSnapshot.lastStepStats.solvedDynamicFrictionCollisions,
         xpbdSolvedSelfCollisions: xpbdSnapshot.lastStepStats.solvedSelfCollisions,
         fixedDeltaTime: this.fixedDeltaTime,
         performedSubsteps: this.lastStepStats.performedSubsteps
@@ -3289,6 +3335,7 @@ export class PhysicsWorld {
       debugCamera: cloneCamera(this.debugCamera),
       bodyCount: this.bodyRegistry.count(),
       clothCount: this.particleWorld.countCloths(),
+      softBodyCount: this.particleWorld.countSoftBodies(),
       particleCount: this.particleWorld.countParticles(),
       shapeCount: this.shapeRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
@@ -3300,6 +3347,7 @@ export class PhysicsWorld {
       joints: this.jointRegistry.list(),
       materials: this.materialRegistry.list(),
       cloths: this.particleWorld.listCloths(),
+      softBodies: this.particleWorld.listSoftBodies(),
       xpbd: this.particleWorld.getSnapshot(),
       collision: collisionState,
       simulationTick: this.simulationTick,

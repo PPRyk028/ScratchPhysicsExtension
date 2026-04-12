@@ -90,7 +90,14 @@ export const DEFAULT_DEBUG_COLORS = Object.freeze({
   clothContactPoint: Object.freeze({ r: 171, g: 255, b: 150, a: 1 }),
   clothContactNormal: Object.freeze({ r: 120, g: 255, b: 214, a: 1 }),
   clothSelfContactPoint: Object.freeze({ r: 255, g: 96, b: 214, a: 1 }),
-  clothSelfContactNormal: Object.freeze({ r: 255, g: 164, b: 224, a: 1 })
+  clothSelfContactNormal: Object.freeze({ r: 255, g: 164, b: 224, a: 1 }),
+  softBodyStructuralEdge: Object.freeze({ r: 255, g: 196, b: 102, a: 1 }),
+  softBodyShearEdge: Object.freeze({ r: 255, g: 161, b: 132, a: 0.95 }),
+  softBodyBendEdge: Object.freeze({ r: 255, g: 130, b: 175, a: 0.9 }),
+  softBodyParticle: Object.freeze({ r: 255, g: 232, b: 133, a: 1 }),
+  softBodyPinnedParticle: Object.freeze({ r: 255, g: 118, b: 118, a: 1 }),
+  softBodyContactPoint: Object.freeze({ r: 170, g: 255, b: 203, a: 1 }),
+  softBodyContactNormal: Object.freeze({ r: 110, g: 255, b: 237, a: 1 })
 });
 
 export function countDebugPrimitivesByType(primitives) {

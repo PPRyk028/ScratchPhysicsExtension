@@ -3,7 +3,7 @@
 const __modules = {
   0: function(__require, __exports) {
 const { Base3DExtension } = __require(1);
-const { createGandiRemoteHost } = __require(32);
+const { createGandiRemoteHost } = __require(33);
 const ScratchApi = globalThis.Scratch;
 
 if (!ScratchApi) {
@@ -22,8 +22,8 @@ ScratchApi.extensions.register(new GandiRemote3DExtension());
 },
   1: function(__require, __exports) {
 const { Engine3D } = __require(2);
-const { toNumber, toString } = __require(30);
-const { createExtensionInfo } = __require(31);
+const { toNumber, toString } = __require(31);
+const { createExtensionInfo } = __require(32);
 class Base3DExtension {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
@@ -169,6 +169,20 @@ class Base3DExtension {
     );
   }
 
+  createSoftBodyCube(args) {
+    this.engine.createSoftBodyCube(
+      toString(args.ID, 'soft-body'),
+      toNumber(args.ROWS, 4),
+      toNumber(args.COLUMNS, 4),
+      toNumber(args.LAYERS, 4),
+      toNumber(args.SPACING, 20),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toString(args.PIN_MODE, 'none')
+    );
+  }
+
   configureCloth(args) {
     this.engine.configureCloth(
       toString(args.ID, 'cloth'),
@@ -200,6 +214,18 @@ class Base3DExtension {
     this.engine.configureClothPreset(
       toString(args.ID, 'cloth'),
       'wrinkle'
+    );
+  }
+
+  configureSoftBody(args) {
+    this.engine.configureSoftBody(
+      toString(args.ID, 'soft-body'),
+      toNumber(args.DAMPING, 0.04),
+      toNumber(args.MARGIN, 3),
+      toNumber(args.STRETCH, 0),
+      toNumber(args.SHEAR, 0.0002),
+      toNumber(args.BEND, 0.0008),
+      toNumber(args.VOLUME, 0.00008)
     );
   }
 
@@ -410,6 +436,12 @@ class Base3DExtension {
     );
   }
 
+  softBodySummary(args) {
+    return this.engine.getSoftBodySummary(
+      toString(args.ID, 'soft-body')
+    );
+  }
+
   queryPointBodies(args) {
     return this.engine.queryPointBodies(
       toNumber(args.X),
@@ -501,8 +533,8 @@ __exports.Base3DExtension = Base3DExtension;
 },
   2: function(__require, __exports) {
 const { PhysicsWorld, createVec3 } = __require(3);
-const { getConvexHullPresetVertexText } = __require(28);
-const { resolveClothPreset } = __require(29);
+const { getConvexHullPresetVertexText } = __require(29);
+const { resolveClothPreset } = __require(30);
 function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
 }
@@ -566,7 +598,7 @@ function parseConvexHullVertices(verticesText) {
 }
 
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.clothCount ?? 0} cloths | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.clothCount ?? 0} cloths | ${snapshot.softBodyCount ?? 0} soft bodies | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -575,6 +607,28 @@ function joinIds(records) {
   }
 
   return records.map((record) => record.id).join(', ');
+}
+
+function summarizeDeformableContacts(snapshot, deformableId) {
+  const contacts = Array.isArray(snapshot?.xpbd?.lastCollisionContacts)
+    ? snapshot.xpbd.lastCollisionContacts.filter((contact) => contact.deformableId === deformableId)
+    : [];
+
+  let staticCount = 0;
+  let dynamicCount = 0;
+  for (const contact of contacts) {
+    if (contact.motionType === 'dynamic') {
+      dynamicCount += 1;
+    } else {
+      staticCount += 1;
+    }
+  }
+
+  return {
+    total: contacts.length,
+    staticCount,
+    dynamicCount
+  };
 }
 class Engine3D {
   constructor(hostBridge) {
@@ -725,6 +779,21 @@ class Engine3D {
     return cloth;
   }
 
+  createSoftBodyCube(id, rows, columns, layers, spacing, x, y, z, pinMode = 'none') {
+    const softBody = this.world.createSoftBodyCube({
+      id,
+      rows,
+      columns,
+      layers,
+      spacing,
+      position: createVec3(x, y, z),
+      pinMode
+    });
+
+    this.hostBridge.log(`Soft body ${softBody.id} registered with ${softBody.layers}x${softBody.rows}x${softBody.columns} particles and pin mode ${softBody.pinMode}`);
+    return softBody;
+  }
+
   configureCloth(id, damping, margin, stretch, shear, bend, selfCollisionEnabled, selfCollisionDistance) {
     const cloth = this.world.configureCloth(id, {
       damping,
@@ -764,6 +833,25 @@ class Engine3D {
 
     this.hostBridge.log(`Cloth ${cloth.id} configured with preset ${preset.id}`);
     return cloth;
+  }
+
+  configureSoftBody(id, damping, margin, stretch, shear, bend, volume) {
+    const softBody = this.world.configureSoftBody(id, {
+      damping,
+      collisionMargin: margin,
+      stretchCompliance: stretch,
+      shearCompliance: shear,
+      bendCompliance: bend,
+      volumeCompliance: volume
+    });
+
+    if (!softBody) {
+      this.hostBridge.log(`Soft body ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Soft body ${softBody.id} configured`);
+    return softBody;
   }
 
   createDistanceJoint(id, bodyAId, bodyBId, distance = 0) {
@@ -1002,7 +1090,8 @@ class Engine3D {
   exportSceneJson() {
     const sceneDefinition = this.world.exportSceneDefinition();
     const clothCount = sceneDefinition.xpbd?.cloths?.length ?? 0;
-    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${clothCount} cloths | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
+    const softBodyCount = sceneDefinition.xpbd?.softBodies?.length ?? 0;
+    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${clothCount} cloths | ${softBodyCount} soft bodies | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
     return JSON.stringify(sceneDefinition);
   }
 
@@ -1013,7 +1102,7 @@ class Engine3D {
         reset: true
       });
       this.lastFrame = null;
-      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.clothCount ?? 0} cloths | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
+      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.clothCount ?? 0} cloths | ${imported.softBodyCount ?? 0} soft bodies | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
       this.hostBridge.log(this.lastSceneIoSummary);
       return true;
     } catch (error) {
@@ -1087,6 +1176,18 @@ class Engine3D {
     }
 
     return `${cloth.id} | type:${cloth.type} | rows:${cloth.rows} | columns:${cloth.columns} | particles:${cloth.particleIds.length} | pin:${cloth.pinMode} | spacing:${cloth.spacing} | damping:${cloth.damping} | margin:${cloth.collisionMargin} | stretch:${cloth.stretchCompliance} | shear:${cloth.shearCompliance} | bend:${cloth.bendCompliance} | self:${cloth.selfCollisionEnabled ? 'on' : 'off'} | self distance:${cloth.selfCollisionDistance}`;
+  }
+
+  getSoftBodySummary(id) {
+    const softBody = this.world.getSoftBody(id);
+    if (!softBody) {
+      return `Soft body ${id} not found`;
+    }
+
+    const snapshot = this.world.getSnapshot();
+    const contacts = summarizeDeformableContacts(snapshot, softBody.id);
+
+    return `${softBody.id} | type:${softBody.type} | layers:${softBody.layers} | rows:${softBody.rows} | columns:${softBody.columns} | particles:${softBody.particleIds.length} | pin:${softBody.pinMode} | spacing:${softBody.spacing} | damping:${softBody.damping} | margin:${softBody.collisionMargin} | stretch:${softBody.stretchCompliance} | shear:${softBody.shearCompliance} | bend:${softBody.bendCompliance} | volume:${softBody.volumeCompliance} | contacts:${contacts.total} | static contacts:${contacts.staticCount} | dynamic contacts:${contacts.dynamicCount}`;
   }
 
   queryPointBodies(x, y, z) {
@@ -1215,16 +1316,17 @@ const { cloneQuat, conjugateQuat, createIdentityQuat, createQuat, createQuatFrom
 const { createVec3, cloneVec3, zeroVec3, scaleVec3, addVec3, addScaledVec3, subtractVec3, minVec3, maxVec3, dotVec3, lengthSquaredVec3, lengthVec3, negateVec3, normalizeVec3, crossVec3 } = __require(6);
 const { solveDistanceJointConstraints, solveJointConstraints } = __require(15);
 const { solveNormalContactConstraints } = __require(16);
-const { cloneXpbdConstraint, createDistanceConstraint, createPinConstraint, resetConstraintLambdas, solveDistanceConstraint, solvePinConstraint } = __require(17);
+const { cloneXpbdConstraint, createDistanceConstraint, createPinConstraint, createVolumeConstraint, resetConstraintLambdas, solveDistanceConstraint, solvePinConstraint, solveVolumeConstraint } = __require(17);
 const { createClothSheetDefinition } = __require(18);
-const { ParticleWorld } = __require(19);
-const { buildRigidBodyIslandGraph, cloneRigidBodyIsland, cloneRigidBodyIslandGraph } = __require(20);
-const { PhysicsWorld } = __require(21);
-const { ShapeRegistry } = __require(27);
-const { BodyRegistry } = __require(22);
-const { ColliderRegistry } = __require(24);
-const { JointRegistry } = __require(25);
-const { MaterialRegistry } = __require(26);
+const { createSoftBodyCubeDefinition } = __require(19);
+const { ParticleWorld } = __require(20);
+const { buildRigidBodyIslandGraph, cloneRigidBodyIsland, cloneRigidBodyIslandGraph } = __require(21);
+const { PhysicsWorld } = __require(22);
+const { ShapeRegistry } = __require(28);
+const { BodyRegistry } = __require(23);
+const { ColliderRegistry } = __require(25);
+const { JointRegistry } = __require(26);
+const { MaterialRegistry } = __require(27);
 
 __exports.combineAabbs = combineAabbs;
 __exports.createAabbFromCenterHalfExtents = createAabbFromCenterHalfExtents;
@@ -1312,11 +1414,14 @@ __exports.solveDistanceJointConstraints = solveDistanceJointConstraints;
 __exports.solveNormalContactConstraints = solveNormalContactConstraints;
 __exports.createDistanceConstraint = createDistanceConstraint;
 __exports.createPinConstraint = createPinConstraint;
+__exports.createVolumeConstraint = createVolumeConstraint;
 __exports.cloneXpbdConstraint = cloneXpbdConstraint;
 __exports.resetConstraintLambdas = resetConstraintLambdas;
 __exports.solveDistanceConstraint = solveDistanceConstraint;
 __exports.solvePinConstraint = solvePinConstraint;
+__exports.solveVolumeConstraint = solveVolumeConstraint;
 __exports.createClothSheetDefinition = createClothSheetDefinition;
+__exports.createSoftBodyCubeDefinition = createSoftBodyCubeDefinition;
 __exports.ParticleWorld = ParticleWorld;
 __exports.buildRigidBodyIslandGraph = buildRigidBodyIslandGraph;
 __exports.cloneRigidBodyIsland = cloneRigidBodyIsland;
@@ -4867,7 +4972,14 @@ const DEFAULT_DEBUG_COLORS = Object.freeze({
   clothContactPoint: Object.freeze({ r: 171, g: 255, b: 150, a: 1 }),
   clothContactNormal: Object.freeze({ r: 120, g: 255, b: 214, a: 1 }),
   clothSelfContactPoint: Object.freeze({ r: 255, g: 96, b: 214, a: 1 }),
-  clothSelfContactNormal: Object.freeze({ r: 255, g: 164, b: 224, a: 1 })
+  clothSelfContactNormal: Object.freeze({ r: 255, g: 164, b: 224, a: 1 }),
+  softBodyStructuralEdge: Object.freeze({ r: 255, g: 196, b: 102, a: 1 }),
+  softBodyShearEdge: Object.freeze({ r: 255, g: 161, b: 132, a: 0.95 }),
+  softBodyBendEdge: Object.freeze({ r: 255, g: 130, b: 175, a: 0.9 }),
+  softBodyParticle: Object.freeze({ r: 255, g: 232, b: 133, a: 1 }),
+  softBodyPinnedParticle: Object.freeze({ r: 255, g: 118, b: 118, a: 1 }),
+  softBodyContactPoint: Object.freeze({ r: 170, g: 255, b: 203, a: 1 }),
+  softBodyContactNormal: Object.freeze({ r: 110, g: 255, b: 237, a: 1 })
 });
 function countDebugPrimitivesByType(primitives) {
   const counts = {};
@@ -6044,7 +6156,7 @@ function solveNormalContactConstraints(options = {}) {
 __exports.solveNormalContactConstraints = solveNormalContactConstraints;
 },
   17: function(__require, __exports) {
-const { addScaledVec3, cloneVec3, createVec3, lengthVec3, normalizeVec3, subtractVec3 } = __require(6);
+const { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, lengthVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
 function toNonNegativeNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -6087,6 +6199,20 @@ function createPinConstraint(options = {}) {
     kind: String(options.kind ?? 'pin').trim() || 'pin',
     particleId: String(options.particleId ?? '').trim(),
     targetPosition: cloneVec3(options.targetPosition ?? createVec3()),
+    compliance: toNonNegativeNumber(options.compliance, 0),
+    lambda: 0
+  };
+}
+function createVolumeConstraint(options = {}) {
+  return {
+    id: String(options.id ?? '').trim() || 'volume-constraint',
+    type: 'volume',
+    kind: String(options.kind ?? 'volume').trim() || 'volume',
+    particleAId: String(options.particleAId ?? '').trim(),
+    particleBId: String(options.particleBId ?? '').trim(),
+    particleCId: String(options.particleCId ?? '').trim(),
+    particleDId: String(options.particleDId ?? '').trim(),
+    restVolume: Number(options.restVolume ?? 0),
     compliance: toNonNegativeNumber(options.compliance, 0),
     lambda: 0
   };
@@ -6169,12 +6295,71 @@ function solvePinConstraint(constraint, particle, deltaTime) {
   return true;
 }
 
+function computeSignedTetraVolume(pointA, pointB, pointC, pointD) {
+  const edgeAB = subtractVec3(pointB, pointA);
+  const edgeAC = subtractVec3(pointC, pointA);
+  const edgeAD = subtractVec3(pointD, pointA);
+  return dotVec3(crossVec3(edgeAB, edgeAC), edgeAD) / 6;
+}
+function solveVolumeConstraint(constraint, particleA, particleB, particleC, particleD, deltaTime) {
+  if (!constraint || !particleA || !particleB || !particleC || !particleD) {
+    return false;
+  }
+
+  const predictedA = particleA.predictedPosition;
+  const predictedB = particleB.predictedPosition;
+  const predictedC = particleC.predictedPosition;
+  const predictedD = particleD.predictedPosition;
+
+  const gradientB = scaleVec3(crossVec3(subtractVec3(predictedC, predictedA), subtractVec3(predictedD, predictedA)), 1 / 6);
+  const gradientC = scaleVec3(crossVec3(subtractVec3(predictedD, predictedA), subtractVec3(predictedB, predictedA)), 1 / 6);
+  const gradientD = scaleVec3(crossVec3(subtractVec3(predictedB, predictedA), subtractVec3(predictedC, predictedA)), 1 / 6);
+  const gradientA = scaleVec3(addVec3(addVec3(gradientB, gradientC), gradientD), -1);
+
+  const inverseMassA = Number(particleA.inverseMass ?? 0);
+  const inverseMassB = Number(particleB.inverseMass ?? 0);
+  const inverseMassC = Number(particleC.inverseMass ?? 0);
+  const inverseMassD = Number(particleD.inverseMass ?? 0);
+  const denominator =
+    inverseMassA * lengthSquaredVec3(gradientA) +
+    inverseMassB * lengthSquaredVec3(gradientB) +
+    inverseMassC * lengthSquaredVec3(gradientC) +
+    inverseMassD * lengthSquaredVec3(gradientD) +
+    getConstraintAlpha(constraint, deltaTime);
+  if (denominator <= 1e-8) {
+    return false;
+  }
+
+  const volume = computeSignedTetraVolume(predictedA, predictedB, predictedC, predictedD);
+  const constraintError = volume - Number(constraint.restVolume ?? 0);
+  const alpha = getConstraintAlpha(constraint, deltaTime);
+  const deltaLambda = (-constraintError - alpha * Number(constraint.lambda ?? 0)) / denominator;
+  constraint.lambda = Number(constraint.lambda ?? 0) + deltaLambda;
+
+  if (inverseMassA > 0) {
+    particleA.predictedPosition = addScaledVec3(particleA.predictedPosition, gradientA, inverseMassA * deltaLambda);
+  }
+  if (inverseMassB > 0) {
+    particleB.predictedPosition = addScaledVec3(particleB.predictedPosition, gradientB, inverseMassB * deltaLambda);
+  }
+  if (inverseMassC > 0) {
+    particleC.predictedPosition = addScaledVec3(particleC.predictedPosition, gradientC, inverseMassC * deltaLambda);
+  }
+  if (inverseMassD > 0) {
+    particleD.predictedPosition = addScaledVec3(particleD.predictedPosition, gradientD, inverseMassD * deltaLambda);
+  }
+
+  return true;
+}
+
 __exports.cloneXpbdConstraint = cloneXpbdConstraint;
 __exports.createDistanceConstraint = createDistanceConstraint;
 __exports.createPinConstraint = createPinConstraint;
+__exports.createVolumeConstraint = createVolumeConstraint;
 __exports.resetConstraintLambdas = resetConstraintLambdas;
 __exports.solveDistanceConstraint = solveDistanceConstraint;
 __exports.solvePinConstraint = solvePinConstraint;
+__exports.solveVolumeConstraint = solveVolumeConstraint;
 },
   18: function(__require, __exports) {
 const { cloneVec3, createVec3, lengthVec3, subtractVec3 } = __require(6);
@@ -6373,11 +6558,300 @@ function createClothSheetDefinition(options = {}) {
 __exports.createClothSheetDefinition = createClothSheetDefinition;
 },
   19: function(__require, __exports) {
+const { cloneVec3, createVec3, lengthVec3, subtractVec3 } = __require(6);
+const { createDistanceConstraint, createPinConstraint, createVolumeConstraint } = __require(17);
+function toCount(value, fallback, minimum = 2) {
+  const parsed = Math.floor(Number(value));
+  return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
+}
+
+function toPositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function toNonNegativeNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function normalizePinMode(value) {
+  const normalized = String(value ?? 'none').trim().toLowerCase();
+  if (!normalized) {
+    return 'none';
+  }
+
+  if (normalized === 'top' || normalized === 'top-face') {
+    return 'top-layer';
+  }
+
+  if (normalized === 'top-layer' || normalized === 'top-corners' || normalized === 'corners' || normalized === 'none') {
+    return normalized;
+  }
+
+  return 'none';
+}
+
+function shouldPinParticle(pinMode, layerIndex, rowIndex, columnIndex, layerCount, rowCount, columnCount) {
+  const lastLayer = layerCount - 1;
+  const lastRow = rowCount - 1;
+  const lastColumn = columnCount - 1;
+
+  switch (pinMode) {
+    case 'top-layer':
+      return layerIndex === 0;
+    case 'top-corners':
+      return layerIndex === 0 && (rowIndex === 0 || rowIndex === lastRow) && (columnIndex === 0 || columnIndex === lastColumn);
+    case 'corners':
+      return (layerIndex === 0 || layerIndex === lastLayer) &&
+        (rowIndex === 0 || rowIndex === lastRow) &&
+        (columnIndex === 0 || columnIndex === lastColumn);
+    case 'none':
+    default:
+      return false;
+  }
+}
+
+function addEdgeConstraint(records, particleIdGrid, particlePositions, softBodyId, kind, pointA, pointB, compliance, edgeStore) {
+  const [layerA, rowA, columnA] = pointA;
+  const [layerB, rowB, columnB] = pointB;
+  const particleAId = particleIdGrid[layerA]?.[rowA]?.[columnA];
+  const particleBId = particleIdGrid[layerB]?.[rowB]?.[columnB];
+  if (!particleAId || !particleBId) {
+    return;
+  }
+
+  const positionA = particlePositions.get(particleAId) ?? createVec3();
+  const positionB = particlePositions.get(particleBId) ?? createVec3();
+  const restLength = lengthVec3(subtractVec3(positionB, positionA));
+  records.push(createDistanceConstraint({
+    id: `${softBodyId}:${kind}:${layerA}:${rowA}:${columnA}:${layerB}:${rowB}:${columnB}`,
+    kind,
+    particleAId,
+    particleBId,
+    restLength,
+    compliance
+  }));
+  edgeStore.push({
+    id: `${softBodyId}:${kind}-edge:${layerA}:${rowA}:${columnA}:${layerB}:${rowB}:${columnB}`,
+    particleAId,
+    particleBId
+  });
+}
+
+function addTetraVolumeConstraint(records, particleIdGrid, particlePositions, softBodyId, tetraIndex, pointA, pointB, pointC, pointD, compliance) {
+  const [layerA, rowA, columnA] = pointA;
+  const [layerB, rowB, columnB] = pointB;
+  const [layerC, rowC, columnC] = pointC;
+  const [layerD, rowD, columnD] = pointD;
+  const particleAId = particleIdGrid[layerA]?.[rowA]?.[columnA];
+  const particleBId = particleIdGrid[layerB]?.[rowB]?.[columnB];
+  const particleCId = particleIdGrid[layerC]?.[rowC]?.[columnC];
+  const particleDId = particleIdGrid[layerD]?.[rowD]?.[columnD];
+  if (!particleAId || !particleBId || !particleCId || !particleDId) {
+    return;
+  }
+
+  const positionA = particlePositions.get(particleAId) ?? createVec3();
+  const positionB = particlePositions.get(particleBId) ?? createVec3();
+  const positionC = particlePositions.get(particleCId) ?? createVec3();
+  const positionD = particlePositions.get(particleDId) ?? createVec3();
+  const edgeAB = subtractVec3(positionB, positionA);
+  const edgeAC = subtractVec3(positionC, positionA);
+  const edgeAD = subtractVec3(positionD, positionA);
+  const restVolume = (
+    (edgeAB.y * edgeAC.z - edgeAB.z * edgeAC.y) * edgeAD.x +
+    (edgeAB.z * edgeAC.x - edgeAB.x * edgeAC.z) * edgeAD.y +
+    (edgeAB.x * edgeAC.y - edgeAB.y * edgeAC.x) * edgeAD.z
+  ) / 6;
+
+  records.push(createVolumeConstraint({
+    id: `${softBodyId}:volume:${tetraIndex}:${layerA}:${rowA}:${columnA}:${layerD}:${rowD}:${columnD}`,
+    kind: 'volume',
+    particleAId,
+    particleBId,
+    particleCId,
+    particleDId,
+    restVolume,
+    compliance
+  }));
+}
+function createSoftBodyCubeDefinition(options = {}) {
+  const softBodyId = String(options.id ?? '').trim() || 'soft-body-1';
+  const rows = toCount(options.rows, 4);
+  const columns = toCount(options.columns ?? options.cols, 4);
+  const layers = toCount(options.layers ?? options.depth, 4);
+  const spacing = toPositiveNumber(options.spacing, 20);
+  const origin = cloneVec3(options.position ?? createVec3());
+  const pinMode = normalizePinMode(options.pinMode);
+  const particleMass = toPositiveNumber(options.particleMass ?? options.mass, 0.2);
+  const inverseMass = 1 / particleMass;
+  const damping = toNonNegativeNumber(options.damping, 0.04);
+  const collisionMargin = toPositiveNumber(options.collisionMargin, Math.max(0.5, spacing * 0.18));
+  const stretchCompliance = toNonNegativeNumber(options.stretchCompliance, 0);
+  const shearCompliance = toNonNegativeNumber(options.shearCompliance, 0.0002);
+  const bendCompliance = toNonNegativeNumber(options.bendCompliance, 0.0008);
+  const volumeCompliance = toNonNegativeNumber(options.volumeCompliance, 0.00008);
+
+  const particles = [];
+  const distanceConstraints = [];
+  const volumeConstraints = [];
+  const pinConstraints = [];
+  const structuralEdges = [];
+  const shearEdges = [];
+  const bendEdges = [];
+  const particleIds = [];
+  const particleIdGrid = Array.from({ length: layers }, () => (
+    Array.from({ length: rows }, () => Array(columns).fill(null))
+  ));
+  const particlePositions = new Map();
+
+  for (let layerIndex = 0; layerIndex < layers; layerIndex += 1) {
+    for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+      for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
+        const particleId = `${softBodyId}:particle:${layerIndex}:${rowIndex}:${columnIndex}`;
+        const pinned = shouldPinParticle(pinMode, layerIndex, rowIndex, columnIndex, layers, rows, columns);
+        const position = createVec3(
+          origin.x + columnIndex * spacing,
+          origin.y - layerIndex * spacing,
+          origin.z + rowIndex * spacing
+        );
+
+        particles.push({
+          id: particleId,
+          softBodyId,
+          layerIndex,
+          rowIndex,
+          columnIndex,
+          position,
+          previousPosition: cloneVec3(position),
+          predictedPosition: cloneVec3(position),
+          velocity: createVec3(),
+          inverseMass: pinned ? 0 : inverseMass,
+          pinned,
+          pinTarget: pinned ? cloneVec3(position) : null
+        });
+        particleIds.push(particleId);
+        particleIdGrid[layerIndex][rowIndex][columnIndex] = particleId;
+        particlePositions.set(particleId, position);
+
+        if (pinned) {
+          pinConstraints.push(createPinConstraint({
+            id: `${softBodyId}:pin:${layerIndex}:${rowIndex}:${columnIndex}`,
+            particleId,
+            targetPosition: position,
+            compliance: 0
+          }));
+        }
+      }
+    }
+  }
+
+  for (let layerIndex = 0; layerIndex < layers; layerIndex += 1) {
+    for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+      for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
+        if (columnIndex + 1 < columns) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'stretch', [layerIndex, rowIndex, columnIndex], [layerIndex, rowIndex, columnIndex + 1], stretchCompliance, structuralEdges);
+        }
+        if (rowIndex + 1 < rows) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'stretch', [layerIndex, rowIndex, columnIndex], [layerIndex, rowIndex + 1, columnIndex], stretchCompliance, structuralEdges);
+        }
+        if (layerIndex + 1 < layers) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'stretch', [layerIndex, rowIndex, columnIndex], [layerIndex + 1, rowIndex, columnIndex], stretchCompliance, structuralEdges);
+        }
+
+        if (columnIndex + 1 < columns && rowIndex + 1 < rows) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex, rowIndex, columnIndex], [layerIndex, rowIndex + 1, columnIndex + 1], shearCompliance, shearEdges);
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex, rowIndex + 1, columnIndex], [layerIndex, rowIndex, columnIndex + 1], shearCompliance, shearEdges);
+        }
+        if (columnIndex + 1 < columns && layerIndex + 1 < layers) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex, rowIndex, columnIndex], [layerIndex + 1, rowIndex, columnIndex + 1], shearCompliance, shearEdges);
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex + 1, rowIndex, columnIndex], [layerIndex, rowIndex, columnIndex + 1], shearCompliance, shearEdges);
+        }
+        if (rowIndex + 1 < rows && layerIndex + 1 < layers) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex, rowIndex, columnIndex], [layerIndex + 1, rowIndex + 1, columnIndex], shearCompliance, shearEdges);
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex + 1, rowIndex, columnIndex], [layerIndex, rowIndex + 1, columnIndex], shearCompliance, shearEdges);
+        }
+        if (columnIndex + 1 < columns && rowIndex + 1 < rows && layerIndex + 1 < layers) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex, rowIndex, columnIndex], [layerIndex + 1, rowIndex + 1, columnIndex + 1], shearCompliance, shearEdges);
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex, rowIndex + 1, columnIndex], [layerIndex + 1, rowIndex, columnIndex + 1], shearCompliance, shearEdges);
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex + 1, rowIndex, columnIndex], [layerIndex, rowIndex + 1, columnIndex + 1], shearCompliance, shearEdges);
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'shear', [layerIndex + 1, rowIndex + 1, columnIndex], [layerIndex, rowIndex, columnIndex + 1], shearCompliance, shearEdges);
+        }
+
+        if (columnIndex + 2 < columns) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'bend', [layerIndex, rowIndex, columnIndex], [layerIndex, rowIndex, columnIndex + 2], bendCompliance, bendEdges);
+        }
+        if (rowIndex + 2 < rows) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'bend', [layerIndex, rowIndex, columnIndex], [layerIndex, rowIndex + 2, columnIndex], bendCompliance, bendEdges);
+        }
+        if (layerIndex + 2 < layers) {
+          addEdgeConstraint(distanceConstraints, particleIdGrid, particlePositions, softBodyId, 'bend', [layerIndex, rowIndex, columnIndex], [layerIndex + 2, rowIndex, columnIndex], bendCompliance, bendEdges);
+        }
+      }
+    }
+  }
+
+  let tetraIndex = 0;
+  for (let layerIndex = 0; layerIndex < layers - 1; layerIndex += 1) {
+    for (let rowIndex = 0; rowIndex < rows - 1; rowIndex += 1) {
+      for (let columnIndex = 0; columnIndex < columns - 1; columnIndex += 1) {
+        const a = [layerIndex, rowIndex, columnIndex];
+        const b = [layerIndex, rowIndex, columnIndex + 1];
+        const c = [layerIndex, rowIndex + 1, columnIndex];
+        const d = [layerIndex, rowIndex + 1, columnIndex + 1];
+        const e = [layerIndex + 1, rowIndex, columnIndex];
+        const f = [layerIndex + 1, rowIndex, columnIndex + 1];
+        const g = [layerIndex + 1, rowIndex + 1, columnIndex];
+        const h = [layerIndex + 1, rowIndex + 1, columnIndex + 1];
+
+        addTetraVolumeConstraint(volumeConstraints, particleIdGrid, particlePositions, softBodyId, tetraIndex++, a, b, d, h, volumeCompliance);
+        addTetraVolumeConstraint(volumeConstraints, particleIdGrid, particlePositions, softBodyId, tetraIndex++, a, d, c, h, volumeCompliance);
+        addTetraVolumeConstraint(volumeConstraints, particleIdGrid, particlePositions, softBodyId, tetraIndex++, a, c, g, h, volumeCompliance);
+        addTetraVolumeConstraint(volumeConstraints, particleIdGrid, particlePositions, softBodyId, tetraIndex++, a, g, e, h, volumeCompliance);
+        addTetraVolumeConstraint(volumeConstraints, particleIdGrid, particlePositions, softBodyId, tetraIndex++, a, e, f, h, volumeCompliance);
+        addTetraVolumeConstraint(volumeConstraints, particleIdGrid, particlePositions, softBodyId, tetraIndex++, a, f, b, h, volumeCompliance);
+      }
+    }
+  }
+
+  return {
+    id: softBodyId,
+    type: 'soft-body-cube',
+    rows,
+    columns,
+    layers,
+    spacing,
+    pinMode,
+    particleMass,
+    damping,
+    collisionMargin,
+    stretchCompliance,
+    shearCompliance,
+    bendCompliance,
+    volumeCompliance,
+    position: origin,
+    particleIds,
+    particleIdGrid,
+    particles,
+    distanceConstraints,
+    volumeConstraints,
+    pinConstraints,
+    structuralEdges,
+    shearEdges,
+    bendEdges
+  };
+}
+
+__exports.createSoftBodyCubeDefinition = createSoftBodyCubeDefinition;
+},
+  20: function(__require, __exports) {
 const { createDebugLine, createDebugPoint, DEFAULT_DEBUG_COLORS } = __require(13);
 const { integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
 const { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, scaleVec3, subtractVec3 } = __require(6);
 const { createClothSheetDefinition } = __require(18);
-const { cloneXpbdConstraint, resetConstraintLambdas, solveDistanceConstraint, solvePinConstraint } = __require(17);
+const { createSoftBodyCubeDefinition } = __require(19);
+const { cloneXpbdConstraint, resetConstraintLambdas, solveDistanceConstraint, solvePinConstraint, solveVolumeConstraint } = __require(17);
 function toPositiveNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -6413,17 +6887,36 @@ function cloneCloth(cloth) {
   };
 }
 
+function cloneSoftBody(softBody) {
+  return {
+    ...softBody,
+    position: cloneVec3(softBody.position),
+    particleIds: [...softBody.particleIds],
+    particleIdGrid: softBody.particleIdGrid.map((layer) => layer.map((row) => [...row])),
+    structuralEdges: softBody.structuralEdges.map((edge) => ({ ...edge })),
+    shearEdges: softBody.shearEdges.map((edge) => ({ ...edge })),
+    bendEdges: softBody.bendEdges.map((edge) => ({ ...edge })),
+    distanceConstraints: softBody.distanceConstraints.map((constraint) => cloneXpbdConstraint(constraint)),
+    volumeConstraints: (softBody.volumeConstraints ?? []).map((constraint) => cloneXpbdConstraint(constraint)),
+    pinConstraints: softBody.pinConstraints.map((constraint) => cloneXpbdConstraint(constraint))
+  };
+}
+
 function createEmptyStepStats(iterations) {
   return {
     requestedDeltaSeconds: 0,
     substeps: 0,
     iterations,
     solvedDistanceConstraints: 0,
+    solvedVolumeConstraints: 0,
     solvedPinConstraints: 0,
     solvedStaticCollisions: 0,
+    solvedStaticFrictionCollisions: 0,
     solvedDynamicCollisions: 0,
+    solvedDynamicFrictionCollisions: 0,
     solvedSelfCollisions: 0,
     activeParticleCount: 0,
+    activeSoftBodyCount: 0,
     activeStaticColliderCount: 0,
     activeDynamicColliderCount: 0,
     affectedDynamicBodyCount: 0
@@ -6446,6 +6939,23 @@ function cloneClothSelfCollisionContact(contact) {
     normal: cloneVec3(contact.normal),
     particleAPosition: cloneVec3(contact.particleAPosition),
     particleBPosition: cloneVec3(contact.particleBPosition)
+  };
+}
+
+function createDeformableCollisionContactRecord(deformable, particle, collision) {
+  return {
+    deformableId: deformable.id,
+    deformableType: deformable.type,
+    clothId: deformable.type === 'cloth-sheet' ? deformable.id : null,
+    softBodyId: deformable.type === 'soft-body-cube' ? deformable.id : null,
+    particleId: particle.id,
+    colliderId: collision.colliderId,
+    bodyId: collision.bodyId,
+    motionType: collision.motionType,
+    shapeType: collision.shapeType,
+    point: cloneVec3(collision.point),
+    normal: cloneVec3(collision.normal),
+    particlePosition: cloneVec3(particle.predictedPosition)
   };
 }
 
@@ -6496,6 +7006,10 @@ function getBodyPointVelocity(body, worldPoint) {
 }
 
 function computeDynamicCollisionEffectiveMass(body, contactPoint, normal, particleInverseMass) {
+  return computeCollisionEffectiveMass(body, contactPoint, normal, particleInverseMass);
+}
+
+function computeCollisionEffectiveMass(body, contactPoint, direction, particleInverseMass) {
   let inverseMassSum = Number(particleInverseMass ?? 0);
   if (!body || body.motionType !== 'dynamic') {
     return inverseMassSum;
@@ -6503,21 +7017,130 @@ function computeDynamicCollisionEffectiveMass(body, contactPoint, normal, partic
 
   inverseMassSum += Number(body.inverseMass ?? 0);
   const offset = subtractVec3(contactPoint, body.position);
-  const angularTerm = crossVec3(offset, normal);
+  const angularTerm = crossVec3(offset, direction);
   const angularMass = applyBodyInverseInertiaWorld(body, angularTerm);
-  inverseMassSum += dotVec3(normal, crossVec3(angularMass, offset));
+  inverseMassSum += dotVec3(direction, crossVec3(angularMass, offset));
   return inverseMassSum;
 }
 
-function collectConstraints(cloths) {
+function applyImpulseToDynamicBody(body, contactPoint, impulse) {
+  if (!body || body.motionType !== 'dynamic') {
+    return;
+  }
+
+  body.linearVelocity = addScaledVec3(body.linearVelocity, impulse, Number(body.inverseMass ?? 0));
+  const offset = subtractVec3(contactPoint, body.position);
+  body.angularVelocity = addVec3(
+    body.angularVelocity,
+    applyBodyInverseInertiaWorld(body, crossVec3(offset, impulse))
+  );
+  body.sleeping = false;
+  body.sleepTimer = 0;
+}
+
+function resolveCollisionFriction(collider) {
+  return toNonNegativeNumber(collider?.material?.friction, 0.5);
+}
+
+function applyStaticCollisionFriction(particle, normal, friction, supportSpeed, deltaTime) {
+  if (!particle || friction <= 1e-8) {
+    return false;
+  }
+
+  const tangentialVelocity = subtractVec3(
+    particle.velocity,
+    scaleVec3(normal, dotVec3(particle.velocity, normal))
+  );
+  const tangentSpeedSquared = lengthSquaredVec3(tangentialVelocity);
+  if (tangentSpeedSquared <= 1e-10) {
+    return false;
+  }
+
+  const tangentSpeed = Math.sqrt(tangentSpeedSquared);
+  const tangentDirection = scaleVec3(tangentialVelocity, 1 / tangentSpeed);
+  const tangentialSpeedReduction = Math.min(
+    tangentSpeed,
+    Math.max(0, friction * Math.max(0, Number(supportSpeed ?? 0)))
+  );
+  if (tangentialSpeedReduction <= 1e-8) {
+    return false;
+  }
+
+  particle.velocity = addScaledVec3(particle.velocity, tangentDirection, -tangentialSpeedReduction);
+  particle.predictedPosition = addScaledVec3(
+    particle.predictedPosition,
+    tangentDirection,
+    -tangentialSpeedReduction * deltaTime
+  );
+  return true;
+}
+
+function applyDynamicCollisionFriction(particle, body, contactPoint, normal, friction, normalImpulseMagnitude, deltaTime) {
+  if (!particle || !body || friction <= 1e-8) {
+    return 0;
+  }
+
+  const bodyPointVelocity = getBodyPointVelocity(body, contactPoint);
+  const relativeVelocity = subtractVec3(particle.velocity, bodyPointVelocity);
+  const relativeNormalVelocity = dotVec3(relativeVelocity, normal);
+  const tangentialVelocity = subtractVec3(relativeVelocity, scaleVec3(normal, relativeNormalVelocity));
+  const tangentSpeedSquared = lengthSquaredVec3(tangentialVelocity);
+  if (tangentSpeedSquared <= 1e-10) {
+    return 0;
+  }
+
+  const tangentSpeed = Math.sqrt(tangentSpeedSquared);
+  const tangentDirection = scaleVec3(tangentialVelocity, 1 / tangentSpeed);
+  const tangentEffectiveMass = computeCollisionEffectiveMass(body, contactPoint, tangentDirection, particle.inverseMass);
+  if (tangentEffectiveMass <= 1e-8) {
+    return 0;
+  }
+
+  const maxFrictionImpulse = Math.max(0, friction * Math.max(0, normalImpulseMagnitude));
+  if (maxFrictionImpulse <= 1e-8) {
+    return 0;
+  }
+
+  const desiredImpulse = tangentSpeed / tangentEffectiveMass;
+  const appliedImpulseMagnitude = Math.min(desiredImpulse, maxFrictionImpulse);
+  if (appliedImpulseMagnitude <= 1e-8) {
+    return 0;
+  }
+
+  const particleImpulse = scaleVec3(tangentDirection, -appliedImpulseMagnitude);
+  particle.velocity = addScaledVec3(particle.velocity, particleImpulse, particle.inverseMass);
+  applyImpulseToDynamicBody(body, contactPoint, scaleVec3(particleImpulse, -1));
+
+  particle.predictedPosition = addScaledVec3(
+    particle.predictedPosition,
+    tangentDirection,
+    -appliedImpulseMagnitude * particle.inverseMass * deltaTime
+  );
+  if (body.inverseMass > 0) {
+    body.position = addScaledVec3(
+      body.position,
+      tangentDirection,
+      appliedImpulseMagnitude * body.inverseMass * deltaTime
+    );
+  }
+
+  return appliedImpulseMagnitude;
+}
+
+function collectConstraints(groups) {
   const distanceConstraints = [];
+  const volumeConstraints = [];
   const pinConstraints = [];
-  for (const cloth of cloths.values()) {
-    distanceConstraints.push(...cloth.distanceConstraints);
-    pinConstraints.push(...cloth.pinConstraints);
+  for (const group of groups) {
+    for (const record of group.values()) {
+      distanceConstraints.push(...record.distanceConstraints);
+      volumeConstraints.push(...(record.volumeConstraints ?? []));
+      pinConstraints.push(...record.pinConstraints);
+    }
   }
   return {
     distanceConstraints,
+    volumeConstraints,
     pinConstraints
   };
 }
@@ -6533,6 +7156,7 @@ class ParticleWorld {
   reset() {
     this.particles = new Map();
     this.cloths = new Map();
+    this.softBodies = new Map();
     this.simulationTick = 0;
     this.lastStepStats = createEmptyStepStats(this.iterations);
     this.lastCollisionContacts = [];
@@ -6559,6 +7183,24 @@ class ParticleWorld {
     };
     this.cloths.set(storedCloth.id, storedCloth);
     return this.getCloth(storedCloth.id);
+  }
+
+  createSoftBodyCube(options = {}) {
+    const softBody = createSoftBodyCubeDefinition({
+      ...options,
+      damping: options.damping ?? this.defaultDamping
+    });
+
+    for (const particle of softBody.particles) {
+      this.particles.set(particle.id, particle);
+    }
+
+    const storedSoftBody = {
+      ...softBody,
+      particles: undefined
+    };
+    this.softBodies.set(storedSoftBody.id, storedSoftBody);
+    return this.getSoftBody(storedSoftBody.id);
   }
 
   configureCloth(id, options = {}) {
@@ -6607,8 +7249,58 @@ class ParticleWorld {
     return this.getCloth(cloth.id);
   }
 
+  configureSoftBody(id, options = {}) {
+    const softBody = this.softBodies.get(String(id ?? '').trim());
+    if (!softBody) {
+      return null;
+    }
+
+    if (options.damping !== undefined) {
+      softBody.damping = toNonNegativeNumber(options.damping, softBody.damping);
+    }
+    if (options.collisionMargin !== undefined) {
+      softBody.collisionMargin = toPositiveNumber(options.collisionMargin, softBody.collisionMargin);
+    }
+    if (options.stretchCompliance !== undefined) {
+      softBody.stretchCompliance = toNonNegativeNumber(options.stretchCompliance, softBody.stretchCompliance);
+      for (const constraint of softBody.distanceConstraints) {
+        if (constraint.kind === 'stretch') {
+          constraint.compliance = softBody.stretchCompliance;
+        }
+      }
+    }
+    if (options.shearCompliance !== undefined) {
+      softBody.shearCompliance = toNonNegativeNumber(options.shearCompliance, softBody.shearCompliance);
+      for (const constraint of softBody.distanceConstraints) {
+        if (constraint.kind === 'shear') {
+          constraint.compliance = softBody.shearCompliance;
+        }
+      }
+    }
+    if (options.bendCompliance !== undefined) {
+      softBody.bendCompliance = toNonNegativeNumber(options.bendCompliance, softBody.bendCompliance);
+      for (const constraint of softBody.distanceConstraints) {
+        if (constraint.kind === 'bend') {
+          constraint.compliance = softBody.bendCompliance;
+        }
+      }
+    }
+    if (options.volumeCompliance !== undefined) {
+      softBody.volumeCompliance = toNonNegativeNumber(options.volumeCompliance, softBody.volumeCompliance);
+      for (const constraint of softBody.volumeConstraints ?? []) {
+        constraint.compliance = softBody.volumeCompliance;
+      }
+    }
+
+    return this.getSoftBody(softBody.id);
+  }
+
   hasCloth(id) {
     return this.cloths.has(id);
+  }
+
+  hasSoftBody(id) {
+    return this.softBodies.has(id);
   }
 
   getCloth(id) {
@@ -6618,6 +7310,15 @@ class ParticleWorld {
 
   listCloths() {
     return Array.from(this.cloths.values(), (cloth) => cloneCloth(cloth));
+  }
+
+  getSoftBody(id) {
+    const softBody = this.softBodies.get(id);
+    return softBody ? cloneSoftBody(softBody) : null;
+  }
+
+  listSoftBodies() {
+    return Array.from(this.softBodies.values(), (softBody) => cloneSoftBody(softBody));
   }
 
   getParticle(id) {
@@ -6633,6 +7334,10 @@ class ParticleWorld {
     return this.cloths.size;
   }
 
+  countSoftBodies() {
+    return this.softBodies.size;
+  }
+
   countParticles() {
     return this.particles.size;
   }
@@ -6646,6 +7351,7 @@ class ParticleWorld {
         defaultDamping: this.defaultDamping
       },
       cloths: this.listCloths(),
+      softBodies: this.listSoftBodies(),
       particles: this.listParticles()
     };
   }
@@ -6698,8 +7404,36 @@ class ParticleWorld {
       }
     }
 
+    for (const softBodyRecord of Array.isArray(scene.softBodies) ? scene.softBodies : []) {
+      if (!softBodyRecord?.id) {
+        continue;
+      }
+
+      const softBody = cloneSoftBody({
+        ...softBodyRecord,
+        position: softBodyRecord.position ?? createVec3(),
+        particleIds: Array.isArray(softBodyRecord.particleIds) ? softBodyRecord.particleIds : [],
+        particleIdGrid: Array.isArray(softBodyRecord.particleIdGrid) ? softBodyRecord.particleIdGrid : [],
+        structuralEdges: Array.isArray(softBodyRecord.structuralEdges) ? softBodyRecord.structuralEdges : [],
+        shearEdges: Array.isArray(softBodyRecord.shearEdges) ? softBodyRecord.shearEdges : [],
+        bendEdges: Array.isArray(softBodyRecord.bendEdges) ? softBodyRecord.bendEdges : [],
+        distanceConstraints: Array.isArray(softBodyRecord.distanceConstraints) ? softBodyRecord.distanceConstraints : [],
+        volumeConstraints: Array.isArray(softBodyRecord.volumeConstraints) ? softBodyRecord.volumeConstraints : [],
+        pinConstraints: Array.isArray(softBodyRecord.pinConstraints) ? softBodyRecord.pinConstraints : []
+      });
+
+      this.softBodies.set(softBody.id, softBody);
+      for (const particleId of softBody.particleIds) {
+        const particle = particlesById.get(particleId);
+        if (particle) {
+          this.particles.set(particleId, particle);
+        }
+      }
+    }
+
     return {
       clothCount: this.countCloths(),
+      softBodyCount: this.countSoftBodies(),
       particleCount: this.countParticles()
     };
   }
@@ -6807,15 +7541,15 @@ class ParticleWorld {
     return null;
   }
 
-  solveStaticCollisions(cloths, staticColliders, stepStats) {
+  solveStaticCollisions(deformables, staticColliders, stepStats, deltaTime) {
     if (!Array.isArray(staticColliders) || !staticColliders.length) {
       return;
     }
 
     stepStats.activeStaticColliderCount = staticColliders.length;
 
-    for (const cloth of cloths) {
-      for (const particleId of cloth.particleIds) {
+    for (const deformable of deformables) {
+      for (const particleId of deformable.particleIds) {
         const particle = this.particles.get(particleId);
         if (!particle || particle.inverseMass <= 0) {
           continue;
@@ -6824,7 +7558,7 @@ class ParticleWorld {
         for (const staticCollider of staticColliders) {
           const collision = this.resolveParticleCollision(
             particle,
-            Number(cloth.collisionMargin ?? 0.5),
+            Number(deformable.collisionMargin ?? 0.5),
             staticCollider
           );
 
@@ -6838,26 +7572,30 @@ class ParticleWorld {
             particle.velocity = addScaledVec3(particle.velocity, collision.normal, -inwardVelocity);
           }
 
+          const supportSpeed = Math.max(0, -inwardVelocity) + (
+            collision.penetration / Math.max(deltaTime, 1e-6)
+          );
+          const frictionApplied = applyStaticCollisionFriction(
+            particle,
+            collision.normal,
+            resolveCollisionFriction(staticCollider),
+            supportSpeed,
+            deltaTime
+          );
+
           stepStats.solvedStaticCollisions += 1;
+          if (frictionApplied) {
+            stepStats.solvedStaticFrictionCollisions += 1;
+          }
           if (this.lastCollisionContacts.length < 256) {
-            this.lastCollisionContacts.push({
-              clothId: cloth.id,
-              particleId: particle.id,
-              colliderId: collision.colliderId,
-              bodyId: collision.bodyId,
-              motionType: collision.motionType,
-              shapeType: collision.shapeType,
-              point: cloneVec3(collision.point),
-              normal: cloneVec3(collision.normal),
-              particlePosition: cloneVec3(particle.predictedPosition)
-            });
+            this.lastCollisionContacts.push(createDeformableCollisionContactRecord(deformable, particle, collision));
           }
         }
       }
     }
   }
 
-  solveDynamicCollisions(cloths, dynamicColliders, stepStats) {
+  solveDynamicCollisions(deformables, dynamicColliders, stepStats, deltaTime) {
     if (!Array.isArray(dynamicColliders) || !dynamicColliders.length) {
       return;
     }
@@ -6865,9 +7603,9 @@ class ParticleWorld {
     stepStats.activeDynamicColliderCount = dynamicColliders.length;
     const affectedBodies = new Set();
 
-    for (const cloth of cloths) {
-      const collisionMargin = Number(cloth.collisionMargin ?? 0.5);
-      for (const particleId of cloth.particleIds) {
+    for (const deformable of deformables) {
+      const collisionMargin = Number(deformable.collisionMargin ?? 0.5);
+      for (const particleId of deformable.particleIds) {
         const particle = this.particles.get(particleId);
         if (!particle || particle.inverseMass <= 0) {
           continue;
@@ -6894,6 +7632,7 @@ class ParticleWorld {
             continue;
           }
 
+          const inverseDeltaTime = 1 / Math.max(deltaTime, 1e-6);
           const correctionImpulse = collision.penetration / effectiveMass;
           particle.predictedPosition = addScaledVec3(
             particle.predictedPosition,
@@ -6914,34 +7653,35 @@ class ParticleWorld {
 
           const relativeVelocity = subtractVec3(particle.velocity, getBodyPointVelocity(body, collision.point));
           const relativeNormalVelocity = dotVec3(relativeVelocity, collision.normal);
+          let normalImpulseMagnitude = 0;
           if (relativeNormalVelocity < 0) {
-            const impulseMagnitude = -relativeNormalVelocity / effectiveMass;
-            const particleImpulse = scaleVec3(collision.normal, impulseMagnitude);
+            normalImpulseMagnitude = -relativeNormalVelocity / effectiveMass;
+            const particleImpulse = scaleVec3(collision.normal, normalImpulseMagnitude);
             particle.velocity = addScaledVec3(particle.velocity, particleImpulse, particle.inverseMass);
-            body.linearVelocity = addScaledVec3(body.linearVelocity, particleImpulse, -body.inverseMass);
-            body.angularVelocity = addVec3(
-              body.angularVelocity,
-              applyBodyInverseInertiaWorld(body, crossVec3(offset, scaleVec3(particleImpulse, -1)))
-            );
+            applyImpulseToDynamicBody(body, collision.point, scaleVec3(particleImpulse, -1));
           }
+
+          const supportImpulseMagnitude = normalImpulseMagnitude + (correctionImpulse * inverseDeltaTime);
+          const frictionImpulseMagnitude = applyDynamicCollisionFriction(
+            particle,
+            body,
+            collision.point,
+            collision.normal,
+            resolveCollisionFriction(dynamicCollider),
+            supportImpulseMagnitude,
+            deltaTime
+          );
 
           body.sleeping = false;
           body.sleepTimer = 0;
           affectedBodies.add(body.id);
           stepStats.solvedDynamicCollisions += 1;
+          if (frictionImpulseMagnitude > 0) {
+            stepStats.solvedDynamicFrictionCollisions += 1;
+          }
 
           if (this.lastCollisionContacts.length < 256) {
-            this.lastCollisionContacts.push({
-              clothId: cloth.id,
-              particleId: particle.id,
-              colliderId: collision.colliderId,
-              bodyId: collision.bodyId,
-              motionType: collision.motionType,
-              shapeType: collision.shapeType,
-              point: cloneVec3(collision.point),
-              normal: cloneVec3(collision.normal),
-              particlePosition: cloneVec3(particle.predictedPosition)
-            });
+            this.lastCollisionContacts.push(createDeformableCollisionContactRecord(deformable, particle, collision));
           }
         }
       }
@@ -7047,7 +7787,7 @@ class ParticleWorld {
 
   step(deltaSeconds, options = {}) {
     const requestedDeltaSeconds = toNonNegativeNumber(deltaSeconds, 0);
-    if (requestedDeltaSeconds <= 0 || this.particles.size === 0 || this.cloths.size === 0) {
+    if (requestedDeltaSeconds <= 0 || this.particles.size === 0 || (this.cloths.size === 0 && this.softBodies.size === 0)) {
       this.lastStepStats = createEmptyStepStats(this.iterations);
       this.lastStepStats.requestedDeltaSeconds = requestedDeltaSeconds;
       this.lastCollisionContacts = [];
@@ -7066,14 +7806,17 @@ class ParticleWorld {
     this.lastSelfCollisionContacts = [];
 
     const cloths = Array.from(this.cloths.values());
-    const { distanceConstraints, pinConstraints } = collectConstraints(this.cloths);
+    const softBodies = Array.from(this.softBodies.values());
+    const deformables = [...cloths, ...softBodies];
+    stepStats.activeSoftBodyCount = softBodies.length;
+    const { distanceConstraints, volumeConstraints, pinConstraints } = collectConstraints([this.cloths, this.softBodies]);
     const staticColliders = Array.isArray(options.staticColliders) ? options.staticColliders : [];
     const dynamicColliders = Array.isArray(options.dynamicColliders) ? options.dynamicColliders : [];
 
     for (let substepIndex = 0; substepIndex < substeps; substepIndex += 1) {
-      for (const cloth of cloths) {
-        const dampingFactor = Math.max(0, 1 - cloth.damping * substepDelta);
-        for (const particleId of cloth.particleIds) {
+      for (const deformable of deformables) {
+        const dampingFactor = Math.max(0, 1 - deformable.damping * substepDelta);
+        for (const particleId of deformable.particleIds) {
           const particle = this.particles.get(particleId);
           if (!particle) {
             continue;
@@ -7094,6 +7837,7 @@ class ParticleWorld {
       }
 
       resetConstraintLambdas(distanceConstraints);
+      resetConstraintLambdas(volumeConstraints);
       resetConstraintLambdas(pinConstraints);
 
       for (let iteration = 0; iteration < this.iterations; iteration += 1) {
@@ -7105,6 +7849,16 @@ class ParticleWorld {
           }
         }
 
+        for (const constraint of volumeConstraints) {
+          const particleA = this.particles.get(constraint.particleAId);
+          const particleB = this.particles.get(constraint.particleBId);
+          const particleC = this.particles.get(constraint.particleCId);
+          const particleD = this.particles.get(constraint.particleDId);
+          if (solveVolumeConstraint(constraint, particleA, particleB, particleC, particleD, substepDelta)) {
+            stepStats.solvedVolumeConstraints += 1;
+          }
+        }
+
         for (const constraint of pinConstraints) {
           const particle = this.particles.get(constraint.particleId);
           if (solvePinConstraint(constraint, particle, substepDelta)) {
@@ -7112,13 +7866,13 @@ class ParticleWorld {
           }
         }
 
-        this.solveStaticCollisions(cloths, staticColliders, stepStats);
-        this.solveDynamicCollisions(cloths, dynamicColliders, stepStats);
+        this.solveStaticCollisions(deformables, staticColliders, stepStats, substepDelta);
+        this.solveDynamicCollisions(deformables, dynamicColliders, stepStats, substepDelta);
         this.solveSelfCollisions(cloths, stepStats);
       }
 
-      for (const cloth of cloths) {
-        for (const particleId of cloth.particleIds) {
+      for (const deformable of deformables) {
+        for (const particleId of deformable.particleIds) {
           const particle = this.particles.get(particleId);
           if (!particle) {
             continue;
@@ -7321,16 +8075,156 @@ class ParticleWorld {
       }
     }
 
+    for (const softBody of this.softBodies.values()) {
+      for (const edge of softBody.structuralEdges) {
+        const particleA = this.particles.get(edge.particleAId);
+        const particleB = this.particles.get(edge.particleBId);
+        if (!particleA || !particleB) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugLine({
+            id: edge.id,
+            category: 'soft-body-structural-edge',
+            start: particleA.position,
+            end: particleB.position,
+            color: DEFAULT_DEBUG_COLORS.softBodyStructuralEdge,
+            source: {
+              softBodyId: softBody.id,
+              particleAId: edge.particleAId,
+              particleBId: edge.particleBId,
+              edgeKind: 'structural'
+            }
+          })
+        );
+      }
+
+      for (const edge of softBody.shearEdges) {
+        const particleA = this.particles.get(edge.particleAId);
+        const particleB = this.particles.get(edge.particleBId);
+        if (!particleA || !particleB) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugLine({
+            id: edge.id,
+            category: 'soft-body-shear-edge',
+            start: particleA.position,
+            end: particleB.position,
+            color: DEFAULT_DEBUG_COLORS.softBodyShearEdge,
+            source: {
+              softBodyId: softBody.id,
+              particleAId: edge.particleAId,
+              particleBId: edge.particleBId,
+              edgeKind: 'shear'
+            }
+          })
+        );
+      }
+
+      for (const edge of softBody.bendEdges) {
+        const particleA = this.particles.get(edge.particleAId);
+        const particleB = this.particles.get(edge.particleBId);
+        if (!particleA || !particleB) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugLine({
+            id: edge.id,
+            category: 'soft-body-bend-edge',
+            start: particleA.position,
+            end: particleB.position,
+            color: DEFAULT_DEBUG_COLORS.softBodyBendEdge,
+            source: {
+              softBodyId: softBody.id,
+              particleAId: edge.particleAId,
+              particleBId: edge.particleBId,
+              edgeKind: 'bend'
+            }
+          })
+        );
+      }
+
+      for (const particleId of softBody.particleIds) {
+        const particle = this.particles.get(particleId);
+        if (!particle) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugPoint({
+            id: `${particle.id}:point`,
+            category: particle.pinned ? 'soft-body-pin' : 'soft-body-particle',
+            position: particle.position,
+            color: particle.pinned ? DEFAULT_DEBUG_COLORS.softBodyPinnedParticle : DEFAULT_DEBUG_COLORS.softBodyParticle,
+            size: particle.pinned ? 4.5 : 3.25,
+            source: {
+              softBodyId: softBody.id,
+              particleId: particle.id,
+              pinned: particle.pinned
+            }
+          })
+        );
+      }
+
+      for (const contact of this.lastCollisionContacts) {
+        if (contact.softBodyId !== softBody.id) {
+          continue;
+        }
+
+        primitives.push(
+          createDebugPoint({
+            id: `${contact.particleId}:soft-body-contact-point`,
+            category: 'soft-body-contact-point',
+            position: contact.point,
+            color: DEFAULT_DEBUG_COLORS.softBodyContactPoint,
+            size: 4.25,
+            source: {
+              softBodyId: contact.softBodyId,
+              particleId: contact.particleId,
+              colliderId: contact.colliderId,
+              bodyId: contact.bodyId,
+              motionType: contact.motionType,
+              shapeType: contact.shapeType
+            }
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${contact.particleId}:soft-body-contact-normal`,
+            category: 'soft-body-contact-normal',
+            start: contact.point,
+            end: addScaledVec3(contact.point, contact.normal, 12),
+            color: DEFAULT_DEBUG_COLORS.softBodyContactNormal,
+            source: {
+              softBodyId: contact.softBodyId,
+              particleId: contact.particleId,
+              colliderId: contact.colliderId,
+              bodyId: contact.bodyId,
+              motionType: contact.motionType,
+              shapeType: contact.shapeType
+            }
+          })
+        );
+      }
+    }
+
     return primitives;
   }
 
   getSnapshot() {
     return {
       clothCount: this.countCloths(),
+      softBodyCount: this.countSoftBodies(),
       particleCount: this.countParticles(),
       gravity: cloneVec3(this.gravity),
       simulationTick: this.simulationTick,
       cloths: this.listCloths(),
+      softBodies: this.listSoftBodies(),
       particles: this.listParticles(),
       lastCollisionContacts: this.lastCollisionContacts.map((contact) => cloneClothCollisionContact(contact)),
       lastSelfCollisionContacts: this.lastSelfCollisionContacts.map((contact) => cloneClothSelfCollisionContact(contact)),
@@ -7343,7 +8237,7 @@ class ParticleWorld {
 
 __exports.ParticleWorld = ParticleWorld;
 },
-  20: function(__require, __exports) {
+  21: function(__require, __exports) {
 function shouldIncludeDynamicBody(body) {
   return Boolean(body && body.enabled && body.motionType === 'dynamic');
 }
@@ -7580,7 +8474,7 @@ __exports.cloneRigidBodyIsland = cloneRigidBodyIsland;
 __exports.cloneRigidBodyIslandGraph = cloneRigidBodyIslandGraph;
 __exports.buildRigidBodyIslandGraph = buildRigidBodyIslandGraph;
 },
-  21: function(__require, __exports) {
+  22: function(__require, __exports) {
 const { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfExtents, intersectRayAabb, testAabbOverlap, testPointInAabb } = __require(4);
 const { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } = __require(8);
 const { cloneContactPair, runNarrowphase } = __require(11);
@@ -7590,15 +8484,15 @@ const { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoin
 const { cloneManifold, ManifoldCache } = __require(14);
 const { cloneQuat, createIdentityQuat, integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
 const { addScaledVec3, addVec3, cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
-const { buildRigidBodyIslandGraph, cloneRigidBodyIslandGraph, cloneRigidBodyIsland } = __require(20);
+const { buildRigidBodyIslandGraph, cloneRigidBodyIslandGraph, cloneRigidBodyIsland } = __require(21);
 const { solveJointConstraints } = __require(15);
 const { solveNormalContactConstraints } = __require(16);
-const { ParticleWorld } = __require(19);
-const { BodyRegistry } = __require(22);
-const { ColliderRegistry } = __require(24);
-const { JointRegistry } = __require(25);
-const { MaterialRegistry } = __require(26);
-const { ShapeRegistry } = __require(27);
+const { ParticleWorld } = __require(20);
+const { BodyRegistry } = __require(23);
+const { ColliderRegistry } = __require(25);
+const { JointRegistry } = __require(26);
+const { MaterialRegistry } = __require(27);
+const { ShapeRegistry } = __require(28);
 const DEFAULT_MATERIAL_ID = 'material-default';
 
 function toPositiveNumber(value, fallback) {
@@ -8403,6 +9297,7 @@ class PhysicsWorld {
       materialCount: this.materialRegistry.count(),
       shapeCount: this.shapeRegistry.count(),
       clothCount: this.particleWorld.countCloths(),
+      softBodyCount: this.particleWorld.countSoftBodies(),
       particleCount: this.particleWorld.countParticles()
     };
   }
@@ -9108,6 +10003,25 @@ class PhysicsWorld {
     });
   }
 
+  createSoftBodyCube(options = {}) {
+    return this.particleWorld.createSoftBodyCube({
+      id: options.id,
+      rows: options.rows,
+      columns: options.columns ?? options.cols,
+      layers: options.layers ?? options.depth,
+      spacing: options.spacing,
+      position: options.position ?? createVec3(),
+      pinMode: options.pinMode,
+      particleMass: options.particleMass ?? options.mass,
+      damping: options.damping,
+      collisionMargin: options.collisionMargin,
+      stretchCompliance: options.stretchCompliance,
+      shearCompliance: options.shearCompliance,
+      bendCompliance: options.bendCompliance,
+      volumeCompliance: options.volumeCompliance
+    });
+  }
+
   configureCloth(id, options = {}) {
     return this.particleWorld.configureCloth(id, {
       damping: options.damping,
@@ -9120,12 +10034,31 @@ class PhysicsWorld {
     });
   }
 
+  configureSoftBody(id, options = {}) {
+    return this.particleWorld.configureSoftBody(id, {
+      damping: options.damping,
+      collisionMargin: options.collisionMargin,
+      stretchCompliance: options.stretchCompliance,
+      shearCompliance: options.shearCompliance,
+      bendCompliance: options.bendCompliance,
+      volumeCompliance: options.volumeCompliance
+    });
+  }
+
   getCloth(id) {
     return this.particleWorld.getCloth(id);
   }
 
+  getSoftBody(id) {
+    return this.particleWorld.getSoftBody(id);
+  }
+
   listCloths() {
     return this.particleWorld.listCloths();
+  }
+
+  listSoftBodies() {
+    return this.particleWorld.listSoftBodies();
   }
 
   listStaticClothColliders() {
@@ -9156,6 +10089,7 @@ class PhysicsWorld {
         colliderId: collider.id,
         bodyId: collider.bodyId ?? null,
         materialId: collider.materialId,
+        material: this.getEffectiveMaterialForCollider(collider.id),
         shape,
         pose
       });
@@ -9186,6 +10120,7 @@ class PhysicsWorld {
         colliderId: collider.id,
         bodyId: collider.bodyId,
         materialId: collider.materialId,
+        material: this.getEffectiveMaterialForCollider(collider.id),
         shape,
         body,
         motionType: body.motionType,
@@ -9570,6 +10505,7 @@ class PhysicsWorld {
     return {
       bodyCount: this.bodyRegistry.count(),
       clothCount: this.particleWorld.countCloths(),
+      softBodyCount: this.particleWorld.countSoftBodies(),
       particleCount: this.particleWorld.countParticles(),
       shapeCount: this.shapeRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
@@ -10828,9 +11764,10 @@ class PhysicsWorld {
       camera: cloneCamera(this.debugCamera),
       primitives,
       stats: {
-        bodyCount: this.bodyRegistry.count(),
-        clothCount: xpbdSnapshot.clothCount,
-        particleCount: xpbdSnapshot.particleCount,
+      bodyCount: this.bodyRegistry.count(),
+      clothCount: xpbdSnapshot.clothCount,
+      softBodyCount: xpbdSnapshot.softBodyCount ?? 0,
+      particleCount: xpbdSnapshot.particleCount,
         shapeCount: this.shapeRegistry.count(),
         colliderCount: this.colliderRegistry.count(),
         jointCount: this.jointRegistry.count(),
@@ -10853,9 +11790,12 @@ class PhysicsWorld {
         shapeCastHit: this.lastShapeCast?.hit ?? false,
         ccdEventCount: this.lastCcdEvents.length,
         xpbdSolvedDistanceConstraints: xpbdSnapshot.lastStepStats.solvedDistanceConstraints,
+        xpbdSolvedVolumeConstraints: xpbdSnapshot.lastStepStats.solvedVolumeConstraints,
         xpbdSolvedPinConstraints: xpbdSnapshot.lastStepStats.solvedPinConstraints,
         xpbdSolvedStaticCollisions: xpbdSnapshot.lastStepStats.solvedStaticCollisions,
+        xpbdSolvedStaticFrictionCollisions: xpbdSnapshot.lastStepStats.solvedStaticFrictionCollisions,
         xpbdSolvedDynamicCollisions: xpbdSnapshot.lastStepStats.solvedDynamicCollisions,
+        xpbdSolvedDynamicFrictionCollisions: xpbdSnapshot.lastStepStats.solvedDynamicFrictionCollisions,
         xpbdSolvedSelfCollisions: xpbdSnapshot.lastStepStats.solvedSelfCollisions,
         fixedDeltaTime: this.fixedDeltaTime,
         performedSubsteps: this.lastStepStats.performedSubsteps
@@ -10870,6 +11810,7 @@ class PhysicsWorld {
       debugCamera: cloneCamera(this.debugCamera),
       bodyCount: this.bodyRegistry.count(),
       clothCount: this.particleWorld.countCloths(),
+      softBodyCount: this.particleWorld.countSoftBodies(),
       particleCount: this.particleWorld.countParticles(),
       shapeCount: this.shapeRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
@@ -10881,6 +11822,7 @@ class PhysicsWorld {
       joints: this.jointRegistry.list(),
       materials: this.materialRegistry.list(),
       cloths: this.particleWorld.listCloths(),
+      softBodies: this.particleWorld.listSoftBodies(),
       xpbd: this.particleWorld.getSnapshot(),
       collision: collisionState,
       simulationTick: this.simulationTick,
@@ -10904,10 +11846,10 @@ class PhysicsWorld {
 
 __exports.PhysicsWorld = PhysicsWorld;
 },
-  22: function(__require, __exports) {
+  23: function(__require, __exports) {
 const { cloneQuat, createIdentityQuat } = __require(5);
 const { cloneVec3, createVec3 } = __require(6);
-const { BaseRegistry } = __require(23);
+const { BaseRegistry } = __require(24);
 function toFiniteNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -11022,7 +11964,7 @@ class BodyRegistry extends BaseRegistry {
 
 __exports.BodyRegistry = BodyRegistry;
 },
-  23: function(__require, __exports) {
+  24: function(__require, __exports) {
 class BaseRegistry {
   constructor(prefix) {
     this.prefix = prefix;
@@ -11093,10 +12035,10 @@ class BaseRegistry {
 
 __exports.BaseRegistry = BaseRegistry;
 },
-  24: function(__require, __exports) {
+  25: function(__require, __exports) {
 const { cloneQuat, createIdentityQuat } = __require(5);
 const { cloneVec3, createVec3 } = __require(6);
-const { BaseRegistry } = __require(23);
+const { BaseRegistry } = __require(24);
 function createLocalPose(localPose) {
   return {
     position: cloneVec3(localPose?.position ?? createVec3()),
@@ -11139,9 +12081,9 @@ class ColliderRegistry extends BaseRegistry {
 
 __exports.ColliderRegistry = ColliderRegistry;
 },
-  25: function(__require, __exports) {
+  26: function(__require, __exports) {
 const { cloneVec3, createVec3, lengthVec3, normalizeVec3, subtractVec3 } = __require(6);
-const { BaseRegistry } = __require(23);
+const { BaseRegistry } = __require(24);
 function toNonNegativeNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -11462,8 +12404,8 @@ class JointRegistry extends BaseRegistry {
 
 __exports.JointRegistry = JointRegistry;
 },
-  26: function(__require, __exports) {
-const { BaseRegistry } = __require(23);
+  27: function(__require, __exports) {
+const { BaseRegistry } = __require(24);
 function toNonNegativeNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -11496,10 +12438,10 @@ class MaterialRegistry extends BaseRegistry {
 
 __exports.MaterialRegistry = MaterialRegistry;
 },
-  27: function(__require, __exports) {
+  28: function(__require, __exports) {
 const { cloneQuat, createIdentityQuat } = __require(5);
 const { cloneVec3, createVec3, crossVec3, dotVec3, lengthSquaredVec3, normalizeVec3, scaleVec3, subtractVec3 } = __require(6);
-const { BaseRegistry } = __require(23);
+const { BaseRegistry } = __require(24);
 const HULL_PLANE_EPSILON = 1e-5;
 
 function toPositiveNumber(value, fallback) {
@@ -11838,7 +12780,7 @@ class ShapeRegistry extends BaseRegistry {
 
 __exports.ShapeRegistry = ShapeRegistry;
 },
-  28: function(__require, __exports) {
+  29: function(__require, __exports) {
 const PRESET_LIBRARY = {
   pyramid: [
     [-0.5, -0.5, -0.5],
@@ -11939,7 +12881,7 @@ __exports.resolveConvexHullPresetVertices = resolveConvexHullPresetVertices;
 __exports.formatConvexHullVertices = formatConvexHullVertices;
 __exports.getConvexHullPresetVertexText = getConvexHullPresetVertexText;
 },
-  29: function(__require, __exports) {
+  30: function(__require, __exports) {
 const CLOTH_PRESET_LIBRARY = Object.freeze({
   'light-fabric': Object.freeze({
     id: 'light-fabric',
@@ -12002,7 +12944,7 @@ __exports.getClothPresetIds = getClothPresetIds;
 __exports.getDefaultClothPresetId = getDefaultClothPresetId;
 __exports.resolveClothPreset = resolveClothPreset;
 },
-  30: function(__require, __exports) {
+  31: function(__require, __exports) {
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -12016,8 +12958,8 @@ function toString(value, fallback = '') {
 __exports.toNumber = toNumber;
 __exports.toString = toString;
 },
-  31: function(__require, __exports) {
-const { getConvexHullPresetIds, getDefaultConvexHullPresetId } = __require(28);
+  32: function(__require, __exports) {
+const { getConvexHullPresetIds, getDefaultConvexHullPresetId } = __require(29);
 const EXTENSION_ID = 'engine3d';
 const GANDI_EXTENSION_METADATA = {
   name: 'engine3d.meta.name',
@@ -12198,6 +13140,22 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createSoftBodyCube',
+        blockType: 'command',
+        text: 'create soft body cube [ID] rows:[ROWS] columns:[COLUMNS] layers:[LAYERS] spacing:[SPACING] at x:[X] y:[Y] z:[Z] pin [PIN_MODE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' },
+          ROWS: { type: 'number', defaultValue: 4 },
+          COLUMNS: { type: 'number', defaultValue: 4 },
+          LAYERS: { type: 'number', defaultValue: 4 },
+          SPACING: { type: 'number', defaultValue: 20 },
+          X: { type: 'number', defaultValue: -30 },
+          Y: { type: 'number', defaultValue: 120 },
+          Z: { type: 'number', defaultValue: -30 },
+          PIN_MODE: { type: 'string', menu: 'SOFT_BODY_PIN_MODES', defaultValue: 'none' }
+        }
+      },
+      {
         opcode: 'configureCloth',
         blockType: 'command',
         text: 'configure cloth [ID] damping:[DAMPING] margin:[MARGIN] stretch:[STRETCH] shear:[SHEAR] bend:[BEND] self collision [SELF_COLLISION] thickness:[SELF_DISTANCE]',
@@ -12210,6 +13168,20 @@ function createExtensionInfo() {
           BEND: { type: 'number', defaultValue: 0.0005 },
           SELF_COLLISION: { type: 'string', menu: 'ON_OFF', defaultValue: 'off' },
           SELF_DISTANCE: { type: 'number', defaultValue: 8 }
+        }
+      },
+      {
+        opcode: 'configureSoftBody',
+        blockType: 'command',
+        text: 'configure soft body [ID] damping:[DAMPING] margin:[MARGIN] stretch:[STRETCH] shear:[SHEAR] bend:[BEND] volume:[VOLUME]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' },
+          DAMPING: { type: 'number', defaultValue: 0.04 },
+          MARGIN: { type: 'number', defaultValue: 3 },
+          STRETCH: { type: 'number', defaultValue: 0 },
+          SHEAR: { type: 'number', defaultValue: 0.0002 },
+          BEND: { type: 'number', defaultValue: 0.0008 },
+          VOLUME: { type: 'number', defaultValue: 0.00008 }
         }
       },
       {
@@ -12483,6 +13455,14 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'softBodySummary',
+        blockType: 'reporter',
+        text: 'soft body [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' }
+        }
+      },
+      {
         opcode: 'queryPointBodies',
         blockType: 'reporter',
         text: 'bodies at point x:[X] y:[Y] z:[Z]',
@@ -12620,6 +13600,10 @@ function createExtensionInfo() {
         acceptReporters: true,
         items: ['top-row', 'top-corners', 'corners', 'left-edge', 'right-edge', 'none']
       },
+      SOFT_BODY_PIN_MODES: {
+        acceptReporters: true,
+        items: ['none', 'top-layer', 'top-corners', 'corners']
+      },
       ON_OFF: {
         acceptReporters: true,
         items: ['off', 'on']
@@ -12633,8 +13617,8 @@ __exports.EXTENSION_ID = EXTENSION_ID;
 __exports.GANDI_EXTENSION_METADATA = GANDI_EXTENSION_METADATA;
 __exports.GANDI_L10N = GANDI_L10N;
 },
-  32: function(__require, __exports) {
-const { createDebugOverlay } = __require(33);
+  33: function(__require, __exports) {
+const { createDebugOverlay } = __require(34);
 function createHost(displayName, runtime, renderer, sandbox) {
   const overlay = createDebugOverlay(displayName);
 
@@ -12685,7 +13669,7 @@ function createGandiRemoteHost() {
 __exports.createGandiApprovedHost = createGandiApprovedHost;
 __exports.createGandiRemoteHost = createGandiRemoteHost;
 },
-  33: function(__require, __exports) {
+  34: function(__require, __exports) {
 const { createIdentityQuat, createQuatFromAxisAngle, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
 const { addVec3, createVec3, crossVec3, dotVec3, normalizeVec3, subtractVec3 } = __require(6);
 const LAYER_GROUPS = {
@@ -12707,6 +13691,20 @@ const LAYER_GROUPS = {
   'cloth-pins': new Set(['cloth-pin', 'cloth-particle']),
   'cloth-contacts': new Set(['cloth-contact-point', 'cloth-contact-normal']),
   'cloth-self': new Set(['cloth-self-contact-point', 'cloth-self-contact-normal']),
+  soft: new Set([
+    'soft-body-structural-edge',
+    'soft-body-shear-edge',
+    'soft-body-bend-edge',
+    'soft-body-particle',
+    'soft-body-pin',
+    'soft-body-contact-point',
+    'soft-body-contact-normal'
+  ]),
+  'soft-structure': new Set(['soft-body-structural-edge']),
+  'soft-shear': new Set(['soft-body-shear-edge']),
+  'soft-bend': new Set(['soft-body-bend-edge']),
+  'soft-pins': new Set(['soft-body-pin', 'soft-body-particle']),
+  'soft-contacts': new Set(['soft-body-contact-point', 'soft-body-contact-normal']),
   static: new Set(['static-collider', 'collider-origin']),
   aabb: new Set(['broadphase-aabb']),
   contacts: new Set(['contact-point', 'contact-normal']),
@@ -12753,6 +13751,14 @@ const LAYER_ALIASES = {
   'cloth-contacts': 'cloth-contacts',
   'cloth-self': 'cloth-self',
   self: 'cloth-self',
+  soft: 'soft',
+  softbody: 'soft',
+  'soft-body': 'soft',
+  'soft-structure': 'soft-structure',
+  'soft-shear': 'soft-shear',
+  'soft-bend': 'soft-bend',
+  'soft-pins': 'soft-pins',
+  'soft-contacts': 'soft-contacts',
   statics: 'static',
   bounds: 'aabb',
   boxes: 'aabb',

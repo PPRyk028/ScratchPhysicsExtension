@@ -482,6 +482,445 @@ test('PhysicsWorld XPBD cloth collides with a dynamic convex hull rigid body and
   assert.ok(body.linearVelocity.y < 18, `expected cloth to reduce upward hull velocity, got ${body.linearVelocity.y}`);
 });
 
+test('PhysicsWorld creates a soft body cube with pinned top layer debug primitives', () => {
+  const world = new PhysicsWorld();
+  const softBody = world.createSoftBodyCube({
+    id: 'soft-1',
+    rows: 3,
+    columns: 4,
+    layers: 3,
+    spacing: 12,
+    position: { x: -18, y: 72, z: -12 },
+    pinMode: 'top-layer'
+  });
+
+  const snapshot = world.getSnapshot();
+  const frame = world.buildDebugFrame();
+
+  assert.equal(softBody.layers, 3);
+  assert.equal(softBody.rows, 3);
+  assert.equal(softBody.columns, 4);
+  assert.equal(softBody.particleIds.length, 36);
+  assert.equal(snapshot.softBodyCount, 1);
+  assert.equal(frame.stats.softBodyCount, 1);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'soft-body-structural-edge'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'soft-body-pin'));
+});
+
+test('PhysicsWorld updates soft body parameters and reflects them in the soft body record', () => {
+  const world = new PhysicsWorld();
+  world.createSoftBodyCube({
+    id: 'soft-1',
+    rows: 3,
+    columns: 3,
+    layers: 3,
+    spacing: 10,
+    position: { x: 0, y: 60, z: 0 },
+    pinMode: 'none'
+  });
+
+  const softBody = world.configureSoftBody('soft-1', {
+    damping: 0.08,
+    collisionMargin: 4,
+    stretchCompliance: 0.001,
+    shearCompliance: 0.002,
+    bendCompliance: 0.003,
+    volumeCompliance: 0.00012
+  });
+
+  assert.ok(softBody);
+  assert.equal(softBody.damping, 0.08);
+  assert.equal(softBody.collisionMargin, 4);
+  assert.equal(softBody.stretchCompliance, 0.001);
+  assert.equal(softBody.shearCompliance, 0.002);
+  assert.equal(softBody.bendCompliance, 0.003);
+  assert.equal(softBody.volumeCompliance, 0.00012);
+  assert.ok(softBody.distanceConstraints.filter((constraint) => constraint.kind === 'stretch').every((constraint) => constraint.compliance === 0.001));
+  assert.ok(softBody.distanceConstraints.filter((constraint) => constraint.kind === 'shear').every((constraint) => constraint.compliance === 0.002));
+  assert.ok(softBody.distanceConstraints.filter((constraint) => constraint.kind === 'bend').every((constraint) => constraint.compliance === 0.003));
+  assert.ok(softBody.volumeConstraints.every((constraint) => constraint.compliance === 0.00012));
+});
+
+test('PhysicsWorld XPBD soft body collides with static box colliders', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    xpbdIterations: 8,
+    xpbdSubsteps: 2
+  });
+  world.createStaticBoxCollider({
+    id: 'support-box',
+    position: { x: 0, y: 45, z: 0 },
+    size: 30
+  });
+  world.createSoftBodyCube({
+    id: 'soft-1',
+    rows: 3,
+    columns: 3,
+    layers: 3,
+    spacing: 10,
+    position: { x: -10, y: 90, z: -10 },
+    pinMode: 'none'
+  });
+
+  for (let index = 0; index < 220; index += 1) {
+    world.step(1 / 120);
+  }
+
+  const snapshot = world.getSnapshot();
+  const bottomParticles = snapshot.xpbd.particles.filter((particle) => particle.softBodyId === 'soft-1' && particle.layerIndex === 2);
+  const minimumBottomY = Math.min(...bottomParticles.map((particle) => particle.position.y));
+  const topFaceY = 45 + 15;
+  const frame = world.buildDebugFrame();
+
+  assert.ok(bottomParticles.length > 0, 'expected bottom-layer soft body particles');
+  assert.ok(minimumBottomY >= topFaceY - 2.5, `expected soft body to stay above the support box top face, got ${minimumBottomY}`);
+  assert.ok(snapshot.lastXpbdStats.solvedStaticCollisions > 0, 'expected soft body step to solve static collisions');
+  assert.ok(snapshot.xpbd.lastCollisionContacts.some((contact) => contact.softBodyId === 'soft-1' && contact.colliderId === 'support-box:collider'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'soft-body-contact-point'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'soft-body-contact-normal'));
+});
+
+test('PhysicsWorld XPBD soft body volume constraints resist collapse under compression', () => {
+  const createCompressedWorld = (volumeCompliance) => {
+    const world = new PhysicsWorld({
+      fixedDeltaTime: 1 / 120,
+      gravity: { x: 0, y: 0, z: 0 },
+      xpbdIterations: 8,
+      xpbdSubsteps: 2
+    });
+    world.createSoftBodyCube({
+      id: 'soft-1',
+      rows: 3,
+      columns: 3,
+      layers: 3,
+      spacing: 10,
+      position: { x: -10, y: 40, z: -10 },
+      pinMode: 'none',
+      stretchCompliance: 0.2,
+      shearCompliance: 0.2,
+      bendCompliance: 0.2,
+      volumeCompliance
+    });
+
+    for (const particleId of world.getSoftBody('soft-1').particleIds) {
+      const particle = world.particleWorld.particles.get(particleId);
+      const layerPosition = Number(particle.layerIndex ?? 0);
+      particle.position.y = 40 - layerPosition * 3.2;
+      particle.previousPosition = { ...particle.position };
+      particle.predictedPosition = { ...particle.position };
+      particle.velocity = { x: 0, y: 0, z: 0 };
+    }
+
+    return world;
+  };
+
+  const withoutVolume = createCompressedWorld(10);
+  const withVolume = createCompressedWorld(0.00005);
+
+  for (let stepIndex = 0; stepIndex < 60; stepIndex += 1) {
+    withoutVolume.step(1 / 120);
+    withVolume.step(1 / 120);
+  }
+
+  const getHeight = (world) => {
+    const particles = world.getSnapshot().xpbd.particles.filter((particle) => particle.softBodyId === 'soft-1');
+    const ys = particles.map((particle) => particle.position.y);
+    return Math.max(...ys) - Math.min(...ys);
+  };
+
+  const heightWithoutVolume = getHeight(withoutVolume);
+  const heightWithVolume = getHeight(withVolume);
+
+  assert.ok(withVolume.getSnapshot().lastXpbdStats.solvedVolumeConstraints > 0, 'expected volume constraints to run');
+  assert.ok(heightWithVolume > heightWithoutVolume + 1.5, `expected volume-preserving soft body to recover more height, got ${heightWithVolume} vs ${heightWithoutVolume}`);
+});
+
+test('PhysicsWorld XPBD soft body collides with a dynamic box rigid body and slows it down', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    gravity: { x: 0, y: 0, z: 0 },
+    xpbdIterations: 8,
+    xpbdSubsteps: 2
+  });
+  world.createBoxBody({
+    id: 'box-body',
+    position: { x: 0, y: 30, z: 0 },
+    size: 36,
+    mass: 1,
+    linearVelocity: { x: 0, y: 16, z: 0 }
+  });
+  world.createSoftBodyCube({
+    id: 'soft-1',
+    rows: 3,
+    columns: 3,
+    layers: 3,
+    spacing: 10,
+    position: { x: -10, y: 70, z: -10 },
+    pinMode: 'top-layer'
+  });
+
+  let sawDynamicCollision = false;
+  let sawBoxContact = false;
+  let maxAffectedBodies = 0;
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 120);
+    const snapshot = world.getSnapshot();
+    sawDynamicCollision = sawDynamicCollision || snapshot.lastXpbdStats.solvedDynamicCollisions > 0;
+    sawBoxContact = sawBoxContact || snapshot.xpbd.lastCollisionContacts.some((contact) => (
+      contact.softBodyId === 'soft-1' &&
+      contact.colliderId === 'box-body:collider' &&
+      contact.motionType === 'dynamic' &&
+      contact.bodyId === 'box-body'
+    ));
+    maxAffectedBodies = Math.max(maxAffectedBodies, snapshot.lastXpbdStats.affectedDynamicBodyCount ?? 0);
+  }
+
+  const body = world.getBody('box-body');
+
+  assert.ok(sawDynamicCollision, 'expected soft body step to solve dynamic collisions');
+  assert.ok(sawBoxContact, 'expected soft body to register contacts against the dynamic box');
+  assert.ok(maxAffectedBodies > 0, 'expected soft body collisions to affect at least one dynamic body');
+  assert.ok(body.linearVelocity.y < 16, `expected soft body to reduce upward box velocity, got ${body.linearVelocity.y}`);
+});
+
+test('PhysicsWorld XPBD soft body collides with a dynamic convex hull rigid body and slows it down', () => {
+  const world = new PhysicsWorld({
+    fixedDeltaTime: 1 / 120,
+    gravity: { x: 0, y: 0, z: 0 },
+    xpbdIterations: 8,
+    xpbdSubsteps: 2
+  });
+  world.createConvexHullBody({
+    id: 'hull-body',
+    position: { x: 0, y: 30, z: 0 },
+    mass: 1,
+    linearVelocity: { x: 0, y: 14, z: 0 },
+    vertices: [
+      { x: -18, y: -18, z: -18 },
+      { x: 18, y: -18, z: -18 },
+      { x: 18, y: -18, z: 18 },
+      { x: -18, y: -18, z: 18 },
+      { x: -18, y: 18, z: -18 },
+      { x: 18, y: 18, z: -18 },
+      { x: 18, y: 18, z: 18 },
+      { x: -18, y: 18, z: 18 }
+    ]
+  });
+  world.createSoftBodyCube({
+    id: 'soft-1',
+    rows: 3,
+    columns: 3,
+    layers: 3,
+    spacing: 10,
+    position: { x: -10, y: 70, z: -10 },
+    pinMode: 'top-layer'
+  });
+
+  let sawDynamicCollision = false;
+  let sawHullContact = false;
+  let maxAffectedBodies = 0;
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 120);
+    const snapshot = world.getSnapshot();
+    sawDynamicCollision = sawDynamicCollision || snapshot.lastXpbdStats.solvedDynamicCollisions > 0;
+    sawHullContact = sawHullContact || snapshot.xpbd.lastCollisionContacts.some((contact) => (
+      contact.softBodyId === 'soft-1' &&
+      contact.colliderId === 'hull-body:collider' &&
+      contact.motionType === 'dynamic' &&
+      contact.shapeType === 'convex-hull'
+    ));
+    maxAffectedBodies = Math.max(maxAffectedBodies, snapshot.lastXpbdStats.affectedDynamicBodyCount ?? 0);
+  }
+
+  const body = world.getBody('hull-body');
+
+  assert.ok(sawDynamicCollision, 'expected soft body step to solve dynamic collisions');
+  assert.ok(sawHullContact, 'expected soft body to register contacts against the dynamic convex hull');
+  assert.ok(maxAffectedBodies > 0, 'expected soft body collisions to affect at least one dynamic body');
+  assert.ok(body.linearVelocity.y < 14, `expected soft body to reduce upward hull velocity, got ${body.linearVelocity.y}`);
+});
+
+test('PhysicsWorld XPBD soft body friction against a static box reduces tangential drift', () => {
+  const simulateSoftBodySlide = (friction) => {
+    const world = new PhysicsWorld({
+      fixedDeltaTime: 1 / 120,
+      xpbdIterations: 8,
+      xpbdSubsteps: 2
+    });
+    world.createMaterial({
+      id: 'surface',
+      friction,
+      restitution: 0
+    });
+    world.createStaticBoxCollider({
+      id: 'support-box',
+      position: { x: 0, y: 48, z: 20 },
+      size: 50,
+      materialId: 'surface'
+    });
+    world.createSoftBodyCube({
+      id: 'soft-1',
+      rows: 3,
+      columns: 3,
+      layers: 3,
+      spacing: 10,
+      position: { x: -10, y: 78, z: 0 },
+      pinMode: 'none'
+    });
+    world.configureSoftBody('soft-1', {
+      damping: 0.01,
+      collisionMargin: 3,
+      stretchCompliance: 0,
+      shearCompliance: 0.0002,
+      bendCompliance: 0.0008,
+      volumeCompliance: 0.00008
+    });
+
+    const softBody = world.getSoftBody('soft-1');
+    for (const particleId of softBody.particleIds) {
+      const particle = world.particleWorld.particles.get(particleId);
+      particle.velocity = { x: 6, y: 0, z: 0 };
+    }
+
+    let maxStaticFrictionContacts = 0;
+    for (let index = 0; index < 180; index += 1) {
+      world.step(1 / 120);
+      maxStaticFrictionContacts = Math.max(
+        maxStaticFrictionContacts,
+        world.getSnapshot().lastXpbdStats.solvedStaticFrictionCollisions ?? 0
+      );
+    }
+
+    const particles = world.getSnapshot().xpbd.particles.filter((particle) => particle.softBodyId === 'soft-1');
+    const averageVelocityX = particles.reduce((sum, particle) => sum + particle.velocity.x, 0) / particles.length;
+    const centerOfMassX = particles.reduce((sum, particle) => sum + particle.position.x, 0) / particles.length;
+
+    return {
+      averageVelocityX,
+      centerOfMassX,
+      maxStaticFrictionContacts
+    };
+  };
+
+  const lowFriction = simulateSoftBodySlide(0);
+  const highFriction = simulateSoftBodySlide(1.2);
+
+  assert.ok(highFriction.maxStaticFrictionContacts > 0, 'expected high-friction scenario to solve tangential static contacts');
+  assert.ok(Math.abs(highFriction.averageVelocityX) < Math.abs(lowFriction.averageVelocityX) - 0.2,
+    `expected high friction to reduce soft body drift, got ${highFriction.averageVelocityX} vs ${lowFriction.averageVelocityX}`);
+  assert.ok(highFriction.centerOfMassX < lowFriction.centerOfMassX - 1,
+    `expected high friction to keep the soft body closer to the support box, got ${highFriction.centerOfMassX} vs ${lowFriction.centerOfMassX}`);
+});
+
+test('PhysicsWorld XPBD soft body friction against a dynamic box transfers tangential motion more strongly', () => {
+  const simulateDynamicSoftBodyFriction = (friction) => {
+    const world = new PhysicsWorld({
+      fixedDeltaTime: 1 / 120,
+      gravity: { x: 0, y: 0, z: 0 },
+      xpbdIterations: 8,
+      xpbdSubsteps: 2
+    });
+    world.createMaterial({
+      id: 'surface',
+      friction,
+      restitution: 0
+    });
+    world.createBoxBody({
+      id: 'box-body',
+      position: { x: 0, y: 40, z: 20 },
+      size: 40,
+      mass: 1,
+      linearVelocity: { x: 8, y: 10, z: 0 },
+      materialId: 'surface'
+    });
+    world.createSoftBodyCube({
+      id: 'soft-1',
+      rows: 3,
+      columns: 3,
+      layers: 3,
+      spacing: 10,
+      position: { x: -10, y: 74, z: 0 },
+      pinMode: 'none'
+    });
+    world.configureSoftBody('soft-1', {
+      damping: 0.01,
+      collisionMargin: 3,
+      stretchCompliance: 0,
+      shearCompliance: 0.0002,
+      bendCompliance: 0.0008,
+      volumeCompliance: 0.00008
+    });
+
+    let maxDynamicFrictionContacts = 0;
+    for (let index = 0; index < 120; index += 1) {
+      world.step(1 / 120);
+      maxDynamicFrictionContacts = Math.max(
+        maxDynamicFrictionContacts,
+        world.getSnapshot().lastXpbdStats.solvedDynamicFrictionCollisions ?? 0
+      );
+    }
+
+    const particles = world.getSnapshot().xpbd.particles.filter((particle) => particle.softBodyId === 'soft-1');
+    const averageVelocityX = particles.reduce((sum, particle) => sum + particle.velocity.x, 0) / particles.length;
+    const boxBody = world.getBody('box-body');
+
+    return {
+      averageVelocityX,
+      boxVelocityX: boxBody.linearVelocity.x,
+      maxDynamicFrictionContacts
+    };
+  };
+
+  const lowFriction = simulateDynamicSoftBodyFriction(0);
+  const highFriction = simulateDynamicSoftBodyFriction(1.1);
+
+  assert.ok(highFriction.maxDynamicFrictionContacts > 0, 'expected high-friction scenario to solve tangential dynamic contacts');
+  assert.ok(highFriction.averageVelocityX > lowFriction.averageVelocityX + 0.25,
+    `expected high friction to drag the soft body along, got ${highFriction.averageVelocityX} vs ${lowFriction.averageVelocityX}`);
+  assert.ok(highFriction.boxVelocityX < lowFriction.boxVelocityX - 0.25,
+    `expected high friction to slow the dynamic box more strongly, got ${highFriction.boxVelocityX} vs ${lowFriction.boxVelocityX}`);
+});
+
+test('PhysicsWorld exports and imports soft body definitions with stable ids and settings', () => {
+  const world = new PhysicsWorld();
+  world.createSoftBodyCube({
+    id: 'soft-1',
+    rows: 3,
+    columns: 4,
+    layers: 3,
+    spacing: 8,
+    position: { x: -12, y: 70, z: -16 },
+    pinMode: 'top-layer'
+  });
+  world.configureSoftBody('soft-1', {
+    damping: 0.07,
+    collisionMargin: 3.5,
+    stretchCompliance: 0.001,
+    shearCompliance: 0.002,
+    bendCompliance: 0.003,
+    volumeCompliance: 0.0002
+  });
+
+  const scene = world.exportSceneDefinition();
+  const restoredWorld = new PhysicsWorld();
+  const imported = restoredWorld.importSceneDefinition(scene, {
+    reset: true
+  });
+  const restored = restoredWorld.getSoftBody('soft-1');
+
+  assert.equal(imported.softBodyCount, 1);
+  assert.equal(restored.layers, 3);
+  assert.equal(restored.rows, 3);
+  assert.equal(restored.columns, 4);
+  assert.equal(restored.pinMode, 'top-layer');
+  assert.equal(restored.damping, 0.07);
+  assert.equal(restored.collisionMargin, 3.5);
+  assert.equal(restored.stretchCompliance, 0.001);
+  assert.equal(restored.shearCompliance, 0.002);
+  assert.equal(restored.bendCompliance, 0.003);
+  assert.equal(restored.volumeCompliance, 0.0002);
+});
+
 test('PhysicsWorld exports and imports scene definitions with stable ids and settings', () => {
   const world = new PhysicsWorld({
     fixedDeltaTime: 1 / 90,
