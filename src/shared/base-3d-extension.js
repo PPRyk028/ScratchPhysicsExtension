@@ -160,6 +160,27 @@ export class Base3DExtension {
     );
   }
 
+  configureClothLightPreset(args) {
+    this.engine.configureClothPreset(
+      toString(args.ID, 'cloth'),
+      'light-fabric'
+    );
+  }
+
+  configureClothHeavyPreset(args) {
+    this.engine.configureClothPreset(
+      toString(args.ID, 'cloth'),
+      'heavy-cloth'
+    );
+  }
+
+  configureClothWrinklePreset(args) {
+    this.engine.configureClothPreset(
+      toString(args.ID, 'cloth'),
+      'wrinkle'
+    );
+  }
+
   convexHullPresetVertices(args) {
     return this.engine.getConvexHullPresetVertices(
       toString(args.PRESET, 'pyramid'),

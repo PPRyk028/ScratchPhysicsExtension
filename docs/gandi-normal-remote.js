@@ -3,7 +3,7 @@
 const __modules = {
   0: function(__require, __exports) {
 const { Base3DExtension } = __require(1);
-const { createGandiRemoteHost } = __require(31);
+const { createGandiRemoteHost } = __require(32);
 const ScratchApi = globalThis.Scratch;
 
 if (!ScratchApi) {
@@ -22,8 +22,8 @@ ScratchApi.extensions.register(new GandiRemote3DExtension());
 },
   1: function(__require, __exports) {
 const { Engine3D } = __require(2);
-const { toNumber, toString } = __require(29);
-const { createExtensionInfo } = __require(30);
+const { toNumber, toString } = __require(30);
+const { createExtensionInfo } = __require(31);
 class Base3DExtension {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
@@ -179,6 +179,27 @@ class Base3DExtension {
       toNumber(args.BEND, 0.0005),
       toString(args.SELF_COLLISION, 'off').toLowerCase() === 'on',
       toNumber(args.SELF_DISTANCE, 6)
+    );
+  }
+
+  configureClothLightPreset(args) {
+    this.engine.configureClothPreset(
+      toString(args.ID, 'cloth'),
+      'light-fabric'
+    );
+  }
+
+  configureClothHeavyPreset(args) {
+    this.engine.configureClothPreset(
+      toString(args.ID, 'cloth'),
+      'heavy-cloth'
+    );
+  }
+
+  configureClothWrinklePreset(args) {
+    this.engine.configureClothPreset(
+      toString(args.ID, 'cloth'),
+      'wrinkle'
     );
   }
 
@@ -481,6 +502,7 @@ __exports.Base3DExtension = Base3DExtension;
   2: function(__require, __exports) {
 const { PhysicsWorld, createVec3 } = __require(3);
 const { getConvexHullPresetVertexText } = __require(28);
+const { resolveClothPreset } = __require(29);
 function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
 }
@@ -720,6 +742,27 @@ class Engine3D {
     }
 
     this.hostBridge.log(`Cloth ${cloth.id} configured`);
+    return cloth;
+  }
+
+  configureClothPreset(id, presetId) {
+    const preset = resolveClothPreset(presetId);
+    const cloth = this.world.configureCloth(id, {
+      damping: preset.damping,
+      collisionMargin: preset.collisionMargin,
+      stretchCompliance: preset.stretchCompliance,
+      shearCompliance: preset.shearCompliance,
+      bendCompliance: preset.bendCompliance,
+      selfCollisionEnabled: preset.selfCollisionEnabled,
+      selfCollisionDistance: preset.selfCollisionDistance
+    });
+
+    if (!cloth) {
+      this.hostBridge.log(`Cloth ${id} could not be configured with preset ${preset.id}`);
+      return null;
+    }
+
+    this.hostBridge.log(`Cloth ${cloth.id} configured with preset ${preset.id}`);
     return cloth;
   }
 
@@ -11897,6 +11940,69 @@ __exports.formatConvexHullVertices = formatConvexHullVertices;
 __exports.getConvexHullPresetVertexText = getConvexHullPresetVertexText;
 },
   29: function(__require, __exports) {
+const CLOTH_PRESET_LIBRARY = Object.freeze({
+  'light-fabric': Object.freeze({
+    id: 'light-fabric',
+    label: 'light fabric',
+    damping: 0.06,
+    collisionMargin: 3,
+    stretchCompliance: 0,
+    shearCompliance: 0.0004,
+    bendCompliance: 0.008,
+    selfCollisionEnabled: true,
+    selfCollisionDistance: 8
+  }),
+  'heavy-cloth': Object.freeze({
+    id: 'heavy-cloth',
+    label: 'heavy cloth',
+    damping: 0.1,
+    collisionMargin: 4,
+    stretchCompliance: 0,
+    shearCompliance: 0.00025,
+    bendCompliance: 0.003,
+    selfCollisionEnabled: true,
+    selfCollisionDistance: 12
+  }),
+  wrinkle: Object.freeze({
+    id: 'wrinkle',
+    label: 'wrinkle debug',
+    damping: 0.08,
+    collisionMargin: 2.5,
+    stretchCompliance: 0,
+    shearCompliance: 0.0006,
+    bendCompliance: 0.015,
+    selfCollisionEnabled: true,
+    selfCollisionDistance: 7
+  })
+});
+
+const DEFAULT_CLOTH_PRESET_ID = 'light-fabric';
+
+function clonePreset(preset) {
+  return {
+    ...preset
+  };
+}
+
+function normalizeClothPresetId(value) {
+  const presetId = String(value ?? '').trim().toLowerCase();
+  return CLOTH_PRESET_LIBRARY[presetId] ? presetId : DEFAULT_CLOTH_PRESET_ID;
+}
+function getClothPresetIds() {
+  return Object.keys(CLOTH_PRESET_LIBRARY);
+}
+function getDefaultClothPresetId() {
+  return DEFAULT_CLOTH_PRESET_ID;
+}
+function resolveClothPreset(presetId) {
+  return clonePreset(CLOTH_PRESET_LIBRARY[normalizeClothPresetId(presetId)]);
+}
+
+__exports.getClothPresetIds = getClothPresetIds;
+__exports.getDefaultClothPresetId = getDefaultClothPresetId;
+__exports.resolveClothPreset = resolveClothPreset;
+},
+  30: function(__require, __exports) {
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -11910,7 +12016,7 @@ function toString(value, fallback = '') {
 __exports.toNumber = toNumber;
 __exports.toString = toString;
 },
-  30: function(__require, __exports) {
+  31: function(__require, __exports) {
 const { getConvexHullPresetIds, getDefaultConvexHullPresetId } = __require(28);
 const EXTENSION_ID = 'engine3d';
 const GANDI_EXTENSION_METADATA = {
@@ -12104,6 +12210,30 @@ function createExtensionInfo() {
           BEND: { type: 'number', defaultValue: 0.0005 },
           SELF_COLLISION: { type: 'string', menu: 'ON_OFF', defaultValue: 'off' },
           SELF_DISTANCE: { type: 'number', defaultValue: 8 }
+        }
+      },
+      {
+        opcode: 'configureClothLightPreset',
+        blockType: 'command',
+        text: 'configure cloth [ID] as light fabric',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' }
+        }
+      },
+      {
+        opcode: 'configureClothHeavyPreset',
+        blockType: 'command',
+        text: 'configure cloth [ID] as heavy cloth',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' }
+        }
+      },
+      {
+        opcode: 'configureClothWrinklePreset',
+        blockType: 'command',
+        text: 'configure cloth [ID] as wrinkle debug cloth',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' }
         }
       },
       {
@@ -12503,8 +12633,8 @@ __exports.EXTENSION_ID = EXTENSION_ID;
 __exports.GANDI_EXTENSION_METADATA = GANDI_EXTENSION_METADATA;
 __exports.GANDI_L10N = GANDI_L10N;
 },
-  31: function(__require, __exports) {
-const { createDebugOverlay } = __require(32);
+  32: function(__require, __exports) {
+const { createDebugOverlay } = __require(33);
 function createHost(displayName, runtime, renderer, sandbox) {
   const overlay = createDebugOverlay(displayName);
 
@@ -12555,7 +12685,7 @@ function createGandiRemoteHost() {
 __exports.createGandiApprovedHost = createGandiApprovedHost;
 __exports.createGandiRemoteHost = createGandiRemoteHost;
 },
-  32: function(__require, __exports) {
+  33: function(__require, __exports) {
 const { createIdentityQuat, createQuatFromAxisAngle, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
 const { addVec3, createVec3, crossVec3, dotVec3, normalizeVec3, subtractVec3 } = __require(6);
 const LAYER_GROUPS = {

@@ -198,6 +198,30 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'configureClothLightPreset',
+        blockType: 'command',
+        text: 'configure cloth [ID] as light fabric',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' }
+        }
+      },
+      {
+        opcode: 'configureClothHeavyPreset',
+        blockType: 'command',
+        text: 'configure cloth [ID] as heavy cloth',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' }
+        }
+      },
+      {
+        opcode: 'configureClothWrinklePreset',
+        blockType: 'command',
+        text: 'configure cloth [ID] as wrinkle debug cloth',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'cloth-1' }
+        }
+      },
+      {
         opcode: 'createDistanceJoint',
         blockType: 'command',
         text: 'create distance joint [ID] body a:[BODY_A] body b:[BODY_B] length:[LENGTH]',

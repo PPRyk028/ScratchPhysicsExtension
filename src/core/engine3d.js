@@ -1,5 +1,6 @@
 import { PhysicsWorld, createVec3 } from '../physics/index.js';
 import { getConvexHullPresetVertexText } from '../shared/convex-hull-presets.js';
+import { resolveClothPreset } from '../shared/cloth-presets.js';
 
 function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
@@ -241,6 +242,27 @@ export class Engine3D {
     }
 
     this.hostBridge.log(`Cloth ${cloth.id} configured`);
+    return cloth;
+  }
+
+  configureClothPreset(id, presetId) {
+    const preset = resolveClothPreset(presetId);
+    const cloth = this.world.configureCloth(id, {
+      damping: preset.damping,
+      collisionMargin: preset.collisionMargin,
+      stretchCompliance: preset.stretchCompliance,
+      shearCompliance: preset.shearCompliance,
+      bendCompliance: preset.bendCompliance,
+      selfCollisionEnabled: preset.selfCollisionEnabled,
+      selfCollisionDistance: preset.selfCollisionDistance
+    });
+
+    if (!cloth) {
+      this.hostBridge.log(`Cloth ${id} could not be configured with preset ${preset.id}`);
+      return null;
+    }
+
+    this.hostBridge.log(`Cloth ${cloth.id} configured with preset ${preset.id}`);
     return cloth;
   }
 
