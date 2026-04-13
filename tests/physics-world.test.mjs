@@ -1971,6 +1971,49 @@ test('PhysicsWorld kinematic ground probes use the fast static convex face path 
   assert.equal(hit.algorithm, 'character-ground-face-v1');
 });
 
+test('PhysicsWorld kinematic motion queries use the fast static convex face path against walls', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'wall',
+    vertices: [
+      { x: -2, y: -8, z: -8 },
+      { x: 2, y: -8, z: -8 },
+      { x: 2, y: 8, z: -8 },
+      { x: -2, y: 8, z: -8 },
+      { x: -2, y: -8, z: 8 },
+      { x: 2, y: -8, z: 8 },
+      { x: 2, y: 8, z: 8 },
+      { x: -2, y: 8, z: 8 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: -12, y: 0, z: 0 },
+    radius: 2,
+    halfHeight: 4
+  });
+
+  const character = world.getKinematicCapsule('player');
+  const body = world.getBody('player');
+  const shape = world.getShape(character.shapeId);
+  const hit = world.characterShapeCastAgainstWorld(character, body, shape, {
+    origin: body.position,
+    direction: { x: 1, y: 0, z: 0 },
+    maxDistance: 16,
+    rotation: body.rotation,
+    excludeBodyId: body.id,
+    excludeColliderIds: body.colliderIds,
+    ignoreDynamicTargets: false,
+    ignoreSensors: true,
+    storeResult: false,
+    queryMode: 'motion'
+  });
+
+  assert.equal(hit.hit, true);
+  assert.equal(hit.algorithm, 'character-motion-face-v1');
+  assert.equal(hit.colliderId, 'wall:collider');
+});
+
 test('PhysicsWorld kinematic controllers use step offset to climb low ledges', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({

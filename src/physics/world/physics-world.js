@@ -2,7 +2,7 @@ import { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfE
 import { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } from '../collision/broadphase.js';
 import { cloneContactPair, runNarrowphase } from '../collision/narrowphase.js';
 import { capsuleCastShape, castConvexShapesWithToi, cloneRaycastResult, cloneShapeCastResult, computeSweptShapeAabb, createRaycastResult, createShapeCastResult, raycastShape, sphereCastShape } from '../collision/raycast.js';
-import { composePoses, createTangentBasis, transformPointByPose } from '../collision/support.js';
+import { composePoses, createTangentBasis, getShapeSupportFeature, transformPointByPose } from '../collision/support.js';
 import { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } from '../debug/debug-primitives.js';
 import { cloneManifold, ManifoldCache } from '../manifold/manifold-cache.js';
 import { cloneQuat, createIdentityQuat, integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } from '../math/quat.js';
@@ -24,6 +24,7 @@ const DEFAULT_COLLISION_MASK = 0x7fffffff;
 const KINEMATIC_CHARACTER_CAST_MAX_DEPTH = 12;
 const KINEMATIC_CHARACTER_CAST_DISTANCE_TOLERANCE = 0.05;
 const KINEMATIC_FACE_QUERY_EPSILON = 1e-4;
+const KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE = 0.15;
 
 function toPositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -2077,6 +2078,161 @@ export class PhysicsWorld {
     return nearestHit;
   }
 
+  queryFastStaticKinematicMotion(character, body, shape, direction, maxDistance, options = {}) {
+    const broadphaseProxies = Array.isArray(options.broadphaseProxies)
+      ? options.broadphaseProxies
+      : this.ensureCollisionState().broadphaseProxies;
+    const queryDistance = Math.max(0, Number(maxDistance ?? 0));
+    const queryDirection = normalizeVec3(direction ?? createVec3(1, 0, 0), createVec3(1, 0, 0));
+    const rotation = cloneQuat(options.rotation ?? body.rotation ?? createIdentityQuat());
+    const origin = cloneVec3(options.origin ?? body.position);
+    const sweptAabb = computeSweptShapeAabb({
+      shape,
+      origin,
+      direction: queryDirection,
+      maxDistance: queryDistance,
+      rotation
+    });
+    const excludeBodyId = String(options.excludeBodyId ?? body.id ?? '').trim() || null;
+    const excludeColliderIds = new Set(Array.isArray(options.excludeColliderIds) ? options.excludeColliderIds.map((id) => String(id ?? '').trim()) : []);
+    const ignoreSensors = options.ignoreSensors !== false;
+    let nearestHit = null;
+    let candidateCount = 0;
+    let testedShapeCount = 0;
+    let fallbackRequired = false;
+    let nearestPlaneDistance = Number.POSITIVE_INFINITY;
+
+    for (const proxy of broadphaseProxies) {
+      if (excludeColliderIds.has(proxy.colliderId)) {
+        continue;
+      }
+
+      if (excludeBodyId && proxy.bodyId === excludeBodyId) {
+        continue;
+      }
+
+      if (ignoreSensors && proxy.isSensor) {
+        continue;
+      }
+
+      if (proxy.motionType !== 'static' || (proxy.shapeType !== 'box' && proxy.shapeType !== 'convex-hull')) {
+        fallbackRequired = true;
+        continue;
+      }
+
+      if (sweptAabb && !testAabbOverlap(sweptAabb, proxy.aabb)) {
+        continue;
+      }
+
+      candidateCount += 1;
+
+      const targetShape = this.getShape(proxy.shapeId);
+      const targetPose = this.getColliderWorldPose(proxy.colliderId);
+      if (!targetShape || !targetPose) {
+        fallbackRequired = true;
+        continue;
+      }
+
+      testedShapeCount += 1;
+      const faces = getStaticPolygonalWorldFaces(targetShape, targetPose);
+      if (faces.length === 0) {
+        fallbackRequired = true;
+        continue;
+      }
+
+      for (const face of faces) {
+        const approachSpeed = -dotVec3(queryDirection, face.normal);
+        if (approachSpeed <= 1e-6) {
+          continue;
+        }
+
+        const supportFeature = getShapeSupportFeature(shape, {
+          position: origin,
+          rotation
+        }, scaleVec3(face.normal, -1));
+        const supportPoint = cloneVec3(supportFeature.worldPoint);
+        const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
+
+        if (signedDistance <= KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE) {
+          fallbackRequired = true;
+          continue;
+        }
+
+        const planeDistance = signedDistance / approachSpeed;
+        if (Number.isFinite(planeDistance)) {
+          nearestPlaneDistance = Math.min(nearestPlaneDistance, planeDistance);
+        }
+
+        if (planeDistance < 0 || planeDistance > queryDistance + Math.max(character.skinWidth, 0.25)) {
+          continue;
+        }
+
+        const contactPoint = addScaledVec3(supportPoint, queryDirection, planeDistance);
+        const insideFace = isPointInsideWorldFace(contactPoint, face, Math.max(character.skinWidth, 0.1));
+        if (!insideFace) {
+          fallbackRequired = true;
+          continue;
+        }
+
+        if (!nearestHit || planeDistance < nearestHit.distance - 1e-8) {
+          nearestHit = createShapeCastResult({
+            castType: 'capsule',
+            hit: true,
+            origin,
+            direction: queryDirection,
+            maxDistance: queryDistance,
+            radius: character.radius,
+            halfHeight: character.halfHeight,
+            rotation,
+            sampleOrigins: [cloneVec3(origin)],
+            sampleEndPoints: [addScaledVec3(origin, queryDirection, queryDistance)],
+            distance: planeDistance,
+            point: contactPoint,
+            normal: face.normal,
+            sweepPosition: addScaledVec3(origin, queryDirection, planeDistance),
+            colliderId: proxy.colliderId,
+            bodyId: proxy.bodyId,
+            shapeId: proxy.shapeId,
+            materialId: proxy.materialId,
+            shapeType: proxy.shapeType,
+            algorithm: 'character-motion-face-v1',
+            featureId: face.id,
+            proxyCount: broadphaseProxies.length,
+            candidateCount,
+            testedShapeCount
+          });
+        }
+      }
+    }
+
+    if (nearestHit) {
+      return nearestHit;
+    }
+
+    if (fallbackRequired) {
+      return null;
+    }
+
+    if (!Number.isFinite(nearestPlaneDistance) || nearestPlaneDistance > queryDistance + Math.max(character.radius, character.skinWidth, 0.5)) {
+      return createShapeCastMiss({
+        castType: 'capsule',
+        origin,
+        direction: queryDirection,
+        maxDistance: queryDistance,
+        radius: character.radius,
+        halfHeight: character.halfHeight,
+        rotation,
+        sampleOrigins: [cloneVec3(origin)],
+        sampleEndPoints: [addScaledVec3(origin, queryDirection, queryDistance)],
+        proxyCount: broadphaseProxies.length,
+        candidateCount,
+        testedShapeCount
+      });
+    }
+
+    return null;
+  }
+
   characterShapeCastAgainstWorld(character, body, shape, options = {}) {
     const direction = normalizeVec3(options.direction ?? createVec3(0, -1, 0), createVec3(0, -1, 0));
     const maxDistance = toNonNegativeNumber(options.maxDistance, 0);
@@ -2092,6 +2248,16 @@ export class PhysicsWorld {
           this.lastShapeCast = cloneShapeCastResult(fastGroundHit);
         }
         return fastGroundHit;
+      }
+    }
+
+    if (options.queryMode === 'motion') {
+      const fastMotionHit = this.queryFastStaticKinematicMotion(character, body, shape, direction, maxDistance, options);
+      if (fastMotionHit) {
+        if (options.storeResult !== false) {
+          this.lastShapeCast = cloneShapeCastResult(fastMotionHit);
+        }
+        return fastMotionHit;
       }
     }
 
