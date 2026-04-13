@@ -2014,6 +2014,40 @@ test('PhysicsWorld kinematic motion queries use the fast static convex face path
   assert.equal(hit.colliderId, 'wall:collider');
 });
 
+test('PhysicsWorld kinematic controllers keep moving across flat static convex hull tops', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'platform',
+    vertices: [
+      { x: -20, y: -2, z: -20 },
+      { x: 20, y: -2, z: -20 },
+      { x: 20, y: -2, z: 20 },
+      { x: -20, y: -2, z: 20 },
+      { x: -20, y: 2, z: -20 },
+      { x: 20, y: 2, z: -20 },
+      { x: 20, y: 2, z: 20 },
+      { x: -20, y: 2, z: 20 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 17, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 8, y: 0, z: 0 });
+
+  for (let index = 0; index < 20; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const body = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok(body.position.x > 2.5, `expected player to keep moving across convex hull top, got x=${body.position.x}`);
+  assert.equal(character.grounded, true);
+  assert.equal(character.walkable, true);
+});
+
 test('PhysicsWorld kinematic controllers use step offset to climb low ledges', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({

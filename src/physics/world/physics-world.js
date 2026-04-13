@@ -24,6 +24,7 @@ const DEFAULT_COLLISION_MASK = 0x7fffffff;
 const KINEMATIC_CHARACTER_CAST_MAX_DEPTH = 12;
 const KINEMATIC_CHARACTER_CAST_DISTANCE_TOLERANCE = 0.05;
 const KINEMATIC_FACE_QUERY_EPSILON = 1e-4;
+const KINEMATIC_MOTION_FACE_APPROACH_EPSILON = 1e-3;
 const KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE = 0.15;
 
 function toPositiveNumber(value, fallback) {
@@ -2159,7 +2160,7 @@ export class PhysicsWorld {
 
       for (const face of faces) {
         const approachSpeed = -dotVec3(queryDirection, face.normal);
-        if (approachSpeed <= 1e-6) {
+        if (approachSpeed <= KINEMATIC_MOTION_FACE_APPROACH_EPSILON) {
           continue;
         }
 
