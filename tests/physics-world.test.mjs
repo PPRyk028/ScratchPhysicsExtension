@@ -1636,6 +1636,115 @@ test('PhysicsWorld contact queries list touching bodies and colliders', () => {
   assert.equal(touchingColliders.pairs[0].pairKey, 'box-a:collider|box-b:collider');
 });
 
+test('PhysicsWorld sensor colliders generate trigger enter/stay/exit events without rigid contacts', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxSensor({
+    id: 'trigger-zone',
+    position: { x: 0, y: 0, z: 0 },
+    size: 8,
+    collisionLayer: 8,
+    collisionMask: 1
+  });
+  world.createBoxBody({
+    id: 'trigger-probe',
+    position: { x: 0, y: 0, z: 0 },
+    size: 4,
+    mass: 1
+  });
+
+  const enterState = world.getCollisionState();
+  assert.equal(enterState.summary.sensorPairCount, 1);
+  assert.equal(enterState.summary.contactCount, 0);
+  assert.equal(world.getColliderTriggerEvents('trigger-zone:collider', 'enter').count, 1);
+  assert.equal(world.getBodyTriggerEvents('trigger-probe', 'enter').events.length, 1);
+
+  world.markCollisionStateDirty();
+  const stayState = world.getCollisionState();
+  assert.equal(stayState.summary.triggerStayCount, 1);
+
+  const probe = world.bodyRegistry.getMutable('trigger-probe');
+  probe.position.x = 30;
+  world.markCollisionStateDirty();
+  const exitState = world.getCollisionState();
+  const frame = world.buildDebugFrame();
+
+  assert.equal(exitState.summary.sensorPairCount, 0);
+  assert.equal(exitState.summary.triggerExitCount, 1);
+  assert.equal(world.getColliderTriggerEvents('trigger-zone:collider', 'exit').count, 1);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'sensor-collider'));
+});
+
+test('PhysicsWorld collision layers and masks filter broadphase pairs', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'filtered-floor',
+    position: { x: 0, y: 0, z: 0 },
+    size: 8,
+    collisionLayer: 2,
+    collisionMask: 0
+  });
+  world.createBoxBody({
+    id: 'filtered-box',
+    position: { x: 0, y: 0, z: 0 },
+    size: 4,
+    mass: 1
+  });
+
+  const filteredState = world.getCollisionState();
+  assert.equal(filteredState.summary.pairCount, 0);
+  assert.equal(filteredState.summary.contactCount, 0);
+
+  world.configureColliderCollision('filtered-floor:collider', {
+    collisionMask: 1
+  });
+  const activeState = world.getCollisionState();
+
+  assert.equal(activeState.summary.pairCount, 1);
+  assert.equal(activeState.summary.contactCount, 1);
+  assert.equal(world.getCollider('filtered-floor:collider').collisionLayer, 2);
+  assert.equal(world.getCollider('filtered-floor:collider').collisionMask, 1);
+});
+
+test('PhysicsWorld contact enter/stay/exit events are cached for bodies and colliders', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'event-box-a',
+    position: { x: 0, y: 0, z: 0 },
+    size: 4,
+    mass: 1
+  });
+  world.createBoxBody({
+    id: 'event-box-b',
+    position: { x: 2.5, y: 0, z: 0 },
+    size: 4,
+    mass: 1
+  });
+
+  const enterState = world.getCollisionState();
+  assert.equal(enterState.summary.contactEnterCount, 1);
+  assert.equal(world.getBodyContactEvents('event-box-a', 'enter').count, 1);
+  assert.equal(world.getColliderContactEvents('event-box-a:collider', 'enter').count, 1);
+
+  world.markCollisionStateDirty();
+  const stayState = world.getCollisionState();
+  assert.equal(stayState.summary.contactStayCount, 1);
+
+  const boxB = world.bodyRegistry.getMutable('event-box-b');
+  boxB.position.x = 20;
+  world.markCollisionStateDirty();
+  const exitState = world.getCollisionState();
+
+  assert.equal(exitState.summary.contactExitCount, 1);
+  assert.equal(world.getBodyContactEvents('event-box-a', 'exit').count, 1);
+  assert.equal(world.getColliderContactEvents('event-box-a:collider', 'exit').count, 1);
+});
+
 test('PhysicsWorld exposes collider world poses, body collider lookup, and world summary', () => {
   const world = new PhysicsWorld({
     gravity: { x: 0, y: -3, z: 0 }

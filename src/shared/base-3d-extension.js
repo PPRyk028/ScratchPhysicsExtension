@@ -86,6 +86,18 @@ export class Base3DExtension {
     );
   }
 
+  createStaticBoxSensor(args) {
+    this.engine.createStaticBoxSensor(
+      toString(args.ID, 'sensor'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SIZE, 100),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
+    );
+  }
+
   createConvexHullRigidBody(args) {
     this.engine.createConvexHullRigidBody(
       toString(args.ID, 'body'),
@@ -122,6 +134,18 @@ export class Base3DExtension {
     );
   }
 
+  createStaticConvexHullSensor(args) {
+    this.engine.createStaticConvexHullSensor(
+      toString(args.ID, 'sensor'),
+      toString(args.VERTICES, ''),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
+    );
+  }
+
   createPresetStaticConvexHullCollider(args) {
     this.engine.createPresetStaticConvexHullCollider(
       toString(args.ID, 'collider'),
@@ -131,6 +155,19 @@ export class Base3DExtension {
       toNumber(args.Z),
       toNumber(args.SCALE, 100),
       toString(args.MATERIAL, '')
+    );
+  }
+
+  createPresetStaticConvexHullSensor(args) {
+    this.engine.createPresetStaticConvexHullSensor(
+      toString(args.ID, 'sensor'),
+      toString(args.PRESET, 'pyramid'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SCALE, 100),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
     );
   }
 
@@ -204,6 +241,44 @@ export class Base3DExtension {
       toNumber(args.SHEAR, 0.0002),
       toNumber(args.BEND, 0.0008),
       toNumber(args.VOLUME, 0.00008)
+    );
+  }
+
+  configureSoftBodyJellyPreset(args) {
+    this.engine.configureSoftBodyPreset(
+      toString(args.ID, 'soft-body'),
+      'jelly'
+    );
+  }
+
+  configureSoftBodyFoamPreset(args) {
+    this.engine.configureSoftBodyPreset(
+      toString(args.ID, 'soft-body'),
+      'foam'
+    );
+  }
+
+  configureSoftBodyFirmRubberPreset(args) {
+    this.engine.configureSoftBodyPreset(
+      toString(args.ID, 'soft-body'),
+      'firm-rubber'
+    );
+  }
+
+  configureBodyCollision(args) {
+    this.engine.configureBodyCollision(
+      toString(args.ID, 'body'),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
+    );
+  }
+
+  configureColliderCollision(args) {
+    this.engine.configureColliderCollision(
+      toString(args.ID, 'collider'),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647),
+      toString(args.SENSOR, 'off').toLowerCase() === 'on'
     );
   }
 
@@ -470,6 +545,34 @@ export class Base3DExtension {
     );
   }
 
+  queryBodyContactEvents(args) {
+    return this.engine.queryBodyContactEvents(
+      toString(args.ID, 'body'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
+  queryBodyTriggerEvents(args) {
+    return this.engine.queryBodyTriggerEvents(
+      toString(args.ID, 'body'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
+  queryColliderContactEvents(args) {
+    return this.engine.queryColliderContactEvents(
+      toString(args.ID, 'collider'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
+  queryColliderTriggerEvents(args) {
+    return this.engine.queryColliderTriggerEvents(
+      toString(args.ID, 'collider'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
   sceneJson() {
     return this.engine.exportSceneJson();
   }
@@ -496,6 +599,14 @@ export class Base3DExtension {
 
   sceneIoSummary() {
     return this.engine.getSceneIoSummary();
+  }
+
+  contactEventsSummary() {
+    return this.engine.getContactEventsSummary();
+  }
+
+  triggerEventsSummary() {
+    return this.engine.getTriggerEventsSummary();
   }
 
   lastFrameSummary() {

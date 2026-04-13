@@ -3,7 +3,7 @@
 const __modules = {
   0: function(__require, __exports) {
 const { Base3DExtension } = __require(1);
-const { createGandiRemoteHost } = __require(33);
+const { createGandiRemoteHost } = __require(34);
 const ScratchApi = globalThis.Scratch;
 
 if (!ScratchApi) {
@@ -22,8 +22,8 @@ ScratchApi.extensions.register(new GandiRemote3DExtension());
 },
   1: function(__require, __exports) {
 const { Engine3D } = __require(2);
-const { toNumber, toString } = __require(31);
-const { createExtensionInfo } = __require(32);
+const { toNumber, toString } = __require(32);
+const { createExtensionInfo } = __require(33);
 class Base3DExtension {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
@@ -108,6 +108,18 @@ class Base3DExtension {
     );
   }
 
+  createStaticBoxSensor(args) {
+    this.engine.createStaticBoxSensor(
+      toString(args.ID, 'sensor'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SIZE, 100),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
+    );
+  }
+
   createConvexHullRigidBody(args) {
     this.engine.createConvexHullRigidBody(
       toString(args.ID, 'body'),
@@ -144,6 +156,18 @@ class Base3DExtension {
     );
   }
 
+  createStaticConvexHullSensor(args) {
+    this.engine.createStaticConvexHullSensor(
+      toString(args.ID, 'sensor'),
+      toString(args.VERTICES, ''),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
+    );
+  }
+
   createPresetStaticConvexHullCollider(args) {
     this.engine.createPresetStaticConvexHullCollider(
       toString(args.ID, 'collider'),
@@ -153,6 +177,19 @@ class Base3DExtension {
       toNumber(args.Z),
       toNumber(args.SCALE, 100),
       toString(args.MATERIAL, '')
+    );
+  }
+
+  createPresetStaticConvexHullSensor(args) {
+    this.engine.createPresetStaticConvexHullSensor(
+      toString(args.ID, 'sensor'),
+      toString(args.PRESET, 'pyramid'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SCALE, 100),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
     );
   }
 
@@ -226,6 +263,44 @@ class Base3DExtension {
       toNumber(args.SHEAR, 0.0002),
       toNumber(args.BEND, 0.0008),
       toNumber(args.VOLUME, 0.00008)
+    );
+  }
+
+  configureSoftBodyJellyPreset(args) {
+    this.engine.configureSoftBodyPreset(
+      toString(args.ID, 'soft-body'),
+      'jelly'
+    );
+  }
+
+  configureSoftBodyFoamPreset(args) {
+    this.engine.configureSoftBodyPreset(
+      toString(args.ID, 'soft-body'),
+      'foam'
+    );
+  }
+
+  configureSoftBodyFirmRubberPreset(args) {
+    this.engine.configureSoftBodyPreset(
+      toString(args.ID, 'soft-body'),
+      'firm-rubber'
+    );
+  }
+
+  configureBodyCollision(args) {
+    this.engine.configureBodyCollision(
+      toString(args.ID, 'body'),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
+    );
+  }
+
+  configureColliderCollision(args) {
+    this.engine.configureColliderCollision(
+      toString(args.ID, 'collider'),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647),
+      toString(args.SENSOR, 'off').toLowerCase() === 'on'
     );
   }
 
@@ -492,6 +567,34 @@ class Base3DExtension {
     );
   }
 
+  queryBodyContactEvents(args) {
+    return this.engine.queryBodyContactEvents(
+      toString(args.ID, 'body'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
+  queryBodyTriggerEvents(args) {
+    return this.engine.queryBodyTriggerEvents(
+      toString(args.ID, 'body'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
+  queryColliderContactEvents(args) {
+    return this.engine.queryColliderContactEvents(
+      toString(args.ID, 'collider'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
+  queryColliderTriggerEvents(args) {
+    return this.engine.queryColliderTriggerEvents(
+      toString(args.ID, 'collider'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
   sceneJson() {
     return this.engine.exportSceneJson();
   }
@@ -520,6 +623,14 @@ class Base3DExtension {
     return this.engine.getSceneIoSummary();
   }
 
+  contactEventsSummary() {
+    return this.engine.getContactEventsSummary();
+  }
+
+  triggerEventsSummary() {
+    return this.engine.getTriggerEventsSummary();
+  }
+
   lastFrameSummary() {
     return this.engine.getLastFrameSummary();
   }
@@ -535,6 +646,7 @@ __exports.Base3DExtension = Base3DExtension;
 const { PhysicsWorld, createVec3 } = __require(3);
 const { getConvexHullPresetVertexText } = __require(29);
 const { resolveClothPreset } = __require(30);
+const { resolveSoftBodyPreset } = __require(31);
 function formatVector(vector) {
   return `${vector.x}, ${vector.y}, ${vector.z}`;
 }
@@ -553,6 +665,15 @@ function formatIdentifierList(records) {
   }
 
   return records.map((record) => record.id).join(', ');
+}
+
+function normalizeEventPhase(phase) {
+  const resolvedPhase = String(phase ?? '').trim().toLowerCase();
+  if (resolvedPhase === 'enter' || resolvedPhase === 'exit') {
+    return resolvedPhase;
+  }
+
+  return 'stay';
 }
 
 function radiansToDegrees(value) {
@@ -598,7 +719,7 @@ function parseConvexHullVertices(verticesText) {
 }
 
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.clothCount ?? 0} cloths | ${snapshot.softBodyCount ?? 0} soft bodies | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.clothCount ?? 0} cloths | ${snapshot.softBodyCount ?? 0} soft bodies | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.sensorPairCount ?? 0} triggers | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -715,6 +836,19 @@ class Engine3D {
     return collider;
   }
 
+  createStaticBoxSensor(id, x, y, z, size, collisionLayer = 1, collisionMask = 0x7fffffff) {
+    const { collider } = this.world.createStaticBoxSensor({
+      id,
+      position: createVec3(x, y, z),
+      size,
+      collisionLayer,
+      collisionMask
+    });
+
+    this.hostBridge.log(`Static sensor ${collider.id} registered`);
+    return collider;
+  }
+
   createConvexHullRigidBody(id, verticesText, x, y, z, mass, materialId = '') {
     const vertices = parseConvexHullVertices(verticesText);
     const { body, collider } = this.world.createConvexHullBody({
@@ -754,6 +888,20 @@ class Engine3D {
     return collider;
   }
 
+  createStaticConvexHullSensor(id, verticesText, x, y, z, collisionLayer = 1, collisionMask = 0x7fffffff) {
+    const vertices = parseConvexHullVertices(verticesText);
+    const { collider } = this.world.createStaticConvexHullSensor({
+      id,
+      position: createVec3(x, y, z),
+      vertices,
+      collisionLayer,
+      collisionMask
+    });
+
+    this.hostBridge.log(`Static convex hull sensor ${collider.id} registered with ${vertices.length} vertices`);
+    return collider;
+  }
+
   createPresetStaticConvexHullCollider(id, presetId, x, y, z, scale, materialId = '') {
     return this.createStaticConvexHullCollider(
       id,
@@ -762,6 +910,18 @@ class Engine3D {
       y,
       z,
       materialId
+    );
+  }
+
+  createPresetStaticConvexHullSensor(id, presetId, x, y, z, scale, collisionLayer = 1, collisionMask = 0x7fffffff) {
+    return this.createStaticConvexHullSensor(
+      id,
+      this.getConvexHullPresetVertices(presetId, scale),
+      x,
+      y,
+      z,
+      collisionLayer,
+      collisionMask
     );
   }
 
@@ -852,6 +1012,57 @@ class Engine3D {
 
     this.hostBridge.log(`Soft body ${softBody.id} configured`);
     return softBody;
+  }
+
+  configureSoftBodyPreset(id, presetId) {
+    const preset = resolveSoftBodyPreset(presetId);
+    const softBody = this.world.configureSoftBody(id, {
+      damping: preset.damping,
+      collisionMargin: preset.collisionMargin,
+      stretchCompliance: preset.stretchCompliance,
+      shearCompliance: preset.shearCompliance,
+      bendCompliance: preset.bendCompliance,
+      volumeCompliance: preset.volumeCompliance
+    });
+
+    if (!softBody) {
+      this.hostBridge.log(`Soft body ${id} could not be configured with preset ${preset.id}`);
+      return null;
+    }
+
+    this.hostBridge.log(`Soft body ${softBody.id} configured with preset ${preset.id}`);
+    return softBody;
+  }
+
+  configureBodyCollision(id, collisionLayer, collisionMask) {
+    const body = this.world.configureBodyCollision(id, {
+      collisionLayer,
+      collisionMask
+    });
+
+    if (!body) {
+      this.hostBridge.log(`Rigid body ${id} could not be configured for collision filtering`);
+      return null;
+    }
+
+    this.hostBridge.log(`Rigid body ${body.id} collision filtering configured`);
+    return body;
+  }
+
+  configureColliderCollision(id, collisionLayer, collisionMask, isSensor) {
+    const collider = this.world.configureColliderCollision(id, {
+      collisionLayer,
+      collisionMask,
+      isSensor
+    });
+
+    if (!collider) {
+      this.hostBridge.log(`Collider ${id} could not be configured for collision filtering`);
+      return null;
+    }
+
+    this.hostBridge.log(`Collider ${collider.id} collision filtering configured`);
+    return collider;
   }
 
   createDistanceJoint(id, bodyAId, bodyBId, distance = 0) {
@@ -1127,7 +1338,11 @@ class Engine3D {
       return `Rigid body ${id} not found`;
     }
 
-    return `${body.id} | motion:${body.motionType} | sleeping:${body.sleeping ? 'yes' : 'no'} | position ${formatVector(body.position)} | velocity ${formatVector(body.linearVelocity)} | colliders ${body.colliderIds.length}`;
+    const primaryCollider = body.primaryColliderId ? this.world.getCollider(body.primaryColliderId) : null;
+    const collisionSummary = primaryCollider
+      ? ` | layer:${primaryCollider.collisionLayer} | mask:${primaryCollider.collisionMask} | sensor:${primaryCollider.isSensor ? 'on' : 'off'}`
+      : '';
+    return `${body.id} | motion:${body.motionType} | sleeping:${body.sleeping ? 'yes' : 'no'} | position ${formatVector(body.position)} | velocity ${formatVector(body.linearVelocity)} | colliders ${body.colliderIds.length}${collisionSummary}`;
   }
 
   getColliderSummary(id) {
@@ -1137,7 +1352,7 @@ class Engine3D {
     }
 
     const pose = this.world.getColliderWorldPose(id);
-    return `${collider.id} | body:${collider.bodyId || 'static'} | shape:${collider.shapeId} | material:${collider.materialId} | position ${formatVector(pose.position)}`;
+    return `${collider.id} | body:${collider.bodyId || 'static'} | shape:${collider.shapeId} | material:${collider.materialId} | sensor:${collider.isSensor ? 'on' : 'off'} | layer:${collider.collisionLayer} | mask:${collider.collisionMask} | position ${formatVector(pose.position)}`;
   }
 
   getMaterialSummary(id) {
@@ -1236,6 +1451,60 @@ class Engine3D {
 
     const result = this.world.getCollidersTouchingCollider(id);
     return `${result.count} colliders touching ${id} | ${formatIdentifierList(result.colliders)}`;
+  }
+
+  queryBodyContactEvents(id, phase) {
+    const body = this.world.getBody(id);
+    if (!body) {
+      return `Rigid body ${id} not found`;
+    }
+
+    const resolvedPhase = normalizeEventPhase(phase);
+    const result = this.world.getBodyContactEvents(id, resolvedPhase);
+    return `${result.count} bodies in ${resolvedPhase} contact events for ${id} | ${formatIdentifierList(result.bodies)}`;
+  }
+
+  queryBodyTriggerEvents(id, phase) {
+    const body = this.world.getBody(id);
+    if (!body) {
+      return `Rigid body ${id} not found`;
+    }
+
+    const resolvedPhase = normalizeEventPhase(phase);
+    const result = this.world.getBodyTriggerEvents(id, resolvedPhase);
+    return `${result.count} bodies in ${resolvedPhase} trigger events for ${id} | ${formatIdentifierList(result.bodies)}`;
+  }
+
+  queryColliderContactEvents(id, phase) {
+    const collider = this.world.getCollider(id);
+    if (!collider) {
+      return `Collider ${id} not found`;
+    }
+
+    const resolvedPhase = normalizeEventPhase(phase);
+    const result = this.world.getColliderContactEvents(id, resolvedPhase);
+    return `${result.count} colliders in ${resolvedPhase} contact events for ${id} | ${formatIdentifierList(result.colliders)}`;
+  }
+
+  queryColliderTriggerEvents(id, phase) {
+    const collider = this.world.getCollider(id);
+    if (!collider) {
+      return `Collider ${id} not found`;
+    }
+
+    const resolvedPhase = normalizeEventPhase(phase);
+    const result = this.world.getColliderTriggerEvents(id, resolvedPhase);
+    return `${result.count} colliders in ${resolvedPhase} trigger events for ${id} | ${formatIdentifierList(result.colliders)}`;
+  }
+
+  getContactEventsSummary() {
+    const summary = this.world.getCollisionState().summary;
+    return `contact events | enter:${summary.contactEnterCount} | stay:${summary.contactStayCount} | exit:${summary.contactExitCount}`;
+  }
+
+  getTriggerEventsSummary() {
+    const summary = this.world.getCollisionState().summary;
+    return `trigger events | enter:${summary.triggerEnterCount} | stay:${summary.triggerStayCount} | exit:${summary.triggerExitCount}`;
   }
 
   getLastRaycastSummary() {
@@ -2325,6 +2594,8 @@ function createBroadphaseProxy(options = {}) {
     isDynamic: motionType === 'dynamic',
     isKinematic: motionType === 'kinematic',
     isSensor: Boolean(options.isSensor),
+    collisionLayer: Number(options.collisionLayer ?? 1),
+    collisionMask: Number(options.collisionMask ?? 0x7fffffff),
     aabb: cloneAabb(options.aabb)
   };
 }
@@ -2366,10 +2637,6 @@ function shouldGenerateBroadphasePair(left, right) {
   }
 
   if (!left.colliderId || !right.colliderId || left.colliderId === right.colliderId) {
-    return false;
-  }
-
-  if (left.isSensor || right.isSensor) {
     return false;
   }
 
@@ -4938,9 +5205,13 @@ const DEFAULT_DEBUG_COLORS = Object.freeze({
   rigidBodyCenter: Object.freeze({ r: 255, g: 196, b: 61, a: 1 }),
   sleepingRigidBodyWireframe: Object.freeze({ r: 145, g: 160, b: 174, a: 1 }),
   staticColliderWireframe: Object.freeze({ r: 107, g: 222, b: 157, a: 1 }),
+  sensorColliderWireframe: Object.freeze({ r: 241, g: 102, b: 255, a: 1 }),
+  sensorOrigin: Object.freeze({ r: 255, g: 170, b: 255, a: 1 }),
   broadphaseAabb: Object.freeze({ r: 250, g: 128, b: 114, a: 0.9 }),
   contactPoint: Object.freeze({ r: 255, g: 72, b: 72, a: 1 }),
   contactNormal: Object.freeze({ r: 255, g: 150, b: 54, a: 1 }),
+  triggerContactPoint: Object.freeze({ r: 255, g: 112, b: 214, a: 1 }),
+  triggerContactNormal: Object.freeze({ r: 234, g: 166, b: 255, a: 1 }),
   raycastHitLine: Object.freeze({ r: 76, g: 229, b: 255, a: 1 }),
   raycastMissLine: Object.freeze({ r: 113, g: 132, b: 164, a: 0.95 }),
   raycastHitPoint: Object.freeze({ r: 255, g: 64, b: 197, a: 1 }),
@@ -8494,6 +8765,8 @@ const { JointRegistry } = __require(26);
 const { MaterialRegistry } = __require(27);
 const { ShapeRegistry } = __require(28);
 const DEFAULT_MATERIAL_ID = 'material-default';
+const DEFAULT_COLLISION_LAYER = 1;
+const DEFAULT_COLLISION_MASK = 0x7fffffff;
 
 function toPositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -8517,6 +8790,24 @@ function toOptionalNumber(value, fallback = null) {
 function toOptionalNonNegativeNumber(value, fallback = null) {
   const parsed = toOptionalNumber(value, fallback);
   return parsed !== null && parsed >= 0 ? parsed : fallback;
+}
+
+function normalizeCollisionBits(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(DEFAULT_COLLISION_MASK, Math.trunc(parsed)));
+}
+
+function shouldCollisionLayersInteract(layerA, maskA, layerB, maskB) {
+  const resolvedLayerA = normalizeCollisionBits(layerA, DEFAULT_COLLISION_LAYER);
+  const resolvedMaskA = normalizeCollisionBits(maskA, DEFAULT_COLLISION_MASK);
+  const resolvedLayerB = normalizeCollisionBits(layerB, DEFAULT_COLLISION_LAYER);
+  const resolvedMaskB = normalizeCollisionBits(maskB, DEFAULT_COLLISION_MASK);
+
+  return (resolvedMaskA & resolvedLayerB) !== 0 && (resolvedMaskB & resolvedLayerA) !== 0;
 }
 
 function normalizeDistanceLimits(minDistance, maxDistance) {
@@ -8756,24 +9047,124 @@ function cloneSolverStats(solverStats) {
   };
 }
 
+function createContactEvent(options = {}) {
+  return {
+    id: String(options.id ?? `${options.eventType ?? 'contact'}:${options.phase ?? 'stay'}:${options.pairKey ?? 'pair'}`).trim(),
+    eventType: String(options.eventType ?? 'contact').trim() || 'contact',
+    phase: String(options.phase ?? 'stay').trim() || 'stay',
+    pairKey: String(options.pairKey ?? '').trim() || null,
+    pairKind: String(options.pairKind ?? '').trim() || 'dynamic-dynamic',
+    colliderAId: String(options.colliderAId ?? '').trim() || null,
+    colliderBId: String(options.colliderBId ?? '').trim() || null,
+    bodyAId: String(options.bodyAId ?? '').trim() || null,
+    bodyBId: String(options.bodyBId ?? '').trim() || null,
+    shapeAType: String(options.shapeAType ?? '').trim() || 'unknown',
+    shapeBType: String(options.shapeBType ?? '').trim() || 'unknown',
+    algorithm: String(options.algorithm ?? '').trim() || 'unknown',
+    isSensorPair: options.isSensorPair === true,
+    contactCount: Number(options.contactCount ?? 0),
+    penetration: Number(options.penetration ?? 0),
+    normal: cloneVec3(options.normal ?? createVec3()),
+    contacts: Array.isArray(options.contacts)
+      ? options.contacts.map((contact) => ({
+        id: String(contact.id ?? '').trim() || null,
+        featureId: String(contact.featureId ?? '').trim() || null,
+        position: cloneVec3(contact.position ?? createVec3()),
+        penetration: Number(contact.penetration ?? 0),
+        separation: Number(contact.separation ?? 0)
+      }))
+      : []
+  };
+}
+
+function cloneContactEvent(contactEvent) {
+  return createContactEvent(contactEvent);
+}
+
+function createEmptyContactEventState() {
+  return {
+    contactPairsByKey: new Map(),
+    triggerPairsByKey: new Map(),
+    contactEvents: [],
+    triggerEvents: []
+  };
+}
+
+function cloneContactEventState(contactEventState) {
+  return {
+    contactPairsByKey: new Map(Array.from(contactEventState.contactPairsByKey.entries(), ([pairKey, pair]) => [pairKey, cloneContactPair(pair)])),
+    triggerPairsByKey: new Map(Array.from(contactEventState.triggerPairsByKey.entries(), ([pairKey, pair]) => [pairKey, cloneContactPair(pair)])),
+    contactEvents: Array.isArray(contactEventState.contactEvents)
+      ? contactEventState.contactEvents.map((event) => cloneContactEvent(event))
+      : [],
+    triggerEvents: Array.isArray(contactEventState.triggerEvents)
+      ? contactEventState.triggerEvents.map((event) => cloneContactEvent(event))
+      : []
+  };
+}
+
+function buildPairEventState(currentPairs, previousPairsByKey, eventType) {
+  const nextPairsByKey = new Map();
+  const events = [];
+
+  for (const pair of Array.isArray(currentPairs) ? currentPairs : []) {
+    nextPairsByKey.set(pair.pairKey, cloneContactPair(pair));
+    const phase = previousPairsByKey.has(pair.pairKey) ? 'stay' : 'enter';
+    events.push(createContactEvent({
+      ...pair,
+      eventType,
+      phase,
+      isSensorPair: eventType === 'trigger'
+    }));
+  }
+
+  for (const [pairKey, previousPair] of previousPairsByKey.entries()) {
+    if (nextPairsByKey.has(pairKey)) {
+      continue;
+    }
+
+    events.push(createContactEvent({
+      ...previousPair,
+      eventType,
+      phase: 'exit',
+      isSensorPair: eventType === 'trigger'
+    }));
+  }
+
+  return {
+    nextPairsByKey,
+    events
+  };
+}
+
 function createEmptyCollisionState(iterations = 0) {
   return {
     broadphaseProxies: [],
     broadphasePairs: [],
     contactPairs: [],
+    sensorPairs: [],
     manifolds: [],
     islands: [],
     joints: [],
+    contactEvents: [],
+    triggerEvents: [],
     solverStats: createEmptySolverStats(iterations),
     summary: {
       proxyCount: 0,
       pairCount: 0,
       contactCount: 0,
+      sensorPairCount: 0,
       manifoldCount: 0,
       jointCount: 0,
       islandCount: 0,
       sleepingBodyCount: 0,
       awakeBodyCount: 0,
+      contactEnterCount: 0,
+      contactStayCount: 0,
+      contactExitCount: 0,
+      triggerEnterCount: 0,
+      triggerStayCount: 0,
+      triggerExitCount: 0,
       unsupportedPairCount: 0,
       pairKinds: {},
       algorithms: {}
@@ -8786,11 +9177,18 @@ function cloneCollisionSummary(summary) {
     proxyCount: summary.proxyCount,
     pairCount: summary.pairCount,
     contactCount: summary.contactCount,
+    sensorPairCount: Number(summary.sensorPairCount ?? 0),
     manifoldCount: summary.manifoldCount,
     jointCount: Number(summary.jointCount ?? 0),
     islandCount: summary.islandCount,
     sleepingBodyCount: summary.sleepingBodyCount,
     awakeBodyCount: summary.awakeBodyCount,
+    contactEnterCount: Number(summary.contactEnterCount ?? 0),
+    contactStayCount: Number(summary.contactStayCount ?? 0),
+    contactExitCount: Number(summary.contactExitCount ?? 0),
+    triggerEnterCount: Number(summary.triggerEnterCount ?? 0),
+    triggerStayCount: Number(summary.triggerStayCount ?? 0),
+    triggerExitCount: Number(summary.triggerExitCount ?? 0),
     unsupportedPairCount: summary.unsupportedPairCount,
     pairKinds: { ...summary.pairKinds },
     algorithms: { ...summary.algorithms }
@@ -8802,6 +9200,9 @@ function cloneCollisionState(collisionState) {
     broadphaseProxies: collisionState.broadphaseProxies.map((proxy) => cloneBroadphaseProxy(proxy)),
     broadphasePairs: collisionState.broadphasePairs.map((pair) => cloneBroadphasePair(pair)),
     contactPairs: collisionState.contactPairs.map((contactPair) => cloneContactPair(contactPair)),
+    sensorPairs: Array.isArray(collisionState.sensorPairs)
+      ? collisionState.sensorPairs.map((contactPair) => cloneContactPair(contactPair))
+      : [],
     manifolds: collisionState.manifolds.map((manifold) => cloneManifold(manifold)),
     islands: collisionState.islands.map((island) => cloneRigidBodyIsland(island)),
     joints: Array.isArray(collisionState.joints)
@@ -8825,6 +9226,12 @@ function cloneCollisionState(collisionState) {
         accumulatedAngularImpulse: cloneVec3(joint.accumulatedAngularImpulse ?? createVec3()),
         accumulatedMotorImpulse: Number(joint.accumulatedMotorImpulse ?? 0)
       }))
+          : [],
+    contactEvents: Array.isArray(collisionState.contactEvents)
+      ? collisionState.contactEvents.map((event) => cloneContactEvent(event))
+      : [],
+    triggerEvents: Array.isArray(collisionState.triggerEvents)
+      ? collisionState.triggerEvents.map((event) => cloneContactEvent(event))
       : [],
     solverStats: cloneSolverStats(collisionState.solverStats),
     summary: cloneCollisionSummary(collisionState.summary)
@@ -9072,6 +9479,7 @@ class PhysicsWorld {
     this.lastShapeCast = null;
     this.lastCcdEvents = [];
     this.lastIslandState = createEmptyIslandState();
+    this.lastContactEventState = createEmptyContactEventState();
     this.collisionStateDirty = true;
     this.collisionState = createEmptyCollisionState(this.solverIterations);
     this.manifoldCache.clear();
@@ -9242,6 +9650,8 @@ class PhysicsWorld {
         materialId: collider.materialId,
         enabled: collider.enabled,
         isSensor: collider.isSensor,
+        collisionLayer: collider.collisionLayer,
+        collisionMask: collider.collisionMask,
         localPose: collider.localPose,
         userData: collider.userData
       });
@@ -9353,7 +9763,9 @@ class PhysicsWorld {
   createCollider(options = {}) {
     const collider = this.colliderRegistry.createCollider({
       ...options,
-      materialId: this.resolveMaterialId(options.materialId)
+      materialId: this.resolveMaterialId(options.materialId),
+      collisionLayer: normalizeCollisionBits(options.collisionLayer, DEFAULT_COLLISION_LAYER),
+      collisionMask: normalizeCollisionBits(options.collisionMask, DEFAULT_COLLISION_MASK)
     });
 
     if (collider.bodyId) {
@@ -9363,6 +9775,49 @@ class PhysicsWorld {
 
     this.markCollisionStateDirty();
     return collider;
+  }
+
+  configureColliderCollision(colliderId, options = {}) {
+    const collider = this.colliderRegistry.getMutable(colliderId);
+    if (!collider) {
+      return null;
+    }
+
+    if (options.collisionLayer !== undefined) {
+      collider.collisionLayer = normalizeCollisionBits(options.collisionLayer, collider.collisionLayer ?? DEFAULT_COLLISION_LAYER);
+    }
+
+    if (options.collisionMask !== undefined) {
+      collider.collisionMask = normalizeCollisionBits(options.collisionMask, collider.collisionMask ?? DEFAULT_COLLISION_MASK);
+    }
+
+    if (options.isSensor !== undefined) {
+      collider.isSensor = Boolean(options.isSensor);
+    }
+
+    if (options.enabled !== undefined) {
+      collider.enabled = Boolean(options.enabled);
+    }
+
+    if (collider.bodyId) {
+      this.wakeBody(collider.bodyId);
+    }
+
+    this.markCollisionStateDirty();
+    return this.getCollider(collider.id);
+  }
+
+  configureBodyCollision(bodyId, options = {}) {
+    const body = this.bodyRegistry.getMutable(bodyId);
+    if (!body) {
+      return null;
+    }
+
+    for (const colliderId of body.colliderIds) {
+      this.configureColliderCollision(colliderId, options);
+    }
+
+    return this.getBody(body.id);
   }
 
   resolveBodyLocalAnchor(bodyId, options = {}) {
@@ -9819,6 +10274,9 @@ class PhysicsWorld {
       shapeId: shape.id,
       bodyId: body.id,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       userData: options.colliderUserData ?? null
     });
 
@@ -9854,6 +10312,9 @@ class PhysicsWorld {
       shapeId: shape.id,
       bodyId: body.id,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       userData: options.colliderUserData ?? null
     });
 
@@ -9889,6 +10350,9 @@ class PhysicsWorld {
       shapeId: shape.id,
       bodyId: body.id,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       userData: options.colliderUserData ?? null
     });
 
@@ -9923,6 +10387,9 @@ class PhysicsWorld {
       shapeId: shape.id,
       bodyId: body.id,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       userData: options.colliderUserData ?? null
     });
 
@@ -9946,6 +10413,9 @@ class PhysicsWorld {
       shapeId: shape.id,
       bodyId: null,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       localPose: {
         position: options.position ?? createVec3(),
         rotation: options.rotation ?? createIdentityQuat()
@@ -9971,6 +10441,9 @@ class PhysicsWorld {
       shapeId: shape.id,
       bodyId: null,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       localPose: {
         position: options.position ?? createVec3(),
         rotation: options.rotation ?? createIdentityQuat()
@@ -9982,6 +10455,20 @@ class PhysicsWorld {
       shape,
       collider
     };
+  }
+
+  createStaticBoxSensor(options = {}) {
+    return this.createStaticBoxCollider({
+      ...options,
+      isSensor: true
+    });
+  }
+
+  createStaticConvexHullSensor(options = {}) {
+    return this.createStaticConvexHullCollider({
+      ...options,
+      isSensor: true
+    });
   }
 
   createClothSheet(options = {}) {
@@ -10065,7 +10552,7 @@ class PhysicsWorld {
     const colliders = [];
 
     for (const collider of this.colliderRegistry.listMutable()) {
-      if (!collider?.enabled) {
+      if (!collider?.enabled || collider.isSensor) {
         continue;
       }
 
@@ -10102,7 +10589,7 @@ class PhysicsWorld {
     const colliders = [];
 
     for (const collider of this.colliderRegistry.listMutable()) {
-      if (!collider?.enabled || !collider.bodyId) {
+      if (!collider?.enabled || collider.isSensor || !collider.bodyId) {
         continue;
       }
 
@@ -10725,7 +11212,9 @@ class PhysicsWorld {
   }
 
   solveRigidContacts(deltaTime, simulationTick) {
-    const initialResults = this.buildCollisionResults();
+    const initialResults = this.buildCollisionResults({
+      trackEvents: false
+    });
     const manifolds = this.manifoldCache.syncFromContactPairs(initialResults.contactPairs, simulationTick);
     const initialIslandState = this.buildIslandState(manifolds);
     this.wakeBodiesFromIslandInteractions(initialIslandState);
@@ -10750,7 +11239,9 @@ class PhysicsWorld {
     mergeSolverStats(solverStats, jointSolverStats);
 
     this.lastSolverStats = solverStats;
-    const finalResults = this.buildCollisionResults();
+    const finalResults = this.buildCollisionResults({
+      trackEvents: true
+    });
     const finalManifolds = this.manifoldCache.syncFromContactPairs(finalResults.contactPairs, simulationTick);
     const finalIslandState = this.updateSleepingBodies(deltaTime, finalManifolds);
     this.lastIslandState = cloneIslandState(finalIslandState);
@@ -10814,6 +11305,8 @@ class PhysicsWorld {
         shapeType: shape.type,
         motionType: body?.motionType ?? 'static',
         isSensor: mutableCollider.isSensor,
+        collisionLayer: mutableCollider.collisionLayer,
+        collisionMask: mutableCollider.collisionMask,
         aabb
       }));
     });
@@ -10876,18 +11369,55 @@ class PhysicsWorld {
     return suppressedPairs;
   }
 
-  buildCollisionResults() {
+  shouldCollidersInteract(leftProxy, rightProxy) {
+    if (!leftProxy || !rightProxy) {
+      return false;
+    }
+
+    return shouldCollisionLayersInteract(
+      leftProxy.collisionLayer,
+      leftProxy.collisionMask,
+      rightProxy.collisionLayer,
+      rightProxy.collisionMask
+    );
+  }
+
+  buildContactEventState(contactPairs, sensorPairs) {
+    const previousState = this.lastContactEventState ?? createEmptyContactEventState();
+    const contactState = buildPairEventState(contactPairs, previousState.contactPairsByKey, 'contact');
+    const triggerState = buildPairEventState(sensorPairs, previousState.triggerPairsByKey, 'trigger');
+    const nextState = {
+      contactPairsByKey: contactState.nextPairsByKey,
+      triggerPairsByKey: triggerState.nextPairsByKey,
+      contactEvents: contactState.events,
+      triggerEvents: triggerState.events
+    };
+
+    this.lastContactEventState = cloneContactEventState(nextState);
+    return nextState;
+  }
+
+  buildCollisionResults(options = {}) {
+    const trackEvents = options.trackEvents !== false;
     const broadphaseProxies = this.buildBroadphaseProxies();
+    const broadphaseProxyByColliderId = new Map(broadphaseProxies.map((proxy) => [proxy.colliderId, proxy]));
     const suppressedJointPairs = this.buildNonCollidingJointBodyPairSet();
     const broadphasePairs = buildBroadphasePairs(broadphaseProxies).filter((pair) => {
       const pairKey = createBodyPairKey(pair.bodyAId, pair.bodyBId);
-      return !pairKey || !suppressedJointPairs.has(pairKey);
+      if (pairKey && suppressedJointPairs.has(pairKey)) {
+        return false;
+      }
+
+      return this.shouldCollidersInteract(
+        broadphaseProxyByColliderId.get(pair.colliderAId),
+        broadphaseProxyByColliderId.get(pair.colliderBId)
+      );
     });
     const narrowphase = runNarrowphase(broadphasePairs, {
       getShape: (shapeId) => this.getShape(shapeId),
       getPose: (colliderId) => this.getColliderWorldPose(colliderId)
     });
-    const contactPairs = this.filterTransientContactPairs(narrowphase.contactPairs.map((contactPair) => {
+    const resolvedContactPairs = narrowphase.contactPairs.map((contactPair) => {
       const materialA = this.getEffectiveMaterialForCollider(contactPair.colliderAId);
       const materialB = this.getEffectiveMaterialForCollider(contactPair.colliderBId);
       const materialProperties = combineMaterialProperties(materialA, materialB);
@@ -10896,12 +11426,39 @@ class PhysicsWorld {
         ...contactPair,
         ...materialProperties
       });
-    }));
+    });
+    const sensorPairs = [];
+    const solidPairs = [];
+
+    for (const contactPair of resolvedContactPairs) {
+      const proxyA = broadphaseProxyByColliderId.get(contactPair.colliderAId);
+      const proxyB = broadphaseProxyByColliderId.get(contactPair.colliderBId);
+      if (proxyA?.isSensor || proxyB?.isSensor) {
+        sensorPairs.push(cloneContactPair({
+          ...contactPair,
+          status: 'sensor-overlap'
+        }));
+        continue;
+      }
+
+      solidPairs.push(contactPair);
+    }
+
+    const contactPairs = this.filterTransientContactPairs(solidPairs);
+    const eventState = trackEvents
+      ? this.buildContactEventState(contactPairs, sensorPairs)
+      : {
+        contactEvents: [],
+        triggerEvents: []
+      };
 
     return {
       broadphaseProxies,
       broadphasePairs,
       contactPairs,
+      sensorPairs,
+      contactEvents: eventState.contactEvents,
+      triggerEvents: eventState.triggerEvents,
       unsupportedPairCount: narrowphase.summary.unsupportedPairCount,
       algorithms: contactPairs.reduce((counts, contactPair) => {
         counts[contactPair.algorithm] = (counts[contactPair.algorithm] ?? 0) + 1;
@@ -10914,23 +11471,35 @@ class PhysicsWorld {
   commitCollisionState(results, manifolds, solverStats, islandState = this.lastIslandState) {
     const resolvedIslandState = cloneIslandState(islandState);
     const joints = this.jointRegistry.list();
+    const contactEvents = Array.isArray(results.contactEvents) ? results.contactEvents : [];
+    const triggerEvents = Array.isArray(results.triggerEvents) ? results.triggerEvents : [];
     this.collisionState = {
       broadphaseProxies: results.broadphaseProxies,
       broadphasePairs: results.broadphasePairs,
       contactPairs: results.contactPairs,
+      sensorPairs: Array.isArray(results.sensorPairs) ? results.sensorPairs.map((pair) => cloneContactPair(pair)) : [],
       manifolds: Array.isArray(manifolds) ? manifolds.map((manifold) => cloneManifold(manifold)) : [],
       islands: resolvedIslandState.islands,
       joints,
+      contactEvents: contactEvents.map((event) => cloneContactEvent(event)),
+      triggerEvents: triggerEvents.map((event) => cloneContactEvent(event)),
       solverStats: cloneSolverStats(solverStats ?? this.lastSolverStats),
       summary: {
         proxyCount: results.broadphaseProxies.length,
         pairCount: results.broadphasePairs.length,
         contactCount: results.contactPairs.length,
+        sensorPairCount: Array.isArray(results.sensorPairs) ? results.sensorPairs.length : 0,
         manifoldCount: Array.isArray(manifolds) ? manifolds.length : 0,
         jointCount: joints.length,
         islandCount: resolvedIslandState.islandCount,
         sleepingBodyCount: resolvedIslandState.sleepingBodyCount,
         awakeBodyCount: resolvedIslandState.awakeBodyCount,
+        contactEnterCount: contactEvents.filter((event) => event.phase === 'enter').length,
+        contactStayCount: contactEvents.filter((event) => event.phase === 'stay').length,
+        contactExitCount: contactEvents.filter((event) => event.phase === 'exit').length,
+        triggerEnterCount: triggerEvents.filter((event) => event.phase === 'enter').length,
+        triggerStayCount: triggerEvents.filter((event) => event.phase === 'stay').length,
+        triggerExitCount: triggerEvents.filter((event) => event.phase === 'exit').length,
         unsupportedPairCount: results.unsupportedPairCount,
         pairKinds: { ...results.pairKinds },
         algorithms: { ...results.algorithms }
@@ -10940,7 +11509,9 @@ class PhysicsWorld {
 
   ensureCollisionState() {
     if (this.collisionStateDirty) {
-      const results = this.buildCollisionResults();
+      const results = this.buildCollisionResults({
+        trackEvents: true
+      });
       const manifolds = this.manifoldCache.syncFromContactPairs(results.contactPairs, this.simulationTick);
       const islandState = this.buildIslandState(manifolds);
       this.lastIslandState = cloneIslandState(islandState);
@@ -11089,6 +11660,118 @@ class PhysicsWorld {
     return {
       colliderId: resolvedColliderId,
       pairs,
+      colliders: Array.from(touchedColliderIds)
+        .map((otherColliderId) => this.getCollider(otherColliderId))
+        .filter(Boolean),
+      count: touchedColliderIds.size
+    };
+  }
+
+  getContactEvents(phase = null) {
+    const resolvedPhase = phase ? String(phase).trim().toLowerCase() : null;
+    const events = Array.isArray(this.ensureCollisionState().contactEvents)
+      ? this.ensureCollisionState().contactEvents
+      : [];
+    return events
+      .filter((event) => !resolvedPhase || event.phase === resolvedPhase)
+      .map((event) => cloneContactEvent(event));
+  }
+
+  getTriggerEvents(phase = null) {
+    const resolvedPhase = phase ? String(phase).trim().toLowerCase() : null;
+    const events = Array.isArray(this.ensureCollisionState().triggerEvents)
+      ? this.ensureCollisionState().triggerEvents
+      : [];
+    return events
+      .filter((event) => !resolvedPhase || event.phase === resolvedPhase)
+      .map((event) => cloneContactEvent(event));
+  }
+
+  getBodyContactEvents(bodyId, phase = null) {
+    const resolvedBodyId = String(bodyId ?? '').trim();
+    const events = this.getContactEvents(phase).filter((event) => event.bodyAId === resolvedBodyId || event.bodyBId === resolvedBodyId);
+    const touchedBodyIds = new Set();
+
+    for (const event of events) {
+      const otherBodyId = event.bodyAId === resolvedBodyId ? event.bodyBId : event.bodyAId;
+      if (otherBodyId) {
+        touchedBodyIds.add(otherBodyId);
+      }
+    }
+
+    return {
+      bodyId: resolvedBodyId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
+      bodies: Array.from(touchedBodyIds)
+        .map((otherBodyId) => this.getBody(otherBodyId))
+        .filter(Boolean),
+      count: touchedBodyIds.size
+    };
+  }
+
+  getBodyTriggerEvents(bodyId, phase = null) {
+    const resolvedBodyId = String(bodyId ?? '').trim();
+    const events = this.getTriggerEvents(phase).filter((event) => event.bodyAId === resolvedBodyId || event.bodyBId === resolvedBodyId);
+    const touchedBodyIds = new Set();
+
+    for (const event of events) {
+      const otherBodyId = event.bodyAId === resolvedBodyId ? event.bodyBId : event.bodyAId;
+      if (otherBodyId) {
+        touchedBodyIds.add(otherBodyId);
+      }
+    }
+
+    return {
+      bodyId: resolvedBodyId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
+      bodies: Array.from(touchedBodyIds)
+        .map((otherBodyId) => this.getBody(otherBodyId))
+        .filter(Boolean),
+      count: touchedBodyIds.size
+    };
+  }
+
+  getColliderContactEvents(colliderId, phase = null) {
+    const resolvedColliderId = String(colliderId ?? '').trim();
+    const events = this.getContactEvents(phase).filter((event) => event.colliderAId === resolvedColliderId || event.colliderBId === resolvedColliderId);
+    const touchedColliderIds = new Set();
+
+    for (const event of events) {
+      const otherColliderId = event.colliderAId === resolvedColliderId ? event.colliderBId : event.colliderAId;
+      if (otherColliderId) {
+        touchedColliderIds.add(otherColliderId);
+      }
+    }
+
+    return {
+      colliderId: resolvedColliderId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
+      colliders: Array.from(touchedColliderIds)
+        .map((otherColliderId) => this.getCollider(otherColliderId))
+        .filter(Boolean),
+      count: touchedColliderIds.size
+    };
+  }
+
+  getColliderTriggerEvents(colliderId, phase = null) {
+    const resolvedColliderId = String(colliderId ?? '').trim();
+    const events = this.getTriggerEvents(phase).filter((event) => event.colliderAId === resolvedColliderId || event.colliderBId === resolvedColliderId);
+    const touchedColliderIds = new Set();
+
+    for (const event of events) {
+      const otherColliderId = event.colliderAId === resolvedColliderId ? event.colliderBId : event.colliderAId;
+      if (otherColliderId) {
+        touchedColliderIds.add(otherColliderId);
+      }
+    }
+
+    return {
+      colliderId: resolvedColliderId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
       colliders: Array.from(touchedColliderIds)
         .map((otherColliderId) => this.getCollider(otherColliderId))
         .filter(Boolean),
@@ -11408,12 +12091,21 @@ class PhysicsWorld {
         bodyId: proxy.bodyId,
         colliderId: proxy.colliderId,
         shapeId: shape.id,
-        materialId: collider.materialId
+        materialId: collider.materialId,
+        collisionLayer: collider.collisionLayer,
+        collisionMask: collider.collisionMask,
+        isSensor: collider.isSensor
       };
-      const wireColor = body
-        ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
-        : DEFAULT_DEBUG_COLORS.staticColliderWireframe;
-      const wireCategory = body ? 'rigid-body' : 'static-collider';
+      const wireColor = collider.isSensor
+        ? DEFAULT_DEBUG_COLORS.sensorColliderWireframe
+        : body
+          ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
+          : DEFAULT_DEBUG_COLORS.staticColliderWireframe;
+      const wireCategory = collider.isSensor
+        ? 'sensor-collider'
+        : body
+          ? 'rigid-body'
+          : 'static-collider';
 
       if (shape.type === 'convex-hull') {
         primitives.push(...buildConvexHullDebugLines(shape, pose, wireColor, source, wireCategory));
@@ -11438,9 +12130,13 @@ class PhysicsWorld {
       primitives.push(
         createDebugPoint({
           id: `${proxy.colliderId}:center-of-mass`,
-          category: body ? 'center-of-mass' : 'collider-origin',
+          category: collider.isSensor
+            ? 'sensor-origin'
+            : body
+              ? 'center-of-mass'
+              : 'collider-origin',
           position: body?.position ?? pose.position,
-          color: DEFAULT_DEBUG_COLORS.rigidBodyCenter,
+          color: collider.isSensor ? DEFAULT_DEBUG_COLORS.sensorOrigin : DEFAULT_DEBUG_COLORS.rigidBodyCenter,
           size: 4,
           source
         })
@@ -11598,6 +12294,41 @@ class PhysicsWorld {
             start: contact.position,
             end: addScaledVec3(contact.position, manifold.normal, Math.max(10, contact.penetration * 20)),
             color: DEFAULT_DEBUG_COLORS.contactNormal,
+            source
+          })
+        );
+      }
+    }
+
+    for (const sensorPair of Array.isArray(collisionState.sensorPairs) ? collisionState.sensorPairs : []) {
+      for (const contact of sensorPair.contacts) {
+        const source = {
+          pairKey: sensorPair.pairKey,
+          colliderAId: sensorPair.colliderAId,
+          colliderBId: sensorPair.colliderBId,
+          bodyAId: sensorPair.bodyAId,
+          bodyBId: sensorPair.bodyBId,
+          isSensorPair: true
+        };
+
+        primitives.push(
+          createDebugPoint({
+            id: `${contact.id}:trigger-point`,
+            category: 'trigger-contact-point',
+            position: contact.position,
+            color: DEFAULT_DEBUG_COLORS.triggerContactPoint,
+            size: 5,
+            source
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${contact.id}:trigger-normal`,
+            category: 'trigger-contact-normal',
+            start: contact.position,
+            end: addScaledVec3(contact.position, sensorPair.normal, Math.max(10, Number(contact.penetration ?? sensorPair.penetration ?? 0) * 20)),
+            color: DEFAULT_DEBUG_COLORS.triggerContactNormal,
             source
           })
         );
@@ -11775,10 +12506,17 @@ class PhysicsWorld {
         broadphaseProxyCount: collisionState.summary.proxyCount,
         broadphasePairCount: collisionState.summary.pairCount,
         contactPairCount: collisionState.summary.contactCount,
+        sensorPairCount: collisionState.summary.sensorPairCount,
         manifoldCount: collisionState.summary.manifoldCount,
         islandCount: collisionState.summary.islandCount,
         sleepingBodyCount: collisionState.summary.sleepingBodyCount,
         awakeBodyCount: collisionState.summary.awakeBodyCount,
+        contactEnterCount: collisionState.summary.contactEnterCount,
+        contactStayCount: collisionState.summary.contactStayCount,
+        contactExitCount: collisionState.summary.contactExitCount,
+        triggerEnterCount: collisionState.summary.triggerEnterCount,
+        triggerStayCount: collisionState.summary.triggerStayCount,
+        triggerExitCount: collisionState.summary.triggerExitCount,
         solverIterations: collisionState.solverStats.iterations,
         solvedContactCount: collisionState.solverStats.solvedContactCount,
         solvedTangentContactCount: collisionState.solverStats.solvedTangentContactCount,
@@ -12045,6 +12783,15 @@ function createLocalPose(localPose) {
     rotation: cloneQuat(localPose?.rotation ?? createIdentityQuat())
   };
 }
+
+function normalizeCollisionBits(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(0x7fffffff, Math.trunc(parsed)));
+}
 class ColliderRegistry extends BaseRegistry {
   constructor() {
     super('collider');
@@ -12059,6 +12806,8 @@ class ColliderRegistry extends BaseRegistry {
       materialId: collider.materialId,
       enabled: collider.enabled,
       isSensor: collider.isSensor,
+      collisionLayer: collider.collisionLayer,
+      collisionMask: collider.collisionMask,
       localPose: createLocalPose(collider.localPose),
       userData: collider.userData ?? null
     };
@@ -12073,6 +12822,8 @@ class ColliderRegistry extends BaseRegistry {
       materialId: String(options.materialId ?? '').trim() || null,
       enabled: options.enabled !== false,
       isSensor: Boolean(options.isSensor),
+      collisionLayer: normalizeCollisionBits(options.collisionLayer, 1),
+      collisionMask: normalizeCollisionBits(options.collisionMask, 0x7fffffff),
       localPose: createLocalPose(options.localPose),
       userData: options.userData ?? null
     });
@@ -12945,6 +13696,66 @@ __exports.getDefaultClothPresetId = getDefaultClothPresetId;
 __exports.resolveClothPreset = resolveClothPreset;
 },
   31: function(__require, __exports) {
+const SOFT_BODY_PRESET_LIBRARY = Object.freeze({
+  jelly: Object.freeze({
+    id: 'jelly',
+    label: 'jelly',
+    damping: 0.02,
+    collisionMargin: 2.5,
+    stretchCompliance: 0.008,
+    shearCompliance: 0.015,
+    bendCompliance: 0.035,
+    volumeCompliance: 0.006
+  }),
+  foam: Object.freeze({
+    id: 'foam',
+    label: 'foam',
+    damping: 0.035,
+    collisionMargin: 2.5,
+    stretchCompliance: 0.002,
+    shearCompliance: 0.004,
+    bendCompliance: 0.01,
+    volumeCompliance: 0.001
+  }),
+  'firm-rubber': Object.freeze({
+    id: 'firm-rubber',
+    label: 'firm rubber',
+    damping: 0.045,
+    collisionMargin: 3,
+    stretchCompliance: 0.0006,
+    shearCompliance: 0.0012,
+    bendCompliance: 0.003,
+    volumeCompliance: 0.0003
+  })
+});
+
+const DEFAULT_SOFT_BODY_PRESET_ID = 'foam';
+
+function clonePreset(preset) {
+  return {
+    ...preset
+  };
+}
+
+function normalizeSoftBodyPresetId(value) {
+  const presetId = String(value ?? '').trim().toLowerCase();
+  return SOFT_BODY_PRESET_LIBRARY[presetId] ? presetId : DEFAULT_SOFT_BODY_PRESET_ID;
+}
+function getSoftBodyPresetIds() {
+  return Object.keys(SOFT_BODY_PRESET_LIBRARY);
+}
+function getDefaultSoftBodyPresetId() {
+  return DEFAULT_SOFT_BODY_PRESET_ID;
+}
+function resolveSoftBodyPreset(presetId) {
+  return clonePreset(SOFT_BODY_PRESET_LIBRARY[normalizeSoftBodyPresetId(presetId)]);
+}
+
+__exports.getSoftBodyPresetIds = getSoftBodyPresetIds;
+__exports.getDefaultSoftBodyPresetId = getDefaultSoftBodyPresetId;
+__exports.resolveSoftBodyPreset = resolveSoftBodyPreset;
+},
+  32: function(__require, __exports) {
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -12958,7 +13769,7 @@ function toString(value, fallback = '') {
 __exports.toNumber = toNumber;
 __exports.toString = toString;
 },
-  32: function(__require, __exports) {
+  33: function(__require, __exports) {
 const { getConvexHullPresetIds, getDefaultConvexHullPresetId } = __require(29);
 const EXTENSION_ID = 'engine3d';
 const GANDI_EXTENSION_METADATA = {
@@ -13089,6 +13900,20 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createStaticBoxSensor',
+        blockType: 'command',
+        text: 'create static box sensor [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'sensor-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 },
+          LAYER: { type: 'number', defaultValue: 2 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
+        }
+      },
+      {
         opcode: 'createStaticConvexHullCollider',
         blockType: 'command',
         text: 'create static convex hull collider [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] material:[MATERIAL]',
@@ -13099,6 +13924,20 @@ function createExtensionInfo() {
           Y: { type: 'number', defaultValue: -100 },
           Z: { type: 'number', defaultValue: 0 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createStaticConvexHullSensor',
+        blockType: 'command',
+        text: 'create static convex hull sensor [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'sensor-hull-1' },
+          VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          LAYER: { type: 'number', defaultValue: 2 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
         }
       },
       {
@@ -13113,6 +13952,21 @@ function createExtensionInfo() {
           Z: { type: 'number', defaultValue: 0 },
           SCALE: { type: 'number', defaultValue: 100 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createPresetStaticConvexHullSensor',
+        blockType: 'command',
+        text: 'create preset static convex hull sensor [ID] preset [PRESET] at x:[X] y:[Y] z:[Z] scale:[SCALE] layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'preset-sensor-1' },
+          PRESET: { type: 'string', menu: 'CONVEX_HULL_PRESETS', defaultValue: getDefaultConvexHullPresetId() },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SCALE: { type: 'number', defaultValue: 100 },
+          LAYER: { type: 'number', defaultValue: 2 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
         }
       },
       {
@@ -13182,6 +14036,51 @@ function createExtensionInfo() {
           SHEAR: { type: 'number', defaultValue: 0.0002 },
           BEND: { type: 'number', defaultValue: 0.0008 },
           VOLUME: { type: 'number', defaultValue: 0.00008 }
+        }
+      },
+      {
+        opcode: 'configureSoftBodyJellyPreset',
+        blockType: 'command',
+        text: 'configure soft body [ID] as jelly',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' }
+        }
+      },
+      {
+        opcode: 'configureSoftBodyFoamPreset',
+        blockType: 'command',
+        text: 'configure soft body [ID] as foam',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' }
+        }
+      },
+      {
+        opcode: 'configureSoftBodyFirmRubberPreset',
+        blockType: 'command',
+        text: 'configure soft body [ID] as firm rubber',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' }
+        }
+      },
+      {
+        opcode: 'configureBodyCollision',
+        blockType: 'command',
+        text: 'configure rigid body [ID] collision layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1' },
+          LAYER: { type: 'number', defaultValue: 1 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
+        }
+      },
+      {
+        opcode: 'configureColliderCollision',
+        blockType: 'command',
+        text: 'configure collider [ID] layer:[LAYER] mask:[MASK] sensor [SENSOR]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1:collider' },
+          LAYER: { type: 'number', defaultValue: 1 },
+          MASK: { type: 'number', defaultValue: 2147483647 },
+          SENSOR: { type: 'string', menu: 'ON_OFF', defaultValue: 'off' }
         }
       },
       {
@@ -13525,6 +14424,42 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'queryBodyContactEvents',
+        blockType: 'reporter',
+        text: 'bodies in [PHASE] contact events for body [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'queryBodyTriggerEvents',
+        blockType: 'reporter',
+        text: 'bodies in [PHASE] trigger events for body [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'queryColliderContactEvents',
+        blockType: 'reporter',
+        text: 'colliders in [PHASE] contact events for collider [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'body-1:collider' }
+        }
+      },
+      {
+        opcode: 'queryColliderTriggerEvents',
+        blockType: 'reporter',
+        text: 'colliders in [PHASE] trigger events for collider [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'body-1:collider' }
+        }
+      },
+      {
         opcode: 'raycastSummary',
         blockType: 'reporter',
         text: 'last raycast summary'
@@ -13553,6 +14488,16 @@ function createExtensionInfo() {
         opcode: 'sceneIoSummary',
         blockType: 'reporter',
         text: 'scene io summary'
+      },
+      {
+        opcode: 'contactEventsSummary',
+        blockType: 'reporter',
+        text: 'contact events summary'
+      },
+      {
+        opcode: 'triggerEventsSummary',
+        blockType: 'reporter',
+        text: 'trigger events summary'
       },
       {
         opcode: 'hostSummary',
@@ -13607,6 +14552,10 @@ function createExtensionInfo() {
       ON_OFF: {
         acceptReporters: true,
         items: ['off', 'on']
+      },
+      EVENT_PHASES: {
+        acceptReporters: true,
+        items: ['enter', 'stay', 'exit']
       }
     }
   };
@@ -13617,8 +14566,8 @@ __exports.EXTENSION_ID = EXTENSION_ID;
 __exports.GANDI_EXTENSION_METADATA = GANDI_EXTENSION_METADATA;
 __exports.GANDI_L10N = GANDI_L10N;
 },
-  33: function(__require, __exports) {
-const { createDebugOverlay } = __require(34);
+  34: function(__require, __exports) {
+const { createDebugOverlay } = __require(35);
 function createHost(displayName, runtime, renderer, sandbox) {
   const overlay = createDebugOverlay(displayName);
 
@@ -13669,7 +14618,7 @@ function createGandiRemoteHost() {
 __exports.createGandiApprovedHost = createGandiApprovedHost;
 __exports.createGandiRemoteHost = createGandiRemoteHost;
 },
-  34: function(__require, __exports) {
+  35: function(__require, __exports) {
 const { createIdentityQuat, createQuatFromAxisAngle, multiplyQuat, normalizeQuat, rotateVec3ByQuat } = __require(5);
 const { addVec3, createVec3, crossVec3, dotVec3, normalizeVec3, subtractVec3 } = __require(6);
 const LAYER_GROUPS = {
@@ -13705,6 +14654,8 @@ const LAYER_GROUPS = {
   'soft-bend': new Set(['soft-body-bend-edge']),
   'soft-pins': new Set(['soft-body-pin', 'soft-body-particle']),
   'soft-contacts': new Set(['soft-body-contact-point', 'soft-body-contact-normal']),
+  sensors: new Set(['sensor-collider', 'sensor-origin']),
+  triggers: new Set(['trigger-contact-point', 'trigger-contact-normal']),
   static: new Set(['static-collider', 'collider-origin']),
   aabb: new Set(['broadphase-aabb']),
   contacts: new Set(['contact-point', 'contact-normal']),
@@ -13759,6 +14710,10 @@ const LAYER_ALIASES = {
   'soft-bend': 'soft-bend',
   'soft-pins': 'soft-pins',
   'soft-contacts': 'soft-contacts',
+  sensor: 'sensors',
+  sensors: 'sensors',
+  trigger: 'triggers',
+  triggers: 'triggers',
   statics: 'static',
   bounds: 'aabb',
   boxes: 'aabb',

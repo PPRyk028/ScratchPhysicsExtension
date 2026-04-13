@@ -132,6 +132,20 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createStaticBoxSensor',
+        blockType: 'command',
+        text: 'create static box sensor [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'sensor-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 },
+          LAYER: { type: 'number', defaultValue: 2 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
+        }
+      },
+      {
         opcode: 'createStaticConvexHullCollider',
         blockType: 'command',
         text: 'create static convex hull collider [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] material:[MATERIAL]',
@@ -142,6 +156,20 @@ export function createExtensionInfo() {
           Y: { type: 'number', defaultValue: -100 },
           Z: { type: 'number', defaultValue: 0 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createStaticConvexHullSensor',
+        blockType: 'command',
+        text: 'create static convex hull sensor [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'sensor-hull-1' },
+          VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          LAYER: { type: 'number', defaultValue: 2 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
         }
       },
       {
@@ -156,6 +184,21 @@ export function createExtensionInfo() {
           Z: { type: 'number', defaultValue: 0 },
           SCALE: { type: 'number', defaultValue: 100 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createPresetStaticConvexHullSensor',
+        blockType: 'command',
+        text: 'create preset static convex hull sensor [ID] preset [PRESET] at x:[X] y:[Y] z:[Z] scale:[SCALE] layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'preset-sensor-1' },
+          PRESET: { type: 'string', menu: 'CONVEX_HULL_PRESETS', defaultValue: getDefaultConvexHullPresetId() },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SCALE: { type: 'number', defaultValue: 100 },
+          LAYER: { type: 'number', defaultValue: 2 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
         }
       },
       {
@@ -225,6 +268,51 @@ export function createExtensionInfo() {
           SHEAR: { type: 'number', defaultValue: 0.0002 },
           BEND: { type: 'number', defaultValue: 0.0008 },
           VOLUME: { type: 'number', defaultValue: 0.00008 }
+        }
+      },
+      {
+        opcode: 'configureSoftBodyJellyPreset',
+        blockType: 'command',
+        text: 'configure soft body [ID] as jelly',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' }
+        }
+      },
+      {
+        opcode: 'configureSoftBodyFoamPreset',
+        blockType: 'command',
+        text: 'configure soft body [ID] as foam',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' }
+        }
+      },
+      {
+        opcode: 'configureSoftBodyFirmRubberPreset',
+        blockType: 'command',
+        text: 'configure soft body [ID] as firm rubber',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'soft-1' }
+        }
+      },
+      {
+        opcode: 'configureBodyCollision',
+        blockType: 'command',
+        text: 'configure rigid body [ID] collision layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1' },
+          LAYER: { type: 'number', defaultValue: 1 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
+        }
+      },
+      {
+        opcode: 'configureColliderCollision',
+        blockType: 'command',
+        text: 'configure collider [ID] layer:[LAYER] mask:[MASK] sensor [SENSOR]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'body-1:collider' },
+          LAYER: { type: 'number', defaultValue: 1 },
+          MASK: { type: 'number', defaultValue: 2147483647 },
+          SENSOR: { type: 'string', menu: 'ON_OFF', defaultValue: 'off' }
         }
       },
       {
@@ -568,6 +656,42 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'queryBodyContactEvents',
+        blockType: 'reporter',
+        text: 'bodies in [PHASE] contact events for body [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'queryBodyTriggerEvents',
+        blockType: 'reporter',
+        text: 'bodies in [PHASE] trigger events for body [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'queryColliderContactEvents',
+        blockType: 'reporter',
+        text: 'colliders in [PHASE] contact events for collider [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'body-1:collider' }
+        }
+      },
+      {
+        opcode: 'queryColliderTriggerEvents',
+        blockType: 'reporter',
+        text: 'colliders in [PHASE] trigger events for collider [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'body-1:collider' }
+        }
+      },
+      {
         opcode: 'raycastSummary',
         blockType: 'reporter',
         text: 'last raycast summary'
@@ -596,6 +720,16 @@ export function createExtensionInfo() {
         opcode: 'sceneIoSummary',
         blockType: 'reporter',
         text: 'scene io summary'
+      },
+      {
+        opcode: 'contactEventsSummary',
+        blockType: 'reporter',
+        text: 'contact events summary'
+      },
+      {
+        opcode: 'triggerEventsSummary',
+        blockType: 'reporter',
+        text: 'trigger events summary'
       },
       {
         opcode: 'hostSummary',
@@ -650,6 +784,10 @@ export function createExtensionInfo() {
       ON_OFF: {
         acceptReporters: true,
         items: ['off', 'on']
+      },
+      EVENT_PHASES: {
+        acceptReporters: true,
+        items: ['enter', 'stay', 'exit']
       }
     }
   };

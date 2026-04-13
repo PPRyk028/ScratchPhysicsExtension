@@ -113,6 +113,8 @@ export function createBroadphaseProxy(options = {}) {
     isDynamic: motionType === 'dynamic',
     isKinematic: motionType === 'kinematic',
     isSensor: Boolean(options.isSensor),
+    collisionLayer: Number(options.collisionLayer ?? 1),
+    collisionMask: Number(options.collisionMask ?? 0x7fffffff),
     aabb: cloneAabb(options.aabb)
   };
 }
@@ -158,10 +160,6 @@ export function shouldGenerateBroadphasePair(left, right) {
   }
 
   if (!left.colliderId || !right.colliderId || left.colliderId === right.colliderId) {
-    return false;
-  }
-
-  if (left.isSensor || right.isSensor) {
     return false;
   }
 

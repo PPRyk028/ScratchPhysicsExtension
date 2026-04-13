@@ -9,6 +9,15 @@ function createLocalPose(localPose) {
   };
 }
 
+function normalizeCollisionBits(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(0x7fffffff, Math.trunc(parsed)));
+}
+
 export class ColliderRegistry extends BaseRegistry {
   constructor() {
     super('collider');
@@ -23,6 +32,8 @@ export class ColliderRegistry extends BaseRegistry {
       materialId: collider.materialId,
       enabled: collider.enabled,
       isSensor: collider.isSensor,
+      collisionLayer: collider.collisionLayer,
+      collisionMask: collider.collisionMask,
       localPose: createLocalPose(collider.localPose),
       userData: collider.userData ?? null
     };
@@ -37,6 +48,8 @@ export class ColliderRegistry extends BaseRegistry {
       materialId: String(options.materialId ?? '').trim() || null,
       enabled: options.enabled !== false,
       isSensor: Boolean(options.isSensor),
+      collisionLayer: normalizeCollisionBits(options.collisionLayer, 1),
+      collisionMask: normalizeCollisionBits(options.collisionMask, 0x7fffffff),
       localPose: createLocalPose(options.localPose),
       userData: options.userData ?? null
     });

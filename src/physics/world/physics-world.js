@@ -18,6 +18,8 @@ import { MaterialRegistry } from './material-registry.js';
 import { ShapeRegistry } from './shape-registry.js';
 
 const DEFAULT_MATERIAL_ID = 'material-default';
+const DEFAULT_COLLISION_LAYER = 1;
+const DEFAULT_COLLISION_MASK = 0x7fffffff;
 
 function toPositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -41,6 +43,24 @@ function toOptionalNumber(value, fallback = null) {
 function toOptionalNonNegativeNumber(value, fallback = null) {
   const parsed = toOptionalNumber(value, fallback);
   return parsed !== null && parsed >= 0 ? parsed : fallback;
+}
+
+function normalizeCollisionBits(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(DEFAULT_COLLISION_MASK, Math.trunc(parsed)));
+}
+
+function shouldCollisionLayersInteract(layerA, maskA, layerB, maskB) {
+  const resolvedLayerA = normalizeCollisionBits(layerA, DEFAULT_COLLISION_LAYER);
+  const resolvedMaskA = normalizeCollisionBits(maskA, DEFAULT_COLLISION_MASK);
+  const resolvedLayerB = normalizeCollisionBits(layerB, DEFAULT_COLLISION_LAYER);
+  const resolvedMaskB = normalizeCollisionBits(maskB, DEFAULT_COLLISION_MASK);
+
+  return (resolvedMaskA & resolvedLayerB) !== 0 && (resolvedMaskB & resolvedLayerA) !== 0;
 }
 
 function normalizeDistanceLimits(minDistance, maxDistance) {
@@ -280,24 +300,124 @@ function cloneSolverStats(solverStats) {
   };
 }
 
+function createContactEvent(options = {}) {
+  return {
+    id: String(options.id ?? `${options.eventType ?? 'contact'}:${options.phase ?? 'stay'}:${options.pairKey ?? 'pair'}`).trim(),
+    eventType: String(options.eventType ?? 'contact').trim() || 'contact',
+    phase: String(options.phase ?? 'stay').trim() || 'stay',
+    pairKey: String(options.pairKey ?? '').trim() || null,
+    pairKind: String(options.pairKind ?? '').trim() || 'dynamic-dynamic',
+    colliderAId: String(options.colliderAId ?? '').trim() || null,
+    colliderBId: String(options.colliderBId ?? '').trim() || null,
+    bodyAId: String(options.bodyAId ?? '').trim() || null,
+    bodyBId: String(options.bodyBId ?? '').trim() || null,
+    shapeAType: String(options.shapeAType ?? '').trim() || 'unknown',
+    shapeBType: String(options.shapeBType ?? '').trim() || 'unknown',
+    algorithm: String(options.algorithm ?? '').trim() || 'unknown',
+    isSensorPair: options.isSensorPair === true,
+    contactCount: Number(options.contactCount ?? 0),
+    penetration: Number(options.penetration ?? 0),
+    normal: cloneVec3(options.normal ?? createVec3()),
+    contacts: Array.isArray(options.contacts)
+      ? options.contacts.map((contact) => ({
+        id: String(contact.id ?? '').trim() || null,
+        featureId: String(contact.featureId ?? '').trim() || null,
+        position: cloneVec3(contact.position ?? createVec3()),
+        penetration: Number(contact.penetration ?? 0),
+        separation: Number(contact.separation ?? 0)
+      }))
+      : []
+  };
+}
+
+function cloneContactEvent(contactEvent) {
+  return createContactEvent(contactEvent);
+}
+
+function createEmptyContactEventState() {
+  return {
+    contactPairsByKey: new Map(),
+    triggerPairsByKey: new Map(),
+    contactEvents: [],
+    triggerEvents: []
+  };
+}
+
+function cloneContactEventState(contactEventState) {
+  return {
+    contactPairsByKey: new Map(Array.from(contactEventState.contactPairsByKey.entries(), ([pairKey, pair]) => [pairKey, cloneContactPair(pair)])),
+    triggerPairsByKey: new Map(Array.from(contactEventState.triggerPairsByKey.entries(), ([pairKey, pair]) => [pairKey, cloneContactPair(pair)])),
+    contactEvents: Array.isArray(contactEventState.contactEvents)
+      ? contactEventState.contactEvents.map((event) => cloneContactEvent(event))
+      : [],
+    triggerEvents: Array.isArray(contactEventState.triggerEvents)
+      ? contactEventState.triggerEvents.map((event) => cloneContactEvent(event))
+      : []
+  };
+}
+
+function buildPairEventState(currentPairs, previousPairsByKey, eventType) {
+  const nextPairsByKey = new Map();
+  const events = [];
+
+  for (const pair of Array.isArray(currentPairs) ? currentPairs : []) {
+    nextPairsByKey.set(pair.pairKey, cloneContactPair(pair));
+    const phase = previousPairsByKey.has(pair.pairKey) ? 'stay' : 'enter';
+    events.push(createContactEvent({
+      ...pair,
+      eventType,
+      phase,
+      isSensorPair: eventType === 'trigger'
+    }));
+  }
+
+  for (const [pairKey, previousPair] of previousPairsByKey.entries()) {
+    if (nextPairsByKey.has(pairKey)) {
+      continue;
+    }
+
+    events.push(createContactEvent({
+      ...previousPair,
+      eventType,
+      phase: 'exit',
+      isSensorPair: eventType === 'trigger'
+    }));
+  }
+
+  return {
+    nextPairsByKey,
+    events
+  };
+}
+
 function createEmptyCollisionState(iterations = 0) {
   return {
     broadphaseProxies: [],
     broadphasePairs: [],
     contactPairs: [],
+    sensorPairs: [],
     manifolds: [],
     islands: [],
     joints: [],
+    contactEvents: [],
+    triggerEvents: [],
     solverStats: createEmptySolverStats(iterations),
     summary: {
       proxyCount: 0,
       pairCount: 0,
       contactCount: 0,
+      sensorPairCount: 0,
       manifoldCount: 0,
       jointCount: 0,
       islandCount: 0,
       sleepingBodyCount: 0,
       awakeBodyCount: 0,
+      contactEnterCount: 0,
+      contactStayCount: 0,
+      contactExitCount: 0,
+      triggerEnterCount: 0,
+      triggerStayCount: 0,
+      triggerExitCount: 0,
       unsupportedPairCount: 0,
       pairKinds: {},
       algorithms: {}
@@ -310,11 +430,18 @@ function cloneCollisionSummary(summary) {
     proxyCount: summary.proxyCount,
     pairCount: summary.pairCount,
     contactCount: summary.contactCount,
+    sensorPairCount: Number(summary.sensorPairCount ?? 0),
     manifoldCount: summary.manifoldCount,
     jointCount: Number(summary.jointCount ?? 0),
     islandCount: summary.islandCount,
     sleepingBodyCount: summary.sleepingBodyCount,
     awakeBodyCount: summary.awakeBodyCount,
+    contactEnterCount: Number(summary.contactEnterCount ?? 0),
+    contactStayCount: Number(summary.contactStayCount ?? 0),
+    contactExitCount: Number(summary.contactExitCount ?? 0),
+    triggerEnterCount: Number(summary.triggerEnterCount ?? 0),
+    triggerStayCount: Number(summary.triggerStayCount ?? 0),
+    triggerExitCount: Number(summary.triggerExitCount ?? 0),
     unsupportedPairCount: summary.unsupportedPairCount,
     pairKinds: { ...summary.pairKinds },
     algorithms: { ...summary.algorithms }
@@ -326,6 +453,9 @@ function cloneCollisionState(collisionState) {
     broadphaseProxies: collisionState.broadphaseProxies.map((proxy) => cloneBroadphaseProxy(proxy)),
     broadphasePairs: collisionState.broadphasePairs.map((pair) => cloneBroadphasePair(pair)),
     contactPairs: collisionState.contactPairs.map((contactPair) => cloneContactPair(contactPair)),
+    sensorPairs: Array.isArray(collisionState.sensorPairs)
+      ? collisionState.sensorPairs.map((contactPair) => cloneContactPair(contactPair))
+      : [],
     manifolds: collisionState.manifolds.map((manifold) => cloneManifold(manifold)),
     islands: collisionState.islands.map((island) => cloneRigidBodyIsland(island)),
     joints: Array.isArray(collisionState.joints)
@@ -349,6 +479,12 @@ function cloneCollisionState(collisionState) {
         accumulatedAngularImpulse: cloneVec3(joint.accumulatedAngularImpulse ?? createVec3()),
         accumulatedMotorImpulse: Number(joint.accumulatedMotorImpulse ?? 0)
       }))
+          : [],
+    contactEvents: Array.isArray(collisionState.contactEvents)
+      ? collisionState.contactEvents.map((event) => cloneContactEvent(event))
+      : [],
+    triggerEvents: Array.isArray(collisionState.triggerEvents)
+      ? collisionState.triggerEvents.map((event) => cloneContactEvent(event))
       : [],
     solverStats: cloneSolverStats(collisionState.solverStats),
     summary: cloneCollisionSummary(collisionState.summary)
@@ -597,6 +733,7 @@ export class PhysicsWorld {
     this.lastShapeCast = null;
     this.lastCcdEvents = [];
     this.lastIslandState = createEmptyIslandState();
+    this.lastContactEventState = createEmptyContactEventState();
     this.collisionStateDirty = true;
     this.collisionState = createEmptyCollisionState(this.solverIterations);
     this.manifoldCache.clear();
@@ -767,6 +904,8 @@ export class PhysicsWorld {
         materialId: collider.materialId,
         enabled: collider.enabled,
         isSensor: collider.isSensor,
+        collisionLayer: collider.collisionLayer,
+        collisionMask: collider.collisionMask,
         localPose: collider.localPose,
         userData: collider.userData
       });
@@ -878,7 +1017,9 @@ export class PhysicsWorld {
   createCollider(options = {}) {
     const collider = this.colliderRegistry.createCollider({
       ...options,
-      materialId: this.resolveMaterialId(options.materialId)
+      materialId: this.resolveMaterialId(options.materialId),
+      collisionLayer: normalizeCollisionBits(options.collisionLayer, DEFAULT_COLLISION_LAYER),
+      collisionMask: normalizeCollisionBits(options.collisionMask, DEFAULT_COLLISION_MASK)
     });
 
     if (collider.bodyId) {
@@ -888,6 +1029,49 @@ export class PhysicsWorld {
 
     this.markCollisionStateDirty();
     return collider;
+  }
+
+  configureColliderCollision(colliderId, options = {}) {
+    const collider = this.colliderRegistry.getMutable(colliderId);
+    if (!collider) {
+      return null;
+    }
+
+    if (options.collisionLayer !== undefined) {
+      collider.collisionLayer = normalizeCollisionBits(options.collisionLayer, collider.collisionLayer ?? DEFAULT_COLLISION_LAYER);
+    }
+
+    if (options.collisionMask !== undefined) {
+      collider.collisionMask = normalizeCollisionBits(options.collisionMask, collider.collisionMask ?? DEFAULT_COLLISION_MASK);
+    }
+
+    if (options.isSensor !== undefined) {
+      collider.isSensor = Boolean(options.isSensor);
+    }
+
+    if (options.enabled !== undefined) {
+      collider.enabled = Boolean(options.enabled);
+    }
+
+    if (collider.bodyId) {
+      this.wakeBody(collider.bodyId);
+    }
+
+    this.markCollisionStateDirty();
+    return this.getCollider(collider.id);
+  }
+
+  configureBodyCollision(bodyId, options = {}) {
+    const body = this.bodyRegistry.getMutable(bodyId);
+    if (!body) {
+      return null;
+    }
+
+    for (const colliderId of body.colliderIds) {
+      this.configureColliderCollision(colliderId, options);
+    }
+
+    return this.getBody(body.id);
   }
 
   resolveBodyLocalAnchor(bodyId, options = {}) {
@@ -1344,6 +1528,9 @@ export class PhysicsWorld {
       shapeId: shape.id,
       bodyId: body.id,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       userData: options.colliderUserData ?? null
     });
 
@@ -1379,6 +1566,9 @@ export class PhysicsWorld {
       shapeId: shape.id,
       bodyId: body.id,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       userData: options.colliderUserData ?? null
     });
 
@@ -1414,6 +1604,9 @@ export class PhysicsWorld {
       shapeId: shape.id,
       bodyId: body.id,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       userData: options.colliderUserData ?? null
     });
 
@@ -1448,6 +1641,9 @@ export class PhysicsWorld {
       shapeId: shape.id,
       bodyId: body.id,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       userData: options.colliderUserData ?? null
     });
 
@@ -1471,6 +1667,9 @@ export class PhysicsWorld {
       shapeId: shape.id,
       bodyId: null,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       localPose: {
         position: options.position ?? createVec3(),
         rotation: options.rotation ?? createIdentityQuat()
@@ -1496,6 +1695,9 @@ export class PhysicsWorld {
       shapeId: shape.id,
       bodyId: null,
       materialId: options.materialId,
+      isSensor: options.isSensor,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
       localPose: {
         position: options.position ?? createVec3(),
         rotation: options.rotation ?? createIdentityQuat()
@@ -1507,6 +1709,20 @@ export class PhysicsWorld {
       shape,
       collider
     };
+  }
+
+  createStaticBoxSensor(options = {}) {
+    return this.createStaticBoxCollider({
+      ...options,
+      isSensor: true
+    });
+  }
+
+  createStaticConvexHullSensor(options = {}) {
+    return this.createStaticConvexHullCollider({
+      ...options,
+      isSensor: true
+    });
   }
 
   createClothSheet(options = {}) {
@@ -1590,7 +1806,7 @@ export class PhysicsWorld {
     const colliders = [];
 
     for (const collider of this.colliderRegistry.listMutable()) {
-      if (!collider?.enabled) {
+      if (!collider?.enabled || collider.isSensor) {
         continue;
       }
 
@@ -1627,7 +1843,7 @@ export class PhysicsWorld {
     const colliders = [];
 
     for (const collider of this.colliderRegistry.listMutable()) {
-      if (!collider?.enabled || !collider.bodyId) {
+      if (!collider?.enabled || collider.isSensor || !collider.bodyId) {
         continue;
       }
 
@@ -2250,7 +2466,9 @@ export class PhysicsWorld {
   }
 
   solveRigidContacts(deltaTime, simulationTick) {
-    const initialResults = this.buildCollisionResults();
+    const initialResults = this.buildCollisionResults({
+      trackEvents: false
+    });
     const manifolds = this.manifoldCache.syncFromContactPairs(initialResults.contactPairs, simulationTick);
     const initialIslandState = this.buildIslandState(manifolds);
     this.wakeBodiesFromIslandInteractions(initialIslandState);
@@ -2275,7 +2493,9 @@ export class PhysicsWorld {
     mergeSolverStats(solverStats, jointSolverStats);
 
     this.lastSolverStats = solverStats;
-    const finalResults = this.buildCollisionResults();
+    const finalResults = this.buildCollisionResults({
+      trackEvents: true
+    });
     const finalManifolds = this.manifoldCache.syncFromContactPairs(finalResults.contactPairs, simulationTick);
     const finalIslandState = this.updateSleepingBodies(deltaTime, finalManifolds);
     this.lastIslandState = cloneIslandState(finalIslandState);
@@ -2339,6 +2559,8 @@ export class PhysicsWorld {
         shapeType: shape.type,
         motionType: body?.motionType ?? 'static',
         isSensor: mutableCollider.isSensor,
+        collisionLayer: mutableCollider.collisionLayer,
+        collisionMask: mutableCollider.collisionMask,
         aabb
       }));
     });
@@ -2401,18 +2623,55 @@ export class PhysicsWorld {
     return suppressedPairs;
   }
 
-  buildCollisionResults() {
+  shouldCollidersInteract(leftProxy, rightProxy) {
+    if (!leftProxy || !rightProxy) {
+      return false;
+    }
+
+    return shouldCollisionLayersInteract(
+      leftProxy.collisionLayer,
+      leftProxy.collisionMask,
+      rightProxy.collisionLayer,
+      rightProxy.collisionMask
+    );
+  }
+
+  buildContactEventState(contactPairs, sensorPairs) {
+    const previousState = this.lastContactEventState ?? createEmptyContactEventState();
+    const contactState = buildPairEventState(contactPairs, previousState.contactPairsByKey, 'contact');
+    const triggerState = buildPairEventState(sensorPairs, previousState.triggerPairsByKey, 'trigger');
+    const nextState = {
+      contactPairsByKey: contactState.nextPairsByKey,
+      triggerPairsByKey: triggerState.nextPairsByKey,
+      contactEvents: contactState.events,
+      triggerEvents: triggerState.events
+    };
+
+    this.lastContactEventState = cloneContactEventState(nextState);
+    return nextState;
+  }
+
+  buildCollisionResults(options = {}) {
+    const trackEvents = options.trackEvents !== false;
     const broadphaseProxies = this.buildBroadphaseProxies();
+    const broadphaseProxyByColliderId = new Map(broadphaseProxies.map((proxy) => [proxy.colliderId, proxy]));
     const suppressedJointPairs = this.buildNonCollidingJointBodyPairSet();
     const broadphasePairs = buildBroadphasePairs(broadphaseProxies).filter((pair) => {
       const pairKey = createBodyPairKey(pair.bodyAId, pair.bodyBId);
-      return !pairKey || !suppressedJointPairs.has(pairKey);
+      if (pairKey && suppressedJointPairs.has(pairKey)) {
+        return false;
+      }
+
+      return this.shouldCollidersInteract(
+        broadphaseProxyByColliderId.get(pair.colliderAId),
+        broadphaseProxyByColliderId.get(pair.colliderBId)
+      );
     });
     const narrowphase = runNarrowphase(broadphasePairs, {
       getShape: (shapeId) => this.getShape(shapeId),
       getPose: (colliderId) => this.getColliderWorldPose(colliderId)
     });
-    const contactPairs = this.filterTransientContactPairs(narrowphase.contactPairs.map((contactPair) => {
+    const resolvedContactPairs = narrowphase.contactPairs.map((contactPair) => {
       const materialA = this.getEffectiveMaterialForCollider(contactPair.colliderAId);
       const materialB = this.getEffectiveMaterialForCollider(contactPair.colliderBId);
       const materialProperties = combineMaterialProperties(materialA, materialB);
@@ -2421,12 +2680,39 @@ export class PhysicsWorld {
         ...contactPair,
         ...materialProperties
       });
-    }));
+    });
+    const sensorPairs = [];
+    const solidPairs = [];
+
+    for (const contactPair of resolvedContactPairs) {
+      const proxyA = broadphaseProxyByColliderId.get(contactPair.colliderAId);
+      const proxyB = broadphaseProxyByColliderId.get(contactPair.colliderBId);
+      if (proxyA?.isSensor || proxyB?.isSensor) {
+        sensorPairs.push(cloneContactPair({
+          ...contactPair,
+          status: 'sensor-overlap'
+        }));
+        continue;
+      }
+
+      solidPairs.push(contactPair);
+    }
+
+    const contactPairs = this.filterTransientContactPairs(solidPairs);
+    const eventState = trackEvents
+      ? this.buildContactEventState(contactPairs, sensorPairs)
+      : {
+        contactEvents: [],
+        triggerEvents: []
+      };
 
     return {
       broadphaseProxies,
       broadphasePairs,
       contactPairs,
+      sensorPairs,
+      contactEvents: eventState.contactEvents,
+      triggerEvents: eventState.triggerEvents,
       unsupportedPairCount: narrowphase.summary.unsupportedPairCount,
       algorithms: contactPairs.reduce((counts, contactPair) => {
         counts[contactPair.algorithm] = (counts[contactPair.algorithm] ?? 0) + 1;
@@ -2439,23 +2725,35 @@ export class PhysicsWorld {
   commitCollisionState(results, manifolds, solverStats, islandState = this.lastIslandState) {
     const resolvedIslandState = cloneIslandState(islandState);
     const joints = this.jointRegistry.list();
+    const contactEvents = Array.isArray(results.contactEvents) ? results.contactEvents : [];
+    const triggerEvents = Array.isArray(results.triggerEvents) ? results.triggerEvents : [];
     this.collisionState = {
       broadphaseProxies: results.broadphaseProxies,
       broadphasePairs: results.broadphasePairs,
       contactPairs: results.contactPairs,
+      sensorPairs: Array.isArray(results.sensorPairs) ? results.sensorPairs.map((pair) => cloneContactPair(pair)) : [],
       manifolds: Array.isArray(manifolds) ? manifolds.map((manifold) => cloneManifold(manifold)) : [],
       islands: resolvedIslandState.islands,
       joints,
+      contactEvents: contactEvents.map((event) => cloneContactEvent(event)),
+      triggerEvents: triggerEvents.map((event) => cloneContactEvent(event)),
       solverStats: cloneSolverStats(solverStats ?? this.lastSolverStats),
       summary: {
         proxyCount: results.broadphaseProxies.length,
         pairCount: results.broadphasePairs.length,
         contactCount: results.contactPairs.length,
+        sensorPairCount: Array.isArray(results.sensorPairs) ? results.sensorPairs.length : 0,
         manifoldCount: Array.isArray(manifolds) ? manifolds.length : 0,
         jointCount: joints.length,
         islandCount: resolvedIslandState.islandCount,
         sleepingBodyCount: resolvedIslandState.sleepingBodyCount,
         awakeBodyCount: resolvedIslandState.awakeBodyCount,
+        contactEnterCount: contactEvents.filter((event) => event.phase === 'enter').length,
+        contactStayCount: contactEvents.filter((event) => event.phase === 'stay').length,
+        contactExitCount: contactEvents.filter((event) => event.phase === 'exit').length,
+        triggerEnterCount: triggerEvents.filter((event) => event.phase === 'enter').length,
+        triggerStayCount: triggerEvents.filter((event) => event.phase === 'stay').length,
+        triggerExitCount: triggerEvents.filter((event) => event.phase === 'exit').length,
         unsupportedPairCount: results.unsupportedPairCount,
         pairKinds: { ...results.pairKinds },
         algorithms: { ...results.algorithms }
@@ -2465,7 +2763,9 @@ export class PhysicsWorld {
 
   ensureCollisionState() {
     if (this.collisionStateDirty) {
-      const results = this.buildCollisionResults();
+      const results = this.buildCollisionResults({
+        trackEvents: true
+      });
       const manifolds = this.manifoldCache.syncFromContactPairs(results.contactPairs, this.simulationTick);
       const islandState = this.buildIslandState(manifolds);
       this.lastIslandState = cloneIslandState(islandState);
@@ -2614,6 +2914,118 @@ export class PhysicsWorld {
     return {
       colliderId: resolvedColliderId,
       pairs,
+      colliders: Array.from(touchedColliderIds)
+        .map((otherColliderId) => this.getCollider(otherColliderId))
+        .filter(Boolean),
+      count: touchedColliderIds.size
+    };
+  }
+
+  getContactEvents(phase = null) {
+    const resolvedPhase = phase ? String(phase).trim().toLowerCase() : null;
+    const events = Array.isArray(this.ensureCollisionState().contactEvents)
+      ? this.ensureCollisionState().contactEvents
+      : [];
+    return events
+      .filter((event) => !resolvedPhase || event.phase === resolvedPhase)
+      .map((event) => cloneContactEvent(event));
+  }
+
+  getTriggerEvents(phase = null) {
+    const resolvedPhase = phase ? String(phase).trim().toLowerCase() : null;
+    const events = Array.isArray(this.ensureCollisionState().triggerEvents)
+      ? this.ensureCollisionState().triggerEvents
+      : [];
+    return events
+      .filter((event) => !resolvedPhase || event.phase === resolvedPhase)
+      .map((event) => cloneContactEvent(event));
+  }
+
+  getBodyContactEvents(bodyId, phase = null) {
+    const resolvedBodyId = String(bodyId ?? '').trim();
+    const events = this.getContactEvents(phase).filter((event) => event.bodyAId === resolvedBodyId || event.bodyBId === resolvedBodyId);
+    const touchedBodyIds = new Set();
+
+    for (const event of events) {
+      const otherBodyId = event.bodyAId === resolvedBodyId ? event.bodyBId : event.bodyAId;
+      if (otherBodyId) {
+        touchedBodyIds.add(otherBodyId);
+      }
+    }
+
+    return {
+      bodyId: resolvedBodyId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
+      bodies: Array.from(touchedBodyIds)
+        .map((otherBodyId) => this.getBody(otherBodyId))
+        .filter(Boolean),
+      count: touchedBodyIds.size
+    };
+  }
+
+  getBodyTriggerEvents(bodyId, phase = null) {
+    const resolvedBodyId = String(bodyId ?? '').trim();
+    const events = this.getTriggerEvents(phase).filter((event) => event.bodyAId === resolvedBodyId || event.bodyBId === resolvedBodyId);
+    const touchedBodyIds = new Set();
+
+    for (const event of events) {
+      const otherBodyId = event.bodyAId === resolvedBodyId ? event.bodyBId : event.bodyAId;
+      if (otherBodyId) {
+        touchedBodyIds.add(otherBodyId);
+      }
+    }
+
+    return {
+      bodyId: resolvedBodyId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
+      bodies: Array.from(touchedBodyIds)
+        .map((otherBodyId) => this.getBody(otherBodyId))
+        .filter(Boolean),
+      count: touchedBodyIds.size
+    };
+  }
+
+  getColliderContactEvents(colliderId, phase = null) {
+    const resolvedColliderId = String(colliderId ?? '').trim();
+    const events = this.getContactEvents(phase).filter((event) => event.colliderAId === resolvedColliderId || event.colliderBId === resolvedColliderId);
+    const touchedColliderIds = new Set();
+
+    for (const event of events) {
+      const otherColliderId = event.colliderAId === resolvedColliderId ? event.colliderBId : event.colliderAId;
+      if (otherColliderId) {
+        touchedColliderIds.add(otherColliderId);
+      }
+    }
+
+    return {
+      colliderId: resolvedColliderId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
+      colliders: Array.from(touchedColliderIds)
+        .map((otherColliderId) => this.getCollider(otherColliderId))
+        .filter(Boolean),
+      count: touchedColliderIds.size
+    };
+  }
+
+  getColliderTriggerEvents(colliderId, phase = null) {
+    const resolvedColliderId = String(colliderId ?? '').trim();
+    const events = this.getTriggerEvents(phase).filter((event) => event.colliderAId === resolvedColliderId || event.colliderBId === resolvedColliderId);
+    const touchedColliderIds = new Set();
+
+    for (const event of events) {
+      const otherColliderId = event.colliderAId === resolvedColliderId ? event.colliderBId : event.colliderAId;
+      if (otherColliderId) {
+        touchedColliderIds.add(otherColliderId);
+      }
+    }
+
+    return {
+      colliderId: resolvedColliderId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
       colliders: Array.from(touchedColliderIds)
         .map((otherColliderId) => this.getCollider(otherColliderId))
         .filter(Boolean),
@@ -2933,12 +3345,21 @@ export class PhysicsWorld {
         bodyId: proxy.bodyId,
         colliderId: proxy.colliderId,
         shapeId: shape.id,
-        materialId: collider.materialId
+        materialId: collider.materialId,
+        collisionLayer: collider.collisionLayer,
+        collisionMask: collider.collisionMask,
+        isSensor: collider.isSensor
       };
-      const wireColor = body
-        ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
-        : DEFAULT_DEBUG_COLORS.staticColliderWireframe;
-      const wireCategory = body ? 'rigid-body' : 'static-collider';
+      const wireColor = collider.isSensor
+        ? DEFAULT_DEBUG_COLORS.sensorColliderWireframe
+        : body
+          ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
+          : DEFAULT_DEBUG_COLORS.staticColliderWireframe;
+      const wireCategory = collider.isSensor
+        ? 'sensor-collider'
+        : body
+          ? 'rigid-body'
+          : 'static-collider';
 
       if (shape.type === 'convex-hull') {
         primitives.push(...buildConvexHullDebugLines(shape, pose, wireColor, source, wireCategory));
@@ -2963,9 +3384,13 @@ export class PhysicsWorld {
       primitives.push(
         createDebugPoint({
           id: `${proxy.colliderId}:center-of-mass`,
-          category: body ? 'center-of-mass' : 'collider-origin',
+          category: collider.isSensor
+            ? 'sensor-origin'
+            : body
+              ? 'center-of-mass'
+              : 'collider-origin',
           position: body?.position ?? pose.position,
-          color: DEFAULT_DEBUG_COLORS.rigidBodyCenter,
+          color: collider.isSensor ? DEFAULT_DEBUG_COLORS.sensorOrigin : DEFAULT_DEBUG_COLORS.rigidBodyCenter,
           size: 4,
           source
         })
@@ -3123,6 +3548,41 @@ export class PhysicsWorld {
             start: contact.position,
             end: addScaledVec3(contact.position, manifold.normal, Math.max(10, contact.penetration * 20)),
             color: DEFAULT_DEBUG_COLORS.contactNormal,
+            source
+          })
+        );
+      }
+    }
+
+    for (const sensorPair of Array.isArray(collisionState.sensorPairs) ? collisionState.sensorPairs : []) {
+      for (const contact of sensorPair.contacts) {
+        const source = {
+          pairKey: sensorPair.pairKey,
+          colliderAId: sensorPair.colliderAId,
+          colliderBId: sensorPair.colliderBId,
+          bodyAId: sensorPair.bodyAId,
+          bodyBId: sensorPair.bodyBId,
+          isSensorPair: true
+        };
+
+        primitives.push(
+          createDebugPoint({
+            id: `${contact.id}:trigger-point`,
+            category: 'trigger-contact-point',
+            position: contact.position,
+            color: DEFAULT_DEBUG_COLORS.triggerContactPoint,
+            size: 5,
+            source
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${contact.id}:trigger-normal`,
+            category: 'trigger-contact-normal',
+            start: contact.position,
+            end: addScaledVec3(contact.position, sensorPair.normal, Math.max(10, Number(contact.penetration ?? sensorPair.penetration ?? 0) * 20)),
+            color: DEFAULT_DEBUG_COLORS.triggerContactNormal,
             source
           })
         );
@@ -3300,10 +3760,17 @@ export class PhysicsWorld {
         broadphaseProxyCount: collisionState.summary.proxyCount,
         broadphasePairCount: collisionState.summary.pairCount,
         contactPairCount: collisionState.summary.contactCount,
+        sensorPairCount: collisionState.summary.sensorPairCount,
         manifoldCount: collisionState.summary.manifoldCount,
         islandCount: collisionState.summary.islandCount,
         sleepingBodyCount: collisionState.summary.sleepingBodyCount,
         awakeBodyCount: collisionState.summary.awakeBodyCount,
+        contactEnterCount: collisionState.summary.contactEnterCount,
+        contactStayCount: collisionState.summary.contactStayCount,
+        contactExitCount: collisionState.summary.contactExitCount,
+        triggerEnterCount: collisionState.summary.triggerEnterCount,
+        triggerStayCount: collisionState.summary.triggerStayCount,
+        triggerExitCount: collisionState.summary.triggerExitCount,
         solverIterations: collisionState.solverStats.iterations,
         solvedContactCount: collisionState.solverStats.solvedContactCount,
         solvedTangentContactCount: collisionState.solverStats.solvedTangentContactCount,
