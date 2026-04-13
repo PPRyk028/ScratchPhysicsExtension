@@ -2,7 +2,7 @@ import { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfE
 import { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } from '../collision/broadphase.js';
 import { cloneContactPair, runNarrowphase } from '../collision/narrowphase.js';
 import { capsuleCastShape, castConvexShapesWithToi, cloneRaycastResult, cloneShapeCastResult, computeSweptShapeAabb, createRaycastResult, createShapeCastResult, raycastShape, sphereCastShape } from '../collision/raycast.js';
-import { composePoses, createTangentBasis, getShapeSupportFeature, transformPointByPose } from '../collision/support.js';
+import { composePoses, createTangentBasis, getClosestPointOnSegment, getShapeSupportFeature, transformPointByPose } from '../collision/support.js';
 import { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } from '../debug/debug-primitives.js';
 import { cloneManifold, ManifoldCache } from '../manifold/manifold-cache.js';
 import { cloneQuat, createIdentityQuat, integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } from '../math/quat.js';
@@ -827,6 +827,23 @@ function isPointInsideWorldFace(point, face, tolerance = KINEMATIC_FACE_QUERY_EP
   }
 
   return true;
+}
+
+function getPointDistanceSquaredToWorldFaceBoundary(point, face) {
+  if (!face || !Array.isArray(face.points) || face.points.length < 2) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  let bestDistanceSquared = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < face.points.length; index += 1) {
+    const start = face.points[index];
+    const end = face.points[(index + 1) % face.points.length];
+    const closestPoint = getClosestPointOnSegment(point, start, end);
+    const delta = subtractVec3(point, closestPoint);
+    bestDistanceSquared = Math.min(bestDistanceSquared, lengthSquaredVec3(delta));
+  }
+
+  return bestDistanceSquared;
 }
 
 function createKinematicBottomSphereCenter(character, position) {
@@ -2170,7 +2187,11 @@ export class PhysicsWorld {
         const contactPoint = addScaledVec3(supportPoint, queryDirection, planeDistance);
         const insideFace = isPointInsideWorldFace(contactPoint, face, Math.max(character.skinWidth, 0.1));
         if (!insideFace) {
-          fallbackRequired = true;
+          const boundaryDistanceSquared = getPointDistanceSquaredToWorldFaceBoundary(contactPoint, face);
+          const edgeFallbackDistance = Math.max(character.radius + character.skinWidth, 0.75);
+          if (boundaryDistanceSquared <= edgeFallbackDistance * edgeFallbackDistance) {
+            fallbackRequired = true;
+          }
           continue;
         }
 
