@@ -837,7 +837,7 @@ export class Engine3D {
 
     const body = character.bodyId ? this.world.getBody(character.bodyId) : null;
     const collider = character.colliderId ? this.world.getCollider(character.colliderId) : null;
-    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
+    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | last hit:${character.lastHitColliderId || 'none'} | last hit body:${character.lastHitBodyId || 'none'} | last hit distance:${formatOptionalNumber(character.lastHitDistance)} | last hit algorithm:${character.lastHitAlgorithm || 'none'} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
   }
 
   getKinematicGroundSummary(id) {
@@ -851,6 +851,19 @@ export class Engine3D {
 
   isKinematicCapsuleGrounded(id) {
     return this.world.isKinematicCapsuleGrounded(id);
+  }
+
+  getKinematicCapsuleHitSummary(id) {
+    const character = this.world.getKinematicCapsule(id);
+    if (!character) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    const lastHit = this.world.getKinematicCapsuleLastHit(id);
+    const enterEvents = this.world.getKinematicCapsuleHitEvents(id, 'enter');
+    const stayEvents = this.world.getKinematicCapsuleHitEvents(id, 'stay');
+    const exitEvents = this.world.getKinematicCapsuleHitEvents(id, 'exit');
+    return `${id} hit | last hit:${lastHit?.colliderId || 'none'} | body:${lastHit?.bodyId || 'none'} | distance:${formatOptionalNumber(lastHit?.distance)} | algorithm:${lastHit?.algorithm || 'none'} | normal ${formatVector(lastHit?.normal ?? createVec3())} | enter:${enterEvents.colliderCount} | stay:${stayEvents.colliderCount} | exit:${exitEvents.colliderCount}`;
   }
 
   getColliderSummary(id) {
@@ -983,6 +996,28 @@ export class Engine3D {
     return `${result.count} bodies in ${resolvedPhase} trigger events for ${id} | ${formatIdentifierList(result.bodies)}`;
   }
 
+  queryKinematicCapsuleBodyHitEvents(id, phase) {
+    const character = this.world.getKinematicCapsule(id);
+    if (!character) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    const resolvedPhase = normalizeEventPhase(phase);
+    const result = this.world.getKinematicCapsuleBodyHitEvents(id, resolvedPhase);
+    return `${result.bodyCount} bodies in ${resolvedPhase} controller hit events for ${id} | ${formatIdentifierList(result.bodies)}`;
+  }
+
+  queryKinematicCapsuleColliderHitEvents(id, phase) {
+    const character = this.world.getKinematicCapsule(id);
+    if (!character) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    const resolvedPhase = normalizeEventPhase(phase);
+    const result = this.world.getKinematicCapsuleColliderHitEvents(id, resolvedPhase);
+    return `${result.colliderCount} colliders in ${resolvedPhase} controller hit events for ${id} | ${formatIdentifierList(result.colliders)}`;
+  }
+
   queryColliderContactEvents(id, phase) {
     const collider = this.world.getCollider(id);
     if (!collider) {
@@ -1013,6 +1048,11 @@ export class Engine3D {
   getTriggerEventsSummary() {
     const summary = this.world.getCollisionState().summary;
     return `trigger events | enter:${summary.triggerEnterCount} | stay:${summary.triggerStayCount} | exit:${summary.triggerExitCount}`;
+  }
+
+  getControllerHitEventsSummary() {
+    const summary = this.world.getControllerHitEventState().summary;
+    return `controller hit events | enter:${summary.enterCount} | stay:${summary.stayCount} | exit:${summary.exitCount}`;
   }
 
   getLastRaycastSummary() {

@@ -685,6 +685,14 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'kinematicCapsuleHitSummary',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] hit summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
         opcode: 'isKinematicCapsuleGrounded',
         blockType: 'boolean',
         text: 'kinematic capsule [ID] grounded?',
@@ -813,6 +821,24 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'queryKinematicCapsuleBodyHitEvents',
+        blockType: 'reporter',
+        text: 'bodies in [PHASE] controller hit events for kinematic capsule [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'queryKinematicCapsuleColliderHitEvents',
+        blockType: 'reporter',
+        text: 'colliders in [PHASE] controller hit events for kinematic capsule [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
         opcode: 'queryColliderContactEvents',
         blockType: 'reporter',
         text: 'colliders in [PHASE] contact events for collider [ID]',
@@ -869,6 +895,11 @@ export function createExtensionInfo() {
         opcode: 'triggerEventsSummary',
         blockType: 'reporter',
         text: 'trigger events summary'
+      },
+      {
+        opcode: 'controllerHitEventsSummary',
+        blockType: 'reporter',
+        text: 'controller hit events summary'
       },
       {
         opcode: 'hostSummary',

@@ -606,6 +606,12 @@ export class Base3DExtension {
     );
   }
 
+  kinematicCapsuleHitSummary(args) {
+    return this.engine.getKinematicCapsuleHitSummary(
+      toString(args.ID, 'character')
+    );
+  }
+
   isKinematicCapsuleGrounded(args) {
     return this.engine.isKinematicCapsuleGrounded(
       toString(args.ID, 'character')
@@ -706,6 +712,20 @@ export class Base3DExtension {
     );
   }
 
+  queryKinematicCapsuleBodyHitEvents(args) {
+    return this.engine.queryKinematicCapsuleBodyHitEvents(
+      toString(args.ID, 'character'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
+  queryKinematicCapsuleColliderHitEvents(args) {
+    return this.engine.queryKinematicCapsuleColliderHitEvents(
+      toString(args.ID, 'character'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
   queryColliderContactEvents(args) {
     return this.engine.queryColliderContactEvents(
       toString(args.ID, 'collider'),
@@ -754,6 +774,10 @@ export class Base3DExtension {
 
   triggerEventsSummary() {
     return this.engine.getTriggerEventsSummary();
+  }
+
+  controllerHitEventsSummary() {
+    return this.engine.getControllerHitEventsSummary();
   }
 
   lastFrameSummary() {

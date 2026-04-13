@@ -68,6 +68,8 @@ export const DEFAULT_DEBUG_COLORS = Object.freeze({
   characterGroundPoint: Object.freeze({ r: 255, g: 231, b: 115, a: 1 }),
   characterGroundNormal: Object.freeze({ r: 255, g: 179, b: 79, a: 1 }),
   characterMovePath: Object.freeze({ r: 117, g: 235, b: 255, a: 1 }),
+  characterHitPoint: Object.freeze({ r: 255, g: 120, b: 120, a: 1 }),
+  characterHitNormal: Object.freeze({ r: 255, g: 82, b: 82, a: 1 }),
   raycastHitLine: Object.freeze({ r: 76, g: 229, b: 255, a: 1 }),
   raycastMissLine: Object.freeze({ r: 113, g: 132, b: 164, a: 0.95 }),
   raycastHitPoint: Object.freeze({ r: 255, g: 64, b: 197, a: 1 }),

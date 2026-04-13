@@ -38,7 +38,9 @@ const LAYER_GROUPS = {
     'character-controller',
     'character-ground-point',
     'character-ground-normal',
-    'character-move-path'
+    'character-move-path',
+    'character-hit-point',
+    'character-hit-normal'
   ]),
   sensors: new Set(['sensor-collider', 'sensor-origin']),
   triggers: new Set(['trigger-contact-point', 'trigger-contact-normal']),

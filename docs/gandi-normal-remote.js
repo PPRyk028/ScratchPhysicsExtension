@@ -627,6 +627,12 @@ class Base3DExtension {
     );
   }
 
+  kinematicCapsuleHitSummary(args) {
+    return this.engine.getKinematicCapsuleHitSummary(
+      toString(args.ID, 'character')
+    );
+  }
+
   isKinematicCapsuleGrounded(args) {
     return this.engine.isKinematicCapsuleGrounded(
       toString(args.ID, 'character')
@@ -727,6 +733,20 @@ class Base3DExtension {
     );
   }
 
+  queryKinematicCapsuleBodyHitEvents(args) {
+    return this.engine.queryKinematicCapsuleBodyHitEvents(
+      toString(args.ID, 'character'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
+  queryKinematicCapsuleColliderHitEvents(args) {
+    return this.engine.queryKinematicCapsuleColliderHitEvents(
+      toString(args.ID, 'character'),
+      toString(args.PHASE, 'stay')
+    );
+  }
+
   queryColliderContactEvents(args) {
     return this.engine.queryColliderContactEvents(
       toString(args.ID, 'collider'),
@@ -775,6 +795,10 @@ class Base3DExtension {
 
   triggerEventsSummary() {
     return this.engine.getTriggerEventsSummary();
+  }
+
+  controllerHitEventsSummary() {
+    return this.engine.getControllerHitEventsSummary();
   }
 
   lastFrameSummary() {
@@ -1626,7 +1650,7 @@ class Engine3D {
 
     const body = character.bodyId ? this.world.getBody(character.bodyId) : null;
     const collider = character.colliderId ? this.world.getCollider(character.colliderId) : null;
-    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
+    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | last hit:${character.lastHitColliderId || 'none'} | last hit body:${character.lastHitBodyId || 'none'} | last hit distance:${formatOptionalNumber(character.lastHitDistance)} | last hit algorithm:${character.lastHitAlgorithm || 'none'} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
   }
 
   getKinematicGroundSummary(id) {
@@ -1640,6 +1664,19 @@ class Engine3D {
 
   isKinematicCapsuleGrounded(id) {
     return this.world.isKinematicCapsuleGrounded(id);
+  }
+
+  getKinematicCapsuleHitSummary(id) {
+    const character = this.world.getKinematicCapsule(id);
+    if (!character) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    const lastHit = this.world.getKinematicCapsuleLastHit(id);
+    const enterEvents = this.world.getKinematicCapsuleHitEvents(id, 'enter');
+    const stayEvents = this.world.getKinematicCapsuleHitEvents(id, 'stay');
+    const exitEvents = this.world.getKinematicCapsuleHitEvents(id, 'exit');
+    return `${id} hit | last hit:${lastHit?.colliderId || 'none'} | body:${lastHit?.bodyId || 'none'} | distance:${formatOptionalNumber(lastHit?.distance)} | algorithm:${lastHit?.algorithm || 'none'} | normal ${formatVector(lastHit?.normal ?? createVec3())} | enter:${enterEvents.colliderCount} | stay:${stayEvents.colliderCount} | exit:${exitEvents.colliderCount}`;
   }
 
   getColliderSummary(id) {
@@ -1772,6 +1809,28 @@ class Engine3D {
     return `${result.count} bodies in ${resolvedPhase} trigger events for ${id} | ${formatIdentifierList(result.bodies)}`;
   }
 
+  queryKinematicCapsuleBodyHitEvents(id, phase) {
+    const character = this.world.getKinematicCapsule(id);
+    if (!character) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    const resolvedPhase = normalizeEventPhase(phase);
+    const result = this.world.getKinematicCapsuleBodyHitEvents(id, resolvedPhase);
+    return `${result.bodyCount} bodies in ${resolvedPhase} controller hit events for ${id} | ${formatIdentifierList(result.bodies)}`;
+  }
+
+  queryKinematicCapsuleColliderHitEvents(id, phase) {
+    const character = this.world.getKinematicCapsule(id);
+    if (!character) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    const resolvedPhase = normalizeEventPhase(phase);
+    const result = this.world.getKinematicCapsuleColliderHitEvents(id, resolvedPhase);
+    return `${result.colliderCount} colliders in ${resolvedPhase} controller hit events for ${id} | ${formatIdentifierList(result.colliders)}`;
+  }
+
   queryColliderContactEvents(id, phase) {
     const collider = this.world.getCollider(id);
     if (!collider) {
@@ -1802,6 +1861,11 @@ class Engine3D {
   getTriggerEventsSummary() {
     const summary = this.world.getCollisionState().summary;
     return `trigger events | enter:${summary.triggerEnterCount} | stay:${summary.triggerStayCount} | exit:${summary.triggerExitCount}`;
+  }
+
+  getControllerHitEventsSummary() {
+    const summary = this.world.getControllerHitEventState().summary;
+    return `controller hit events | enter:${summary.enterCount} | stay:${summary.stayCount} | exit:${summary.exitCount}`;
   }
 
   getLastRaycastSummary() {
@@ -5517,6 +5581,8 @@ const DEFAULT_DEBUG_COLORS = Object.freeze({
   characterGroundPoint: Object.freeze({ r: 255, g: 231, b: 115, a: 1 }),
   characterGroundNormal: Object.freeze({ r: 255, g: 179, b: 79, a: 1 }),
   characterMovePath: Object.freeze({ r: 117, g: 235, b: 255, a: 1 }),
+  characterHitPoint: Object.freeze({ r: 255, g: 120, b: 120, a: 1 }),
+  characterHitNormal: Object.freeze({ r: 255, g: 82, b: 82, a: 1 }),
   raycastHitLine: Object.freeze({ r: 76, g: 229, b: 255, a: 1 }),
   raycastMissLine: Object.freeze({ r: 113, g: 132, b: 164, a: 0.95 }),
   raycastHitPoint: Object.freeze({ r: 255, g: 64, b: 197, a: 1 }),
@@ -9415,6 +9481,177 @@ function cloneContactEvent(contactEvent) {
   return createContactEvent(contactEvent);
 }
 
+function normalizeControllerHitSources(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry ?? '').trim())
+      .filter(Boolean)
+      .filter((entry, index, entries) => entries.indexOf(entry) === index);
+  }
+
+  const source = String(value ?? '').trim();
+  return source ? [source] : [];
+}
+
+function createControllerHitKey(characterId, colliderId) {
+  const resolvedCharacterId = String(characterId ?? '').trim();
+  const resolvedColliderId = String(colliderId ?? '').trim();
+  if (!resolvedCharacterId || !resolvedColliderId) {
+    return null;
+  }
+
+  return `${resolvedCharacterId}|${resolvedColliderId}`;
+}
+
+function createControllerHitEvent(options = {}) {
+  const characterId = String(options.characterId ?? '').trim() || null;
+  const colliderId = String(options.colliderId ?? '').trim() || null;
+  return {
+    id: String(options.id ?? `controller-hit:${options.phase ?? 'stay'}:${characterId ?? 'character'}:${colliderId ?? 'collider'}`).trim(),
+    phase: String(options.phase ?? 'stay').trim() || 'stay',
+    characterId,
+    characterBodyId: String(options.characterBodyId ?? '').trim() || null,
+    characterColliderId: String(options.characterColliderId ?? '').trim() || null,
+    colliderId,
+    bodyId: String(options.bodyId ?? '').trim() || null,
+    shapeType: String(options.shapeType ?? '').trim() || 'unknown',
+    algorithm: String(options.algorithm ?? '').trim() || 'unknown',
+    featureId: String(options.featureId ?? '').trim() || null,
+    distance: options.distance ?? null,
+    normal: cloneVec3(options.normal ?? createVec3()),
+    point: cloneOptionalVec3(options.point ?? null),
+    sources: normalizeControllerHitSources(options.sources ?? options.source),
+    blocking: options.blocking === true,
+    walkable: options.walkable === true
+  };
+}
+
+function cloneControllerHitEvent(controllerHitEvent) {
+  return createControllerHitEvent(controllerHitEvent);
+}
+
+function createEmptyControllerHitEventState() {
+  return {
+    hitsByKey: new Map(),
+    events: [],
+    summary: {
+      enterCount: 0,
+      stayCount: 0,
+      exitCount: 0
+    }
+  };
+}
+
+function cloneControllerHitEventState(controllerHitState) {
+  const resolvedState = controllerHitState ?? createEmptyControllerHitEventState();
+  return {
+    hitsByKey: new Map(Array.from(resolvedState.hitsByKey.entries(), ([key, hit]) => [key, cloneControllerHitEvent(hit)])),
+    events: Array.isArray(resolvedState.events)
+      ? resolvedState.events.map((event) => cloneControllerHitEvent(event))
+      : [],
+    summary: {
+      enterCount: Number(resolvedState.summary?.enterCount ?? 0),
+      stayCount: Number(resolvedState.summary?.stayCount ?? 0),
+      exitCount: Number(resolvedState.summary?.exitCount ?? 0)
+    }
+  };
+}
+
+function mergeControllerHitRecords(existingHit, nextHit) {
+  const base = createControllerHitEvent(existingHit ?? nextHit);
+  const incoming = createControllerHitEvent(nextHit);
+
+  const existingDistance = Number.isFinite(Number(base.distance)) ? Number(base.distance) : Number.POSITIVE_INFINITY;
+  const incomingDistance = Number.isFinite(Number(incoming.distance)) ? Number(incoming.distance) : Number.POSITIVE_INFINITY;
+  if (incomingDistance <= existingDistance) {
+    base.distance = incoming.distance;
+    base.normal = cloneVec3(incoming.normal);
+    base.point = cloneOptionalVec3(incoming.point);
+    base.featureId = incoming.featureId;
+    base.algorithm = incoming.algorithm;
+  }
+
+  base.sources = normalizeControllerHitSources([...(base.sources ?? []), ...(incoming.sources ?? [])]);
+  base.blocking = base.blocking || incoming.blocking;
+  base.walkable = base.walkable || incoming.walkable;
+  return base;
+}
+
+function buildControllerHitEventState(currentHits, previousHitsByKey, updatedCharacterIds = null) {
+  const updatedSet = new Set(
+    Array.isArray(updatedCharacterIds)
+      ? updatedCharacterIds.map((id) => String(id ?? '').trim()).filter(Boolean)
+      : []
+  );
+  const useScopedUpdate = updatedSet.size > 0;
+  const previousEntries = previousHitsByKey instanceof Map ? previousHitsByKey.entries() : [];
+  const currentHitsByKey = new Map();
+
+  for (const hit of Array.isArray(currentHits) ? currentHits : []) {
+    const normalizedHit = createControllerHitEvent(hit);
+    const key = createControllerHitKey(normalizedHit.characterId, normalizedHit.colliderId);
+    if (!key) {
+      continue;
+    }
+
+    if (useScopedUpdate && !updatedSet.has(normalizedHit.characterId)) {
+      continue;
+    }
+
+    currentHitsByKey.set(key, mergeControllerHitRecords(currentHitsByKey.get(key), normalizedHit));
+  }
+
+  const nextHitsByKey = new Map();
+  if (useScopedUpdate) {
+    for (const [key, previousHit] of previousEntries) {
+      if (!updatedSet.has(previousHit.characterId)) {
+        nextHitsByKey.set(key, cloneControllerHitEvent(previousHit));
+      }
+    }
+  }
+
+  for (const [key, hit] of currentHitsByKey.entries()) {
+    nextHitsByKey.set(key, cloneControllerHitEvent(hit));
+  }
+
+  const events = [];
+  for (const [key, hit] of currentHitsByKey.entries()) {
+    const previousHit = previousHitsByKey instanceof Map ? previousHitsByKey.get(key) : null;
+    events.push(createControllerHitEvent({
+      ...(previousHit ? previousHit : hit),
+      ...hit,
+      phase: previousHit ? 'stay' : 'enter'
+    }));
+  }
+
+  if (previousHitsByKey instanceof Map) {
+    for (const [key, previousHit] of previousHitsByKey.entries()) {
+      if (currentHitsByKey.has(key)) {
+        continue;
+      }
+
+      if (useScopedUpdate && !updatedSet.has(previousHit.characterId)) {
+        continue;
+      }
+
+      events.push(createControllerHitEvent({
+        ...previousHit,
+        phase: 'exit'
+      }));
+    }
+  }
+
+  return {
+    hitsByKey: nextHitsByKey,
+    events,
+    summary: {
+      enterCount: events.filter((event) => event.phase === 'enter').length,
+      stayCount: events.filter((event) => event.phase === 'stay').length,
+      exitCount: events.filter((event) => event.phase === 'exit').length
+    }
+  };
+}
+
 function createEmptyContactEventState() {
   return {
     contactPairsByKey: new Map(),
@@ -10289,6 +10526,7 @@ class PhysicsWorld {
     this.lastCcdEvents = [];
     this.lastIslandState = createEmptyIslandState();
     this.lastContactEventState = createEmptyContactEventState();
+    this.lastControllerHitEventState = createEmptyControllerHitEventState();
     this.collisionStateDirty = true;
     this.collisionState = createEmptyCollisionState(this.solverIterations);
     this.manifoldCache.clear();
@@ -11372,6 +11610,110 @@ class PhysicsWorld {
     };
   }
 
+  createKinematicControllerHitRecord(character, moveResult, source, options = {}) {
+    if (!character || !moveResult?.hitColliderId) {
+      return null;
+    }
+
+    const collider = this.getCollider(moveResult.hitColliderId);
+    const shape = collider ? this.getShape(collider.shapeId) : null;
+    return createControllerHitEvent({
+      characterId: character.id,
+      characterBodyId: character.bodyId,
+      characterColliderId: character.colliderId,
+      colliderId: moveResult.hitColliderId,
+      bodyId: moveResult.hitBodyId,
+      shapeType: shape?.type ?? 'unknown',
+      algorithm: moveResult.hitAlgorithm,
+      featureId: moveResult.hitFeatureId,
+      distance: moveResult.hitDistance,
+      normal: moveResult.hitNormal,
+      point: moveResult.hitPoint,
+      sources: [source],
+      blocking: options.blocking ?? moveResult.blocked === true,
+      walkable: options.walkable ?? isWalkableKinematicNormal(moveResult.hitNormal, character.maxGroundAngleDegrees)
+    });
+  }
+
+  commitControllerHitEvents(currentHits, options = {}) {
+    const previousState = this.lastControllerHitEventState ?? createEmptyControllerHitEventState();
+    const nextState = buildControllerHitEventState(
+      currentHits,
+      previousState.hitsByKey,
+      Array.isArray(options.characterIds) ? options.characterIds : null
+    );
+
+    this.lastControllerHitEventState = cloneControllerHitEventState(nextState);
+    return nextState;
+  }
+
+  getControllerHitEventState() {
+    const state = this.lastControllerHitEventState ?? createEmptyControllerHitEventState();
+    return {
+      events: Array.isArray(state.events) ? state.events.map((event) => cloneControllerHitEvent(event)) : [],
+      summary: {
+        enterCount: Number(state.summary?.enterCount ?? 0),
+        stayCount: Number(state.summary?.stayCount ?? 0),
+        exitCount: Number(state.summary?.exitCount ?? 0)
+      }
+    };
+  }
+
+  getControllerHitEvents(phase = null) {
+    const resolvedPhase = phase ? String(phase).trim().toLowerCase() : null;
+    const state = this.getControllerHitEventState();
+    return state.events.filter((event) => !resolvedPhase || event.phase === resolvedPhase);
+  }
+
+  getKinematicCapsuleHitEvents(characterId, phase = null) {
+    const resolvedCharacterId = String(characterId ?? '').trim();
+    const events = this.getControllerHitEvents(phase).filter((event) => event.characterId === resolvedCharacterId);
+    const touchedColliderIds = new Set();
+    const touchedBodyIds = new Set();
+
+    for (const event of events) {
+      if (event.colliderId) {
+        touchedColliderIds.add(event.colliderId);
+      }
+
+      if (event.bodyId) {
+        touchedBodyIds.add(event.bodyId);
+      }
+    }
+
+    return {
+      characterId: resolvedCharacterId,
+      phase: phase ? String(phase).trim().toLowerCase() : null,
+      events,
+      colliders: Array.from(touchedColliderIds)
+        .map((colliderId) => this.getCollider(colliderId))
+        .filter(Boolean),
+      bodies: Array.from(touchedBodyIds)
+        .map((bodyId) => this.getBody(bodyId))
+        .filter(Boolean),
+      colliderCount: touchedColliderIds.size,
+      bodyCount: touchedBodyIds.size
+    };
+  }
+
+  getKinematicCapsuleLastHit(characterId) {
+    const character = this.getKinematicCapsule(characterId);
+    if (!character) {
+      return null;
+    }
+
+    return {
+      characterId: character.id,
+      colliderId: character.lastHitColliderId ?? null,
+      bodyId: character.lastHitBodyId ?? null,
+      distance: character.lastHitDistance ?? null,
+      normal: cloneVec3(character.lastHitNormal ?? createVec3()),
+      point: cloneOptionalVec3(character.lastHitPoint ?? null),
+      featureId: character.lastHitFeatureId ?? null,
+      algorithm: character.lastHitAlgorithm ?? null
+    };
+  }
+
   getCachedStaticKinematicFace(cache) {
     const colliderId = String(cache?.colliderId ?? '').trim();
     const faceId = String(cache?.faceId ?? '').trim();
@@ -12403,6 +12745,16 @@ class PhysicsWorld {
     character.lastHitBodyId = moveResult?.hitBodyId ?? null;
     character.lastHitDistance = moveResult?.hitDistance ?? null;
     character.lastHitNormal = cloneVec3(moveResult?.hitNormal ?? createVec3());
+    character.lastHitPoint = cloneOptionalVec3(moveResult?.hitPoint ?? null);
+    character.lastHitFeatureId = String(moveResult?.hitFeatureId ?? '').trim() || null;
+    character.lastHitAlgorithm = String(moveResult?.hitAlgorithm ?? '').trim() || null;
+
+    this.commitControllerHitEvents(
+      [this.createKinematicControllerHitRecord(character, moveResult, 'move')].filter(Boolean),
+      {
+        characterIds: [character.id]
+      }
+    );
 
     this.markCollisionStateDirty();
     if (options.updateGroundState !== false) {
@@ -12520,7 +12872,10 @@ class PhysicsWorld {
       hitColliderId: horizontalResult.hitColliderId ?? downResult.hitColliderId,
       hitBodyId: horizontalResult.hitBodyId ?? downResult.hitBodyId,
       hitNormal: downResult.hitNormal ?? horizontalResult.hitNormal,
-      hitDistance: downResult.hitDistance ?? horizontalResult.hitDistance
+      hitDistance: downResult.hitDistance ?? horizontalResult.hitDistance,
+      hitPoint: downResult.hitPoint ?? horizontalResult.hitPoint,
+      hitFeatureId: downResult.hitFeatureId ?? horizontalResult.hitFeatureId,
+      hitAlgorithm: downResult.hitAlgorithm ?? horizontalResult.hitAlgorithm
     });
   }
 
@@ -12544,6 +12899,8 @@ class PhysicsWorld {
 
   stepKinematicCapsules(deltaTime) {
     let movedAnyCharacter = false;
+    const controllerHitRecords = [];
+    const trackedCharacterIds = this.characterRegistry.list().map((character) => character.id);
     this.characterRegistry.forEachMutable((character) => {
       if (!character || character.enabled === false) {
         return;
@@ -12561,8 +12918,17 @@ class PhysicsWorld {
       let lastHitBodyId = null;
       let lastHitDistance = null;
       let lastHitNormal = createVec3();
+      let lastHitPoint = null;
+      let lastHitFeatureId = null;
+      let lastHitAlgorithm = null;
       const totalRequestedMove = createVec3();
       const totalActualMove = createVec3();
+      const recordControllerHit = (moveResult, source, options = {}) => {
+        const hitRecord = this.createKinematicControllerHitRecord(character, moveResult, source, options);
+        if (hitRecord) {
+          controllerHitRecords.push(hitRecord);
+        }
+      };
 
       const initialRecovery = this.recoverKinematicStaticOverlaps(character, body, shape, {
         maxIterations: 2,
@@ -12589,6 +12955,10 @@ class PhysicsWorld {
           lastHitBodyId = platformCarry.moveResult.hitBodyId;
           lastHitDistance = platformCarry.moveResult.hitDistance;
           lastHitNormal = cloneVec3(platformCarry.moveResult.hitNormal);
+          lastHitPoint = cloneOptionalVec3(platformCarry.moveResult.hitPoint ?? null);
+          lastHitFeatureId = String(platformCarry.moveResult.hitFeatureId ?? '').trim() || null;
+          lastHitAlgorithm = String(platformCarry.moveResult.hitAlgorithm ?? '').trim() || null;
+          recordControllerHit(platformCarry.moveResult, 'platform-carry');
         }
       }
 
@@ -12669,6 +13039,10 @@ class PhysicsWorld {
           lastHitBodyId = upwardResult.hitBodyId;
           lastHitDistance = upwardResult.hitDistance;
           lastHitNormal = cloneVec3(upwardResult.hitNormal);
+          lastHitPoint = cloneOptionalVec3(upwardResult.hitPoint ?? null);
+          lastHitFeatureId = String(upwardResult.hitFeatureId ?? '').trim() || null;
+          lastHitAlgorithm = String(upwardResult.hitAlgorithm ?? '').trim() || null;
+          recordControllerHit(upwardResult, 'upward');
         }
         if (upwardResult.blocked && (upwardResult.hitNormal?.y ?? 0) < -0.2) {
           verticalVelocity = 0;
@@ -12709,6 +13083,10 @@ class PhysicsWorld {
           lastHitBodyId = horizontalResult.hitBodyId;
           lastHitDistance = horizontalResult.hitDistance;
           lastHitNormal = cloneVec3(horizontalResult.hitNormal);
+          lastHitPoint = cloneOptionalVec3(horizontalResult.hitPoint ?? null);
+          lastHitFeatureId = String(horizontalResult.hitFeatureId ?? '').trim() || null;
+          lastHitAlgorithm = String(horizontalResult.hitAlgorithm ?? '').trim() || null;
+          recordControllerHit(horizontalResult, stepCandidate && horizontalResult === stepCandidate ? 'step' : 'move');
         }
       }
 
@@ -12730,6 +13108,12 @@ class PhysicsWorld {
           lastHitBodyId = downResult.hitBodyId;
           lastHitDistance = downResult.hitDistance;
           lastHitNormal = cloneVec3(downResult.hitNormal);
+          lastHitPoint = cloneOptionalVec3(downResult.hitPoint ?? null);
+          lastHitFeatureId = String(downResult.hitFeatureId ?? '').trim() || null;
+          lastHitAlgorithm = String(downResult.hitAlgorithm ?? '').trim() || null;
+          recordControllerHit(downResult, shouldSnapToGround ? 'ground-snap' : 'downward', {
+            walkable: isWalkableKinematicNormal(downResult.hitNormal, character.maxGroundAngleDegrees)
+          });
         }
         if (downResult.blocked && isWalkableKinematicNormal(downResult.hitNormal, character.maxGroundAngleDegrees)) {
           verticalVelocity = 0;
@@ -12744,6 +13128,9 @@ class PhysicsWorld {
       character.lastHitBodyId = lastHitBodyId;
       character.lastHitDistance = lastHitDistance;
       character.lastHitNormal = cloneVec3(lastHitNormal);
+      character.lastHitPoint = cloneOptionalVec3(lastHitPoint);
+      character.lastHitFeatureId = lastHitFeatureId;
+      character.lastHitAlgorithm = lastHitAlgorithm;
 
       const finalRecovery = this.recoverKinematicStaticOverlaps(character, body, shape, {
         maxIterations: 1,
@@ -12801,6 +13188,10 @@ class PhysicsWorld {
     if (movedAnyCharacter) {
       this.markCollisionStateDirty();
     }
+
+    this.commitControllerHitEvents(controllerHitRecords, {
+      characterIds: trackedCharacterIds
+    });
 
     return movedAnyCharacter;
   }
@@ -14353,6 +14744,14 @@ class PhysicsWorld {
     };
   }
 
+  getKinematicCapsuleBodyHitEvents(characterId, phase = null) {
+    return this.getKinematicCapsuleHitEvents(characterId, phase);
+  }
+
+  getKinematicCapsuleColliderHitEvents(characterId, phase = null) {
+    return this.getKinematicCapsuleHitEvents(characterId, phase);
+  }
+
   shapeCastAgainstWorld(options = {}) {
     const queryShape = options.queryShape ?? null;
     const normalizedCastType = String(options.castType ?? 'sphere').trim().toLowerCase();
@@ -14655,6 +15054,7 @@ class PhysicsWorld {
 
   buildDebugFrame() {
     const collisionState = this.ensureCollisionState();
+    const controllerHitState = this.getControllerHitEventState();
     this.renderFrameCount += 1;
     const primitives = [];
 
@@ -14803,6 +15203,40 @@ class PhysicsWorld {
               groundColliderId: character.groundColliderId,
               groundBodyId: character.groundBodyId,
               groundAngleDegrees: character.groundAngleDegrees
+            }
+          })
+        );
+      }
+
+      if (character.lastHitColliderId && character.lastHitPoint && lengthSquaredVec3(character.lastHitNormal ?? createVec3()) > 1e-8) {
+        primitives.push(
+          createDebugPoint({
+            id: `${character.id}:hit-point`,
+            category: 'character-hit-point',
+            position: character.lastHitPoint,
+            color: DEFAULT_DEBUG_COLORS.characterHitPoint,
+            size: 5,
+            source: {
+              ...source,
+              hitColliderId: character.lastHitColliderId,
+              hitBodyId: character.lastHitBodyId,
+              hitAlgorithm: character.lastHitAlgorithm
+            }
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${character.id}:hit-normal`,
+            category: 'character-hit-normal',
+            start: character.lastHitPoint,
+            end: addScaledVec3(character.lastHitPoint, character.lastHitNormal, 14),
+            color: DEFAULT_DEBUG_COLORS.characterHitNormal,
+            source: {
+              ...source,
+              hitColliderId: character.lastHitColliderId,
+              hitBodyId: character.lastHitBodyId,
+              hitAlgorithm: character.lastHitAlgorithm
             }
           })
         );
@@ -15174,6 +15608,9 @@ class PhysicsWorld {
         triggerEnterCount: collisionState.summary.triggerEnterCount,
         triggerStayCount: collisionState.summary.triggerStayCount,
         triggerExitCount: collisionState.summary.triggerExitCount,
+        controllerHitEnterCount: controllerHitState.summary.enterCount,
+        controllerHitStayCount: controllerHitState.summary.stayCount,
+        controllerHitExitCount: controllerHitState.summary.exitCount,
         solverIterations: collisionState.solverStats.iterations,
         solvedContactCount: collisionState.solverStats.solvedContactCount,
         solvedTangentContactCount: collisionState.solverStats.solvedTangentContactCount,
@@ -15200,6 +15637,7 @@ class PhysicsWorld {
 
   getSnapshot() {
     const collisionState = this.getCollisionState();
+    const controllerHitState = this.getControllerHitEventState();
 
     return {
       debugCamera: cloneCamera(this.debugCamera),
@@ -15222,6 +15660,7 @@ class PhysicsWorld {
       softBodies: this.particleWorld.listSoftBodies(),
       xpbd: this.particleWorld.getSnapshot(),
       collision: collisionState,
+      controllerHits: controllerHitState,
       simulationTick: this.simulationTick,
       renderFrameCount: this.renderFrameCount,
       fixedDeltaTime: this.fixedDeltaTime,
@@ -15532,6 +15971,9 @@ class CharacterRegistry extends BaseRegistry {
       lastHitColliderId: character.lastHitColliderId ?? null,
       lastHitBodyId: character.lastHitBodyId ?? null,
       lastHitDistance: character.lastHitDistance ?? null,
+      lastHitPoint: character.lastHitPoint ? cloneVec3(character.lastHitPoint) : null,
+      lastHitFeatureId: character.lastHitFeatureId ?? null,
+      lastHitAlgorithm: character.lastHitAlgorithm ?? null,
       lastRecoveryNormal: cloneVec3(character.lastRecoveryNormal ?? createVec3()),
       lastRecoveryDistance: character.lastRecoveryDistance ?? 0,
       groundBodyLocalPoint: {
@@ -15587,6 +16029,9 @@ class CharacterRegistry extends BaseRegistry {
       lastHitColliderId: String(options.lastHitColliderId ?? '').trim() || null,
       lastHitBodyId: String(options.lastHitBodyId ?? '').trim() || null,
       lastHitDistance: options.lastHitDistance ?? null,
+      lastHitPoint: options.lastHitPoint ? cloneVec3(options.lastHitPoint) : null,
+      lastHitFeatureId: String(options.lastHitFeatureId ?? '').trim() || null,
+      lastHitAlgorithm: String(options.lastHitAlgorithm ?? '').trim() || null,
       lastRecoveryNormal: cloneVec3(options.lastRecoveryNormal ?? createVec3()),
       lastRecoveryDistance: toFiniteNumber(options.lastRecoveryDistance, 0),
       groundFaceCache: options.groundFaceCache ?? createDefaultFaceCache(),
@@ -17287,6 +17732,14 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'kinematicCapsuleHitSummary',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] hit summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
         opcode: 'isKinematicCapsuleGrounded',
         blockType: 'boolean',
         text: 'kinematic capsule [ID] grounded?',
@@ -17415,6 +17868,24 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'queryKinematicCapsuleBodyHitEvents',
+        blockType: 'reporter',
+        text: 'bodies in [PHASE] controller hit events for kinematic capsule [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'queryKinematicCapsuleColliderHitEvents',
+        blockType: 'reporter',
+        text: 'colliders in [PHASE] controller hit events for kinematic capsule [ID]',
+        arguments: {
+          PHASE: { type: 'string', menu: 'EVENT_PHASES', defaultValue: 'stay' },
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
         opcode: 'queryColliderContactEvents',
         blockType: 'reporter',
         text: 'colliders in [PHASE] contact events for collider [ID]',
@@ -17471,6 +17942,11 @@ function createExtensionInfo() {
         opcode: 'triggerEventsSummary',
         blockType: 'reporter',
         text: 'trigger events summary'
+      },
+      {
+        opcode: 'controllerHitEventsSummary',
+        blockType: 'reporter',
+        text: 'controller hit events summary'
       },
       {
         opcode: 'hostSummary',
@@ -17631,7 +18107,9 @@ const LAYER_GROUPS = {
     'character-controller',
     'character-ground-point',
     'character-ground-normal',
-    'character-move-path'
+    'character-move-path',
+    'character-hit-point',
+    'character-hit-normal'
   ]),
   sensors: new Set(['sensor-collider', 'sensor-origin']),
   triggers: new Set(['trigger-contact-point', 'trigger-contact-normal']),

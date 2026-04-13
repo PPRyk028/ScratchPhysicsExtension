@@ -1807,6 +1807,53 @@ test('PhysicsWorld kinematic capsules stop before walls and keep ground state wh
   assert.ok(frame.primitives.some((primitive) => primitive.category === 'character-ground-normal'));
 });
 
+test('PhysicsWorld kinematic controller hit callbacks cache enter, stay, and exit against colliders', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 20, y: 0, z: 0 },
+    size: 10
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 0, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+
+  world.moveKinematicCapsule('player', { x: 30, y: 0, z: 0 });
+
+  let hitEvents = world.getKinematicCapsuleHitEvents('player', 'enter');
+  assert.equal(hitEvents.colliderCount, 1);
+  assert.equal(hitEvents.colliders[0].id, 'wall:collider');
+  assert.equal(world.getControllerHitEventState().summary.enterCount, 1);
+
+  const hitSummary = world.getKinematicCapsuleLastHit('player');
+  assert.equal(hitSummary.colliderId, 'wall:collider');
+  assert.ok(typeof hitSummary.algorithm === 'string' && hitSummary.algorithm.length > 0);
+
+  let frame = world.buildDebugFrame();
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'character-hit-point'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'character-hit-normal'));
+
+  world.moveKinematicCapsule('player', { x: 2, y: 0, z: 0 });
+  hitEvents = world.getKinematicCapsuleHitEvents('player', 'stay');
+  assert.equal(hitEvents.colliderCount, 1);
+  assert.equal(hitEvents.colliders[0].id, 'wall:collider');
+  assert.equal(world.getControllerHitEventState().summary.stayCount, 1);
+
+  world.moveKinematicCapsule('player', { x: -6, y: 0, z: 0 });
+  hitEvents = world.getKinematicCapsuleHitEvents('player', 'exit');
+  assert.equal(hitEvents.colliderCount, 1);
+  assert.equal(hitEvents.colliders[0].id, 'wall:collider');
+  assert.equal(world.getControllerHitEventState().summary.exitCount, 1);
+
+  frame = world.buildDebugFrame();
+  assert.equal(frame.primitives.some((primitive) => primitive.category === 'character-hit-point'), false);
+});
+
 test('PhysicsWorld exports and imports kinematic capsules with ground settings intact', () => {
   const world = new PhysicsWorld({
     gravity: { x: 0, y: 0, z: 0 }
