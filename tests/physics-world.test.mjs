@@ -1931,6 +1931,46 @@ test('PhysicsWorld kinematic controllers project movement onto walkable slopes',
   assert.equal(character.walkable, true);
 });
 
+test('PhysicsWorld kinematic ground probes use the fast static convex face path on walkable ramps', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'ramp',
+    vertices: [
+      { x: -10, y: -2, z: -6 },
+      { x: 10, y: -2, z: -6 },
+      { x: 10, y: -2, z: 6 },
+      { x: -10, y: -2, z: 6 },
+      { x: -10, y: 4, z: -6 },
+      { x: -10, y: 4, z: 6 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 6, y: 14.2, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+
+  const character = world.getKinematicCapsule('player');
+  const body = world.getBody('player');
+  const shape = world.getShape(character.shapeId);
+  const hit = world.characterShapeCastAgainstWorld(character, body, shape, {
+    origin: body.position,
+    direction: { x: 0, y: -1, z: 0 },
+    maxDistance: character.groundProbeDistance + character.skinWidth + 1e-4,
+    rotation: body.rotation,
+    excludeBodyId: body.id,
+    excludeColliderIds: body.colliderIds,
+    ignoreDynamicTargets: false,
+    ignoreSensors: true,
+    storeResult: false,
+    queryMode: 'ground'
+  });
+
+  assert.equal(hit.hit, true);
+  assert.equal(hit.algorithm, 'character-ground-face-v1');
+});
+
 test('PhysicsWorld kinematic controllers use step offset to climb low ledges', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({
