@@ -2048,6 +2048,72 @@ test('PhysicsWorld kinematic controllers keep moving across flat static convex h
   assert.equal(character.walkable, true);
 });
 
+test('PhysicsWorld kinematic controllers build stable ground face cache on static convex hull tops', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'platform',
+    vertices: [
+      { x: -20, y: -2, z: -20 },
+      { x: 20, y: -2, z: -20 },
+      { x: 20, y: -2, z: 20 },
+      { x: -20, y: -2, z: 20 },
+      { x: -20, y: 2, z: -20 },
+      { x: 20, y: 2, z: -20 },
+      { x: 20, y: 2, z: 20 },
+      { x: -20, y: 2, z: 20 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 17, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 6, y: 0, z: 0 });
+
+  for (let index = 0; index < 12; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const internalCharacter = world.characterRegistry.getMutable('player');
+  assert.equal(internalCharacter.groundFaceCache.colliderId, 'platform:collider');
+  assert.ok(internalCharacter.groundFaceCache.stableFrames >= 3,
+    `expected ground face cache to build temporal coherence, got ${internalCharacter.groundFaceCache.stableFrames}`);
+});
+
+test('PhysicsWorld kinematic overlap recovery resolves shallow penetration into static convex hull tops', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'platform',
+    vertices: [
+      { x: -20, y: -2, z: -20 },
+      { x: 20, y: -2, z: -20 },
+      { x: 20, y: -2, z: 20 },
+      { x: -20, y: -2, z: 20 },
+      { x: -20, y: 2, z: -20 },
+      { x: 20, y: 2, z: -20 },
+      { x: 20, y: 2, z: 20 },
+      { x: -20, y: 2, z: 20 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 16.25, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 4, y: 0, z: 0 });
+
+  world.step(1 / 60);
+
+  const body = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok(body.position.y > 16.25, `expected overlap recovery to push the player upward, got y=${body.position.y}`);
+  assert.ok(body.position.x > 0.01, `expected player to keep moving after recovery, got x=${body.position.x}`);
+  assert.equal(character.grounded, true);
+  assert.ok((character.lastRecoveryDistance ?? 0) > 0, `expected overlap recovery to record a positive distance, got ${character.lastRecoveryDistance}`);
+});
+
 test('PhysicsWorld kinematic controllers use step offset to climb low ledges', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({

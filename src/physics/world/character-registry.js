@@ -27,6 +27,18 @@ function createDefaultGroundState() {
   };
 }
 
+function createDefaultFaceCache() {
+  return {
+    colliderId: null,
+    bodyId: null,
+    faceId: null,
+    normal: createVec3(0, 1, 0),
+    point: createVec3(),
+    distance: null,
+    stableFrames: 0
+  };
+}
+
 export class CharacterRegistry extends BaseRegistry {
   constructor() {
     super('character');
@@ -66,6 +78,8 @@ export class CharacterRegistry extends BaseRegistry {
       lastHitColliderId: character.lastHitColliderId ?? null,
       lastHitBodyId: character.lastHitBodyId ?? null,
       lastHitDistance: character.lastHitDistance ?? null,
+      lastRecoveryNormal: cloneVec3(character.lastRecoveryNormal ?? createVec3()),
+      lastRecoveryDistance: character.lastRecoveryDistance ?? 0,
       userData: cloneNullableValue(character.userData)
     };
   }
@@ -105,6 +119,10 @@ export class CharacterRegistry extends BaseRegistry {
       lastHitColliderId: String(options.lastHitColliderId ?? '').trim() || null,
       lastHitBodyId: String(options.lastHitBodyId ?? '').trim() || null,
       lastHitDistance: options.lastHitDistance ?? null,
+      lastRecoveryNormal: cloneVec3(options.lastRecoveryNormal ?? createVec3()),
+      lastRecoveryDistance: toFiniteNumber(options.lastRecoveryDistance, 0),
+      groundFaceCache: options.groundFaceCache ?? createDefaultFaceCache(),
+      motionFaceCache: options.motionFaceCache ?? createDefaultFaceCache(),
       userData: cloneNullableValue(options.userData)
     });
   }
