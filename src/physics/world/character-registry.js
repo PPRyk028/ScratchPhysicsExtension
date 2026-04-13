@@ -39,6 +39,14 @@ function createDefaultFaceCache() {
   };
 }
 
+function createDefaultCandidateCache() {
+  return {
+    bounds: null,
+    colliderIds: [],
+    stableFrames: 0
+  };
+}
+
 export class CharacterRegistry extends BaseRegistry {
   constructor() {
     super('character');
@@ -123,6 +131,8 @@ export class CharacterRegistry extends BaseRegistry {
       lastRecoveryDistance: toFiniteNumber(options.lastRecoveryDistance, 0),
       groundFaceCache: options.groundFaceCache ?? createDefaultFaceCache(),
       motionFaceCache: options.motionFaceCache ?? createDefaultFaceCache(),
+      groundCandidateCache: options.groundCandidateCache ?? createDefaultCandidateCache(),
+      motionCandidateCache: options.motionCandidateCache ?? createDefaultCandidateCache(),
       userData: cloneNullableValue(options.userData)
     });
   }

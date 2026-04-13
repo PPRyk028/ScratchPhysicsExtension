@@ -8954,7 +8954,7 @@ __exports.cloneRigidBodyIslandGraph = cloneRigidBodyIslandGraph;
 __exports.buildRigidBodyIslandGraph = buildRigidBodyIslandGraph;
 },
   22: function(__require, __exports) {
-const { computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfExtents, intersectRayAabb, testAabbOverlap, testPointInAabb } = __require(4);
+const { cloneAabb, computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromCenterHalfExtents, createAabbFromMinMax, expandAabb, intersectRayAabb, testAabbOverlap, testPointInAabb } = __require(4);
 const { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } = __require(8);
 const { cloneContactPair, runNarrowphase } = __require(11);
 const { capsuleCastShape, castConvexShapesWithToi, cloneRaycastResult, cloneShapeCastResult, computeSweptShapeAabb, createRaycastResult, createShapeCastResult, raycastShape, sphereCastShape } = __require(12);
@@ -9875,6 +9875,176 @@ function getPrioritizedStaticProxyList(proxies, prioritizedColliderIds = []) {
   return prioritized.concat(remainder);
 }
 
+function ensureKinematicCandidateCache(character, cacheKey) {
+  if (!character[cacheKey] || typeof character[cacheKey] !== 'object') {
+    character[cacheKey] = {
+      bounds: null,
+      colliderIds: [],
+      stableFrames: 0
+    };
+  }
+
+  if (!Array.isArray(character[cacheKey].colliderIds)) {
+    character[cacheKey].colliderIds = [];
+  }
+
+  return character[cacheKey];
+}
+
+function clearKinematicCandidateCache(character, cacheKey) {
+  const cache = ensureKinematicCandidateCache(character, cacheKey);
+  cache.bounds = null;
+  cache.colliderIds = [];
+  cache.stableFrames = 0;
+}
+
+function cloneOptionalAabb(aabb) {
+  if (!aabb) {
+    return null;
+  }
+
+  if (aabb.center && aabb.halfExtents) {
+    return cloneAabb(aabb);
+  }
+
+  if (aabb.min && aabb.max) {
+    return createAabbFromMinMax(aabb.min, aabb.max);
+  }
+
+  return null;
+}
+
+function areColliderIdListsEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isAabbContainedWithin(inner, outer, epsilon = 1e-6) {
+  if (!inner || !outer) {
+    return false;
+  }
+
+  const resolvedInner = cloneOptionalAabb(inner);
+  const resolvedOuter = cloneOptionalAabb(outer);
+  if (!resolvedInner || !resolvedOuter) {
+    return false;
+  }
+
+  return (
+    resolvedInner.min.x >= resolvedOuter.min.x - epsilon &&
+    resolvedInner.min.y >= resolvedOuter.min.y - epsilon &&
+    resolvedInner.min.z >= resolvedOuter.min.z - epsilon &&
+    resolvedInner.max.x <= resolvedOuter.max.x + epsilon &&
+    resolvedInner.max.y <= resolvedOuter.max.y + epsilon &&
+    resolvedInner.max.z <= resolvedOuter.max.z + epsilon
+  );
+}
+
+function updateKinematicCandidateCache(character, cacheKey, queryAabb, broadphaseProxies, options = {}) {
+  const cache = ensureKinematicCandidateCache(character, cacheKey);
+  const resolvedQueryAabb = cloneOptionalAabb(queryAabb);
+  if (!resolvedQueryAabb) {
+    clearKinematicCandidateCache(character, cacheKey);
+    return cache;
+  }
+
+  const padding = Math.max(0, Number(options.padding ?? 0));
+  const expandedBounds = padding > 0
+    ? expandAabb(resolvedQueryAabb, createVec3(padding, padding, padding))
+    : resolvedQueryAabb;
+  const nextColliderIds = [];
+
+  for (const proxy of Array.isArray(broadphaseProxies) ? broadphaseProxies : []) {
+    if (proxy.isSensor || proxy.motionType !== 'static' || (proxy.shapeType !== 'box' && proxy.shapeType !== 'convex-hull')) {
+      continue;
+    }
+
+    if (!testAabbOverlap(expandedBounds, proxy.aabb)) {
+      continue;
+    }
+
+    nextColliderIds.push(proxy.colliderId);
+  }
+
+  const isSameSet = areColliderIdListsEqual(cache.colliderIds, nextColliderIds);
+  cache.bounds = expandedBounds;
+  cache.colliderIds = nextColliderIds;
+  cache.stableFrames = isSameSet ? cache.stableFrames + 1 : 1;
+  return cache;
+}
+
+function getReusableKinematicCandidateProxies(character, cacheKey, queryAabb, broadphaseProxies, prioritizedColliderIds = []) {
+  const cache = ensureKinematicCandidateCache(character, cacheKey);
+  const resolvedQueryAabb = cloneOptionalAabb(queryAabb);
+  if (!resolvedQueryAabb || !cache.bounds || !isAabbContainedWithin(resolvedQueryAabb, cache.bounds)) {
+    return null;
+  }
+
+  const proxyByColliderId = new Map();
+  for (const proxy of Array.isArray(broadphaseProxies) ? broadphaseProxies : []) {
+    proxyByColliderId.set(proxy.colliderId, proxy);
+  }
+
+  const proxies = [];
+  for (const colliderId of cache.colliderIds) {
+    const proxy = proxyByColliderId.get(colliderId);
+    if (proxy) {
+      proxies.push(proxy);
+    }
+  }
+
+  return {
+    bounds: cache.bounds,
+    proxies: getPrioritizedStaticProxyList(proxies, prioritizedColliderIds),
+    reused: true,
+    stableFrames: cache.stableFrames
+  };
+}
+
+function hasKinematicFallbackBroadphaseOverlap(queryAabb, broadphaseProxies, options = {}) {
+  const resolvedQueryAabb = cloneOptionalAabb(queryAabb);
+  if (!resolvedQueryAabb || !Array.isArray(broadphaseProxies) || broadphaseProxies.length === 0) {
+    return false;
+  }
+
+  const excludeBodyId = String(options.excludeBodyId ?? '').trim() || null;
+  const excludeColliderIds = new Set(Array.isArray(options.excludeColliderIds) ? options.excludeColliderIds.map((id) => String(id ?? '').trim()) : []);
+  const ignoreSensors = options.ignoreSensors !== false;
+
+  for (const proxy of broadphaseProxies) {
+    if (excludeColliderIds.has(proxy.colliderId)) {
+      continue;
+    }
+
+    if (excludeBodyId && proxy.bodyId === excludeBodyId) {
+      continue;
+    }
+
+    if (ignoreSensors && proxy.isSensor) {
+      continue;
+    }
+
+    if (!testAabbOverlap(resolvedQueryAabb, proxy.aabb)) {
+      continue;
+    }
+
+    if (proxy.motionType !== 'static' || (proxy.shapeType !== 'box' && proxy.shapeType !== 'convex-hull')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function findWorldFaceById(faces, faceId) {
   if (!Array.isArray(faces) || !faceId) {
     return null;
@@ -9892,18 +10062,18 @@ function createSweptBottomSphereAabb(center, radius, maxDistance) {
   const endCenter = addVec3(center, createVec3(0, -Math.max(0, Number(maxDistance ?? 0)), 0));
   const minY = Math.min(center.y, endCenter.y) - resolvedRadius;
   const maxY = Math.max(center.y, endCenter.y) + resolvedRadius;
-  return {
-    min: createVec3(
+  return createAabbFromMinMax(
+    createVec3(
       Math.min(center.x, endCenter.x) - resolvedRadius,
       minY,
       Math.min(center.z, endCenter.z) - resolvedRadius
     ),
-    max: createVec3(
+    createVec3(
       Math.max(center.x, endCenter.x) + resolvedRadius,
       maxY,
       Math.max(center.z, endCenter.z) + resolvedRadius
     )
-  };
+  );
 }
 
 function resetJointSolverState(joint) {
@@ -11015,19 +11185,231 @@ class PhysicsWorld {
     };
   }
 
+  getCachedStaticKinematicFace(cache) {
+    const colliderId = String(cache?.colliderId ?? '').trim();
+    const faceId = String(cache?.faceId ?? '').trim();
+    if (!colliderId || !faceId) {
+      return null;
+    }
+
+    const collider = this.getCollider(colliderId);
+    if (!collider || collider.isSensor) {
+      return null;
+    }
+
+    const shape = this.getShape(collider.shapeId);
+    if (!shape || (shape.type !== 'box' && shape.type !== 'convex-hull')) {
+      return null;
+    }
+
+    const body = collider.bodyId ? this.getBody(collider.bodyId) : null;
+    const motionType = body?.motionType ?? 'static';
+    if (motionType !== 'static') {
+      return null;
+    }
+
+    const worldPose = this.getColliderWorldPose(collider.id);
+    if (!worldPose) {
+      return null;
+    }
+
+    const faces = getStaticPolygonalWorldFaces(shape, worldPose);
+    const face = findWorldFaceById(faces, faceId);
+    if (!face) {
+      return null;
+    }
+
+    return {
+      colliderId: collider.id,
+      bodyId: collider.bodyId ?? null,
+      shapeId: collider.shapeId,
+      materialId: collider.materialId ?? null,
+      shapeType: shape.type,
+      face
+    };
+  }
+
+  evaluateKinematicGroundFaceHit(character, body, faceContext, maxDistance, options = {}) {
+    if (!faceContext?.face) {
+      return null;
+    }
+
+    const queryDistance = Math.max(0, Number(maxDistance ?? 0));
+    const radius = Math.max(0, Number(character?.radius ?? 0));
+    const origin = cloneVec3(options.origin ?? body.position);
+    const bottomSphereCenter = createKinematicBottomSphereCenter(character, origin);
+    const face = faceContext.face;
+    if (!isWalkableKinematicNormal(face.normal, character.maxGroundAngleDegrees)) {
+      return null;
+    }
+
+    const verticalSupport = Number(face.normal?.y ?? 0);
+    if (verticalSupport <= 1e-6) {
+      return null;
+    }
+
+    const signedDistance = dotVec3(bottomSphereCenter, face.normal) - face.planeOffset;
+    if (signedDistance < radius - character.skinWidth - 1e-3) {
+      return null;
+    }
+
+    const distance = Math.max(0, (signedDistance - radius) / verticalSupport);
+    if (distance > queryDistance + character.skinWidth + 1e-4) {
+      return null;
+    }
+
+    const sphereCenterAtHit = addVec3(bottomSphereCenter, createVec3(0, -distance, 0));
+    const contactPoint = subtractVec3(sphereCenterAtHit, scaleVec3(face.normal, radius));
+    if (!isPointInsideWorldFace(contactPoint, face, Math.max(character.skinWidth, 0.15))) {
+      return null;
+    }
+
+    return createShapeCastResult({
+      castType: 'capsule',
+      hit: true,
+      origin,
+      direction: createVec3(0, -1, 0),
+      maxDistance: queryDistance,
+      radius,
+      halfHeight: character.halfHeight,
+      rotation: cloneQuat(body.rotation ?? createIdentityQuat()),
+      sampleOrigins: [cloneVec3(origin)],
+      sampleEndPoints: [addVec3(origin, createVec3(0, -queryDistance, 0))],
+      distance,
+      point: contactPoint,
+      normal: face.normal,
+      sweepPosition: addVec3(origin, createVec3(0, -distance, 0)),
+      colliderId: faceContext.colliderId,
+      bodyId: faceContext.bodyId,
+      shapeId: faceContext.shapeId,
+      materialId: faceContext.materialId,
+      shapeType: faceContext.shapeType,
+      algorithm: 'character-ground-face-v1',
+      featureId: face.id,
+      proxyCount: options.proxyCount ?? 0,
+      candidateCount: options.candidateCount ?? 1,
+      testedShapeCount: options.testedShapeCount ?? 1
+    });
+  }
+
+  evaluateKinematicMotionFaceHit(character, body, shape, faceContext, direction, maxDistance, options = {}) {
+    if (!faceContext?.face) {
+      return null;
+    }
+
+    const queryDistance = Math.max(0, Number(maxDistance ?? 0));
+    const queryDirection = normalizeVec3(direction ?? createVec3(1, 0, 0), createVec3(1, 0, 0));
+    const rotation = cloneQuat(options.rotation ?? body.rotation ?? createIdentityQuat());
+    const origin = cloneVec3(options.origin ?? body.position);
+    const face = faceContext.face;
+    const approachSpeed = -dotVec3(queryDirection, face.normal);
+    if (approachSpeed <= KINEMATIC_MOTION_FACE_APPROACH_EPSILON) {
+      return null;
+    }
+
+    const supportFeature = getShapeSupportFeature(shape, {
+      position: origin,
+      rotation
+    }, scaleVec3(face.normal, -1));
+    const supportPoint = cloneVec3(supportFeature.worldPoint);
+    const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
+    if (signedDistance <= KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE) {
+      return null;
+    }
+
+    const planeDistance = signedDistance / approachSpeed;
+    if (planeDistance < 0 || planeDistance > queryDistance + Math.max(character.skinWidth, 0.25)) {
+      return null;
+    }
+
+    const contactPoint = addScaledVec3(supportPoint, queryDirection, planeDistance);
+    if (!isPointInsideWorldFace(contactPoint, face, Math.max(character.skinWidth, 0.1))) {
+      const boundaryDistanceSquared = getPointDistanceSquaredToWorldFaceBoundary(contactPoint, face);
+      const edgeFallbackDistance = Math.max(character.radius + character.skinWidth, 0.75);
+      if (boundaryDistanceSquared <= edgeFallbackDistance * edgeFallbackDistance) {
+        return null;
+      }
+      return createShapeCastMiss({
+        castType: 'capsule',
+        origin,
+        direction: queryDirection,
+        maxDistance: queryDistance,
+        radius: character.radius,
+        halfHeight: character.halfHeight,
+        rotation,
+        sampleOrigins: [cloneVec3(origin)],
+        sampleEndPoints: [addScaledVec3(origin, queryDirection, queryDistance)],
+        proxyCount: options.proxyCount ?? 0,
+        candidateCount: options.candidateCount ?? 1,
+        testedShapeCount: options.testedShapeCount ?? 1
+      });
+    }
+
+    return createShapeCastResult({
+      castType: 'capsule',
+      hit: true,
+      origin,
+      direction: queryDirection,
+      maxDistance: queryDistance,
+      radius: character.radius,
+      halfHeight: character.halfHeight,
+      rotation,
+      sampleOrigins: [cloneVec3(origin)],
+      sampleEndPoints: [addScaledVec3(origin, queryDirection, queryDistance)],
+      distance: planeDistance,
+      point: contactPoint,
+      normal: face.normal,
+      sweepPosition: addScaledVec3(origin, queryDirection, planeDistance),
+      colliderId: faceContext.colliderId,
+      bodyId: faceContext.bodyId,
+      shapeId: faceContext.shapeId,
+      materialId: faceContext.materialId,
+      shapeType: faceContext.shapeType,
+      algorithm: 'character-motion-face-v1',
+      featureId: face.id,
+      proxyCount: options.proxyCount ?? 0,
+      candidateCount: options.candidateCount ?? 1,
+      testedShapeCount: options.testedShapeCount ?? 1
+    });
+  }
+
   queryFastStaticKinematicGround(character, body, maxDistance, options = {}) {
     const broadphaseProxies = Array.isArray(options.broadphaseProxies)
       ? options.broadphaseProxies
       : this.ensureCollisionState().broadphaseProxies;
-    const prioritizedProxies = getPrioritizedStaticProxyList(broadphaseProxies, [
-      character?.groundFaceCache?.colliderId,
-      character?.motionFaceCache?.colliderId
-    ]);
     const queryDistance = Math.max(0, Number(maxDistance ?? 0));
     const radius = Math.max(0, Number(character?.radius ?? 0));
     const origin = cloneVec3(options.origin ?? body.position);
     const bottomSphereCenter = createKinematicBottomSphereCenter(character, origin);
     const sweptAabb = createSweptBottomSphereAabb(bottomSphereCenter, radius, queryDistance);
+    const prioritizedColliderIds = [
+      character?.groundFaceCache?.colliderId,
+      character?.motionFaceCache?.colliderId
+    ];
+    const cachedGroundContext = character?.groundFaceCache?.stableFrames >= 2
+      ? this.getCachedStaticKinematicFace(character.groundFaceCache)
+      : null;
+    if (cachedGroundContext) {
+      const cachedGroundHit = this.evaluateKinematicGroundFaceHit(character, body, cachedGroundContext, maxDistance, {
+        origin: options.origin,
+        proxyCount: broadphaseProxies.length,
+        candidateCount: 1,
+        testedShapeCount: 1
+      });
+      if (cachedGroundHit) {
+        return cachedGroundHit;
+      }
+    }
+    const candidateReuse = getReusableKinematicCandidateProxies(
+      character,
+      'groundCandidateCache',
+      sweptAabb,
+      broadphaseProxies,
+      prioritizedColliderIds
+    );
+    const prioritizedProxies = candidateReuse
+      ? candidateReuse.proxies
+      : getPrioritizedStaticProxyList(broadphaseProxies, prioritizedColliderIds);
     const excludeBodyId = String(options.excludeBodyId ?? body.id ?? '').trim() || null;
     const excludeColliderIds = new Set(Array.isArray(options.excludeColliderIds) ? options.excludeColliderIds.map((id) => String(id ?? '').trim()) : []);
     const up = createVec3(0, 1, 0);
@@ -11151,6 +11533,10 @@ class PhysicsWorld {
       }
     }
 
+    updateKinematicCandidateCache(character, 'groundCandidateCache', sweptAabb, broadphaseProxies, {
+      padding: Math.max(character.skinWidth + 0.5, radius * 0.25, 1)
+    });
+
     if (!nearestHit || fallbackRequired) {
       return null;
     }
@@ -11162,10 +11548,6 @@ class PhysicsWorld {
     const broadphaseProxies = Array.isArray(options.broadphaseProxies)
       ? options.broadphaseProxies
       : this.ensureCollisionState().broadphaseProxies;
-    const prioritizedProxies = getPrioritizedStaticProxyList(broadphaseProxies, [
-      character?.motionFaceCache?.colliderId,
-      character?.groundFaceCache?.colliderId
-    ]);
     const queryDistance = Math.max(0, Number(maxDistance ?? 0));
     const queryDirection = normalizeVec3(direction ?? createVec3(1, 0, 0), createVec3(1, 0, 0));
     const rotation = cloneQuat(options.rotation ?? body.rotation ?? createIdentityQuat());
@@ -11177,6 +11559,36 @@ class PhysicsWorld {
       maxDistance: queryDistance,
       rotation
     });
+    const prioritizedColliderIds = [
+      character?.motionFaceCache?.colliderId,
+      character?.groundFaceCache?.colliderId
+    ];
+    const cachedMotionContexts = [
+      character?.motionFaceCache?.stableFrames >= 2 ? this.getCachedStaticKinematicFace(character.motionFaceCache) : null,
+      character?.groundFaceCache?.stableFrames >= 2 ? this.getCachedStaticKinematicFace(character.groundFaceCache) : null
+    ].filter(Boolean);
+    for (const cachedMotionContext of cachedMotionContexts) {
+      const cachedMotionHit = this.evaluateKinematicMotionFaceHit(character, body, shape, cachedMotionContext, direction, maxDistance, {
+        origin: options.origin,
+        rotation: options.rotation,
+        proxyCount: broadphaseProxies.length,
+        candidateCount: 1,
+        testedShapeCount: 1
+      });
+      if (cachedMotionHit?.hit) {
+        return cachedMotionHit;
+      }
+    }
+    const candidateReuse = getReusableKinematicCandidateProxies(
+      character,
+      'motionCandidateCache',
+      sweptAabb,
+      broadphaseProxies,
+      prioritizedColliderIds
+    );
+    const prioritizedProxies = candidateReuse
+      ? candidateReuse.proxies
+      : getPrioritizedStaticProxyList(broadphaseProxies, prioritizedColliderIds);
     const excludeBodyId = String(options.excludeBodyId ?? body.id ?? '').trim() || null;
     const excludeColliderIds = new Set(Array.isArray(options.excludeColliderIds) ? options.excludeColliderIds.map((id) => String(id ?? '').trim()) : []);
     const ignoreSensors = options.ignoreSensors !== false;
@@ -11243,38 +11655,53 @@ class PhysicsWorld {
         ? cachedFaces.concat(faces.filter((face) => !cachedFaces.includes(face)))
         : faces;
 
-      let cachedFaceHit = null;
       for (const face of faceQueue) {
-        const approachSpeed = -dotVec3(queryDirection, face.normal);
-        if (approachSpeed <= KINEMATIC_MOTION_FACE_APPROACH_EPSILON) {
+        const evaluated = this.evaluateKinematicMotionFaceHit(character, body, shape, {
+          colliderId: proxy.colliderId,
+          bodyId: proxy.bodyId,
+          shapeId: proxy.shapeId,
+          materialId: proxy.materialId,
+          shapeType: proxy.shapeType,
+          face
+        }, queryDirection, queryDistance, {
+          origin,
+          rotation,
+          proxyCount: broadphaseProxies.length,
+          candidateCount,
+          testedShapeCount
+        });
+
+        if (!evaluated) {
+          const supportFeature = getShapeSupportFeature(shape, {
+            position: origin,
+            rotation
+          }, scaleVec3(face.normal, -1));
+          const supportPoint = cloneVec3(supportFeature.worldPoint);
+          const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
+          if (signedDistance > KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE) {
+            const approachSpeed = -dotVec3(queryDirection, face.normal);
+            if (approachSpeed > KINEMATIC_MOTION_FACE_APPROACH_EPSILON) {
+              const planeDistance = signedDistance / approachSpeed;
+              if (Number.isFinite(planeDistance)) {
+                nearestPlaneDistance = Math.min(nearestPlaneDistance, planeDistance);
+              }
+            }
+          }
+          const projectedPoint = supportFeature?.worldPoint
+            ? addScaledVec3(supportPoint, queryDirection, Math.max(0, signedDistance / Math.max(1e-8, -dotVec3(queryDirection, face.normal))))
+            : null;
+          if (projectedPoint) {
+            const boundaryDistanceSquared = getPointDistanceSquaredToWorldFaceBoundary(projectedPoint, face);
+            const edgeFallbackDistance = Math.max(character.radius + character.skinWidth, 0.75);
+            if (boundaryDistanceSquared <= edgeFallbackDistance * edgeFallbackDistance) {
+              fallbackRequired = true;
+            }
+          }
           continue;
         }
 
-        const supportFeature = getShapeSupportFeature(shape, {
-          position: origin,
-          rotation
-        }, scaleVec3(face.normal, -1));
-        const supportPoint = cloneVec3(supportFeature.worldPoint);
-        const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
-
-        if (signedDistance <= KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE) {
-          fallbackRequired = true;
-          continue;
-        }
-
-        const planeDistance = signedDistance / approachSpeed;
-        if (Number.isFinite(planeDistance)) {
-          nearestPlaneDistance = Math.min(nearestPlaneDistance, planeDistance);
-        }
-
-        if (planeDistance < 0 || planeDistance > queryDistance + Math.max(character.skinWidth, 0.25)) {
-          continue;
-        }
-
-        const contactPoint = addScaledVec3(supportPoint, queryDirection, planeDistance);
-        const insideFace = isPointInsideWorldFace(contactPoint, face, Math.max(character.skinWidth, 0.1));
-        if (!insideFace) {
-          const boundaryDistanceSquared = getPointDistanceSquaredToWorldFaceBoundary(contactPoint, face);
+        if (!evaluated.hit) {
+          const boundaryDistanceSquared = getPointDistanceSquaredToWorldFaceBoundary(evaluated.endPoint ?? origin, face);
           const edgeFallbackDistance = Math.max(character.radius + character.skinWidth, 0.75);
           if (boundaryDistanceSquared <= edgeFallbackDistance * edgeFallbackDistance) {
             fallbackRequired = true;
@@ -11282,45 +11709,22 @@ class PhysicsWorld {
           continue;
         }
 
-        const candidateHit = createShapeCastResult({
-            castType: 'capsule',
-            hit: true,
-            origin,
-            direction: queryDirection,
-            maxDistance: queryDistance,
-            radius: character.radius,
-            halfHeight: character.halfHeight,
-            rotation,
-            sampleOrigins: [cloneVec3(origin)],
-            sampleEndPoints: [addScaledVec3(origin, queryDirection, queryDistance)],
-            distance: planeDistance,
-            point: contactPoint,
-            normal: face.normal,
-            sweepPosition: addScaledVec3(origin, queryDirection, planeDistance),
-            colliderId: proxy.colliderId,
-            bodyId: proxy.bodyId,
-            shapeId: proxy.shapeId,
-            materialId: proxy.materialId,
-            shapeType: proxy.shapeType,
-            algorithm: 'character-motion-face-v1',
-            featureId: face.id,
-            proxyCount: broadphaseProxies.length,
-            candidateCount,
-            testedShapeCount
-          });
-        if (!nearestHit || planeDistance < nearestHit.distance - 1e-8) {
-          nearestHit = candidateHit;
+        if (Number.isFinite(evaluated.distance)) {
+          nearestPlaneDistance = Math.min(nearestPlaneDistance, evaluated.distance);
         }
-        if (cachedFaces.includes(face)) {
-          cachedFaceHit = candidateHit;
+        if (!nearestHit || evaluated.distance < nearestHit.distance - 1e-8) {
+          nearestHit = evaluated;
+        }
+        if (cachedFaces.includes(face) && evaluated.hit) {
+          nearestHit = evaluated;
           break;
         }
       }
-
-      if (cachedFaceHit) {
-        continue;
-      }
     }
+
+    updateKinematicCandidateCache(character, 'motionCandidateCache', sweptAabb, broadphaseProxies, {
+      padding: Math.max(character.skinWidth + 0.5, queryDistance, Math.max(character.radius * 0.25, 1))
+    });
 
     if (nearestHit) {
       return nearestHit;
@@ -11330,7 +11734,36 @@ class PhysicsWorld {
       return null;
     }
 
+    const canShortCircuitMotionMiss = candidateReuse &&
+      candidateReuse.proxies.length > 0 &&
+      candidateReuse.proxies.every((proxy) => proxy.shapeType === 'convex-hull');
+
+    if (canShortCircuitMotionMiss && !hasKinematicFallbackBroadphaseOverlap(sweptAabb, broadphaseProxies, {
+      excludeBodyId,
+      excludeColliderIds: Array.from(excludeColliderIds),
+      ignoreSensors
+    })) {
+      return createShapeCastMiss({
+        castType: 'capsule',
+        origin,
+        direction: queryDirection,
+        maxDistance: queryDistance,
+        radius: character.radius,
+        halfHeight: character.halfHeight,
+        rotation,
+        sampleOrigins: [cloneVec3(origin)],
+        sampleEndPoints: [addScaledVec3(origin, queryDirection, queryDistance)],
+        proxyCount: broadphaseProxies.length,
+        candidateCount,
+        testedShapeCount
+      });
+    }
+
     if (!Number.isFinite(nearestPlaneDistance) || nearestPlaneDistance > queryDistance + Math.max(character.radius, character.skinWidth, 0.5)) {
+      if (candidateReuse && !canShortCircuitMotionMiss) {
+        return null;
+      }
+
       return createShapeCastMiss({
         castType: 'capsule',
         origin,
@@ -11779,10 +12212,16 @@ class PhysicsWorld {
         return;
       }
 
-      this.recoverKinematicStaticOverlaps(character, body, shape, {
+      const initialRecovery = this.recoverKinematicStaticOverlaps(character, body, shape, {
         maxIterations: 2,
         padding: 0.02
       });
+      let totalRecoveryDistance = 0;
+      let lastRecoveryNormal = createVec3();
+      if (initialRecovery.recovered) {
+        totalRecoveryDistance += initialRecovery.distance;
+        lastRecoveryNormal = cloneVec3(character.lastRecoveryNormal ?? createVec3());
+      }
       this.updateKinematicGroundState(character.id);
       const wasGrounded = character.grounded === true && character.walkable === true;
       let verticalVelocity = toOptionalNumber(character.verticalVelocity, 0) ?? 0;
@@ -11791,8 +12230,6 @@ class PhysicsWorld {
       let lastHitBodyId = null;
       let lastHitDistance = null;
       let lastHitNormal = createVec3();
-      let totalRecoveryDistance = character.lastRecoveryDistance ?? 0;
-      let lastRecoveryNormal = cloneVec3(character.lastRecoveryNormal ?? createVec3());
       const totalRequestedMove = createVec3();
       const totalActualMove = createVec3();
 
@@ -11844,13 +12281,19 @@ class PhysicsWorld {
         let horizontalResult = this.traceKinematicCapsuleMotion(character, body, shape, horizontalMove, {
           startPosition: body.position
         });
-        const stepCandidate = wasGrounded && character.walkable && (horizontalResult.hitNormal?.y ?? 1) < 0.35
+        const stepCandidate = wasGrounded && character.walkable && horizontalResult.blocked && (horizontalResult.hitNormal?.y ?? 1) < 0.35
           ? this.tryKinematicCapsuleStepMove(character, body, shape, horizontalMove)
           : null;
+        const horizontalForwardProgress = getForwardProgress(horizontalMove, horizontalResult.actualMove);
         if (
           stepCandidate &&
-          getForwardProgress(horizontalMove, stepCandidate.actualMove) >
-            getForwardProgress(horizontalMove, horizontalResult.actualMove) + 1e-4
+          (
+            getForwardProgress(horizontalMove, stepCandidate.actualMove) > horizontalForwardProgress + 1e-4 ||
+            (
+              getForwardProgress(horizontalMove, stepCandidate.actualMove) >= horizontalForwardProgress - 1e-4 &&
+              stepCandidate.endPosition.y > horizontalResult.endPosition.y + Math.max(character.skinWidth, 0.25)
+            )
+          )
         ) {
           horizontalResult = stepCandidate;
         }
@@ -14575,6 +15018,14 @@ function createDefaultFaceCache() {
     stableFrames: 0
   };
 }
+
+function createDefaultCandidateCache() {
+  return {
+    bounds: null,
+    colliderIds: [],
+    stableFrames: 0
+  };
+}
 class CharacterRegistry extends BaseRegistry {
   constructor() {
     super('character');
@@ -14659,6 +15110,8 @@ class CharacterRegistry extends BaseRegistry {
       lastRecoveryDistance: toFiniteNumber(options.lastRecoveryDistance, 0),
       groundFaceCache: options.groundFaceCache ?? createDefaultFaceCache(),
       motionFaceCache: options.motionFaceCache ?? createDefaultFaceCache(),
+      groundCandidateCache: options.groundCandidateCache ?? createDefaultCandidateCache(),
+      motionCandidateCache: options.motionCandidateCache ?? createDefaultCandidateCache(),
       userData: cloneNullableValue(options.userData)
     });
   }

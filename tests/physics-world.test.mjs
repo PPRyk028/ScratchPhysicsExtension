@@ -2081,6 +2081,89 @@ test('PhysicsWorld kinematic controllers build stable ground face cache on stati
     `expected ground face cache to build temporal coherence, got ${internalCharacter.groundFaceCache.stableFrames}`);
 });
 
+test('PhysicsWorld kinematic controllers build stable ground broadphase candidate caches on static convex hull tops', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'platform',
+    vertices: [
+      { x: -20, y: -2, z: -20 },
+      { x: 20, y: -2, z: -20 },
+      { x: 20, y: -2, z: 20 },
+      { x: -20, y: -2, z: 20 },
+      { x: -20, y: 2, z: -20 },
+      { x: 20, y: 2, z: -20 },
+      { x: 20, y: 2, z: 20 },
+      { x: -20, y: 2, z: 20 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 17, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 6, y: 0, z: 0 });
+
+  for (let index = 0; index < 12; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const internalCharacter = world.characterRegistry.getMutable('player');
+  assert.ok(internalCharacter.groundCandidateCache.bounds, 'expected ground candidate cache bounds to exist');
+  assert.ok(internalCharacter.groundCandidateCache.colliderIds.includes('platform:collider'),
+    `expected ground candidate cache to include platform collider, got ${internalCharacter.groundCandidateCache.colliderIds.join(', ')}`);
+  assert.ok(internalCharacter.groundCandidateCache.stableFrames >= 2,
+    `expected stable ground candidate cache frames, got ${internalCharacter.groundCandidateCache.stableFrames}`);
+});
+
+test('PhysicsWorld kinematic motion queries build stable broadphase candidate caches against static convex walls', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'wall',
+    vertices: [
+      { x: -2, y: -8, z: -8 },
+      { x: 2, y: -8, z: -8 },
+      { x: 2, y: 8, z: -8 },
+      { x: -2, y: 8, z: -8 },
+      { x: -2, y: -8, z: 8 },
+      { x: 2, y: -8, z: 8 },
+      { x: 2, y: 8, z: 8 },
+      { x: -2, y: 8, z: 8 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: -12, y: 0, z: 0 },
+    radius: 2,
+    halfHeight: 4
+  });
+
+  const internalCharacter = world.characterRegistry.getMutable('player');
+  const body = world.getBody('player');
+  const shape = world.getShape(internalCharacter.shapeId);
+
+  for (let index = 0; index < 4; index += 1) {
+    world.characterShapeCastAgainstWorld(internalCharacter, body, shape, {
+      origin: body.position,
+      direction: { x: 1, y: 0, z: 0 },
+      maxDistance: 16,
+      rotation: body.rotation,
+      excludeBodyId: body.id,
+      excludeColliderIds: body.colliderIds,
+      ignoreDynamicTargets: false,
+      ignoreSensors: true,
+      storeResult: false,
+      queryMode: 'motion'
+    });
+  }
+
+  assert.ok(internalCharacter.motionCandidateCache.bounds, 'expected motion candidate cache bounds to exist');
+  assert.ok(internalCharacter.motionCandidateCache.colliderIds.includes('wall:collider'),
+    `expected motion candidate cache to include wall collider, got ${internalCharacter.motionCandidateCache.colliderIds.join(', ')}`);
+  assert.ok(internalCharacter.motionCandidateCache.stableFrames >= 3,
+    `expected stable motion candidate cache frames, got ${internalCharacter.motionCandidateCache.stableFrames}`);
+});
+
 test('PhysicsWorld kinematic overlap recovery resolves shallow penetration into static convex hull tops', () => {
   const world = new PhysicsWorld();
   world.createStaticConvexHullCollider({
