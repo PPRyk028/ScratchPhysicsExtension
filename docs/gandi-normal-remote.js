@@ -24,6 +24,39 @@ ScratchApi.extensions.register(new GandiRemote3DExtension());
 const { Engine3D } = __require(2);
 const { toNumber, toString } = __require(33);
 const { createExtensionInfo } = __require(34);
+function resolveBlockType(blockType) {
+  if (typeof blockType !== 'string' || blockType.length === 0) {
+    return blockType;
+  }
+
+  const scratchBlockType = globalThis.Scratch?.BlockType ?? null;
+  if (!scratchBlockType || typeof scratchBlockType !== 'object') {
+    return blockType;
+  }
+
+  const normalizedKey = blockType.trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return scratchBlockType[normalizedKey] ?? blockType;
+}
+
+function normalizeExtensionInfo(info) {
+  if (!info || !Array.isArray(info.blocks)) {
+    return info;
+  }
+
+  return {
+    ...info,
+    blocks: info.blocks.map((block) => {
+      if (!block || typeof block !== 'object') {
+        return block;
+      }
+
+      return {
+        ...block,
+        blockType: resolveBlockType(block.blockType)
+      };
+    })
+  };
+}
 class Base3DExtension {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
@@ -31,7 +64,7 @@ class Base3DExtension {
   }
 
   getInfo() {
-    return createExtensionInfo();
+    return normalizeExtensionInfo(createExtensionInfo());
   }
 
   resetScene() {

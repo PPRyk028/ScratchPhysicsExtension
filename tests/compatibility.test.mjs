@@ -138,6 +138,11 @@ function createTurboWarpContext({ unsandboxed = true, withRenderer = true } = {}
   const renderer = withRenderer ? { tag: 'renderer' } : null;
   const runtime = { renderer };
   const Scratch = {
+    BlockType: {
+      COMMAND: 'command',
+      REPORTER: 'reporter',
+      BOOLEAN: 'Boolean'
+    },
     vm: {
       runtime,
       renderer
@@ -162,6 +167,13 @@ function createGandiContext({ withRenderer = true } = {}) {
   const renderer = withRenderer ? { tag: 'renderer' } : null;
   const runtime = { renderer };
   return {
+    Scratch: {
+      BlockType: {
+        COMMAND: 'command',
+        REPORTER: 'reporter',
+        BOOLEAN: 'Boolean'
+      }
+    },
     runtime,
     window: {}
   };
@@ -202,9 +214,11 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
 
   const extension = context.registrations[0];
   const info = normalizeRealmValue(extension.getInfo());
+  const groundedBlock = info.blocks.find((block) => block?.opcode === 'isKinematicCapsuleGrounded');
 
   assert.equal(info.id, 'engine3d');
   assertHasRequiredOpcodes(info);
+  assert.equal(groundedBlock?.blockType, turboWarp.Scratch.BlockType.BOOLEAN);
 
   extension.resetWorld();
   extension.createMaterial({ ID: 'ice', FRICTION: 0.05, RESTITUTION: 0.2, DENSITY: 0.9 });
@@ -344,9 +358,11 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
 
   const extension = context.registrations[0];
   const info = normalizeRealmValue(extension.getInfo());
+  const groundedBlock = info.blocks.find((block) => block?.opcode === 'isKinematicCapsuleGrounded');
 
   assert.equal(info.id, 'engine3d');
   assertHasRequiredOpcodes(info);
+  assert.equal(groundedBlock?.blockType, gandiRemote.Scratch.BlockType.BOOLEAN);
   extension.resetWorld();
   extension.setCameraTarget({ X: 0, Y: -5, Z: 0 });
   extension.createStaticBoxCollider({ ID: 'remote-floor', X: 0, Y: -5, Z: 0, SIZE: 10, MATERIAL: 'material-default' });
