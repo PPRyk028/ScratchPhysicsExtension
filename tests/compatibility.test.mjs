@@ -27,6 +27,12 @@ const REQUIRED_OPCODES = [
   'createStaticConvexHullSensor',
   'createPresetStaticConvexHullCollider',
   'createPresetStaticConvexHullSensor',
+  'createKinematicCapsule',
+  'configureKinematicCapsule',
+  'configureKinematicController',
+  'setKinematicCapsuleMoveIntent',
+  'jumpKinematicCapsule',
+  'moveKinematicCapsule',
   'convexHullPresetVertices',
   'createClothSheet',
   'createSoftBodyCube',
@@ -67,6 +73,9 @@ const REQUIRED_OPCODES = [
   'jointSummary',
   'clothSummary',
   'softBodySummary',
+  'kinematicCapsuleSummary',
+  'kinematicGroundSummary',
+  'isKinematicCapsuleGrounded',
   'queryPointBodies',
   'queryPointColliders',
   'queryAabbBodies',
@@ -210,6 +219,10 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.createBoxRigidBody({ ID: 'probe-2', X: 40, Y: 6, Z: 7, SIZE: 42, MASS: 2, MATERIAL: 'ice' });
   extension.configureBodyCollision({ ID: 'probe', LAYER: 1, MASK: 2147483647 });
   extension.configureColliderCollision({ ID: 'probe-2:collider', LAYER: 4, MASK: 2147483647, SENSOR: 'off' });
+  extension.createKinematicCapsule({ ID: 'player', X: 0, Y: 15, Z: 0, RADIUS: 5, HALF_HEIGHT: 10, LAYER: 2, MASK: 2147483647 });
+  extension.configureKinematicCapsule({ ID: 'player', SKIN: 1.25, PROBE: 6, MAX_SLOPE: 60 });
+  extension.configureKinematicController({ ID: 'player', JUMP_SPEED: 9, GRAVITY_SCALE: 1.2, STEP_OFFSET: 7, GROUND_SNAP: 3 });
+  extension.setKinematicCapsuleMoveIntent({ ID: 'player', DX: 3, DY: 0, DZ: 0 });
   extension.createConvexHullRigidBody({ ID: 'probe-hull', VERTICES: '-8 -8 -8; 8 -8 -8; 8 -8 8; -8 -8 8; 0 8 0', X: -20, Y: 30, Z: 0, MASS: 1.5, MATERIAL: 'ice' });
   extension.createPresetConvexHullRigidBody({ ID: 'preset-hull', PRESET: 'skew-prism', X: -50, Y: 20, Z: 0, SCALE: 40, MASS: 1, MATERIAL: 'ice' });
   extension.createPresetStaticConvexHullCollider({ ID: 'preset-ramp', PRESET: 'skew-frustum', X: 60, Y: -30, Z: 0, SCALE: 30, MATERIAL: 'ice' });
@@ -245,7 +258,7 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.raycast({ X: 0, Y: 120, Z: 0, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
   extension.showDebugOverlay();
   assert.match(extension.queryPointBodies({ X: 5, Y: 6, Z: 7 }), /1 bodies/);
-  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /9 colliders/);
+  assert.match(extension.queryAabbColliders({ X: 0, Y: 0, Z: 0, HX: 100, HY: 100, HZ: 100 }), /10 colliders/);
   assert.match(extension.queryBodyContacts({ ID: 'probe' }), /(bodies touching|not found)/);
   assert.match(extension.queryColliderContacts({ ID: 'probe:collider' }), /(colliders touching|not found)/);
   assert.match(extension.queryBodyTriggerEvents({ ID: 'probe', PHASE: 'enter' }), /bodies in enter trigger events/);
@@ -253,12 +266,14 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   assert.match(extension.queryBodyContactEvents({ ID: 'probe', PHASE: 'enter' }), /(bodies in enter contact events|not found)/);
   assert.match(extension.queryColliderContactEvents({ ID: 'probe:collider', PHASE: 'enter' }), /(colliders in enter contact events|not found)/);
   assert.match(extension.convexHullPresetVertices({ PRESET: 'pyramid', SCALE: 50 }), /;/);
+  extension.moveKinematicCapsule({ ID: 'player', DX: 6, DY: 0, DZ: 0 });
   extension.stepWorld({ SECONDS: 1 / 60 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
   extension.resetDebugOverlayLayers();
 
-  assert.match(extension.worldSummary(), /4 bodies/);
+  assert.match(extension.worldSummary(), /5 bodies/);
+  assert.match(extension.worldSummary(), /1 characters/);
   assert.match(extension.worldSummary(), /1 cloths/);
   assert.match(extension.worldSummary(), /1 soft bodies/);
   assert.match(extension.jointSummary({ ID: 'joint-1' }), /distance-joint/);
@@ -274,6 +289,13 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   assert.match(extension.softBodySummary({ ID: 'soft-1' }), /damping:0.045/);
   assert.match(extension.softBodySummary({ ID: 'soft-1' }), /volume:0.0003/);
   assert.match(extension.softBodySummary({ ID: 'soft-1' }), /dynamic contacts:/);
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'player' }), /radius:5/);
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'player' }), /grounded:yes/);
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'player' }), /jump:9/);
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'player' }), /step offset:7/);
+  assert.match(extension.kinematicGroundSummary({ ID: 'player' }), /grounded:yes/);
+  assert.equal(extension.isKinematicCapsuleGrounded({ ID: 'player' }), true);
+  extension.jumpKinematicCapsule({ ID: 'player' });
   assert.match(extension.colliderSummary({ ID: 'floor:collider' }), /body:static/);
   assert.match(extension.materialSummary({ ID: 'ice' }), /friction:0.05/);
   assert.match(extension.raycastSummary(), /Ray hit/);
@@ -335,6 +357,10 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.createBoxRigidBody({ ID: 'remote-probe-2', X: 20, Y: 0, Z: 0, SIZE: 10, MASS: 1, MATERIAL: 'material-default' });
   extension.configureBodyCollision({ ID: 'remote-probe', LAYER: 1, MASK: 2147483647 });
   extension.configureColliderCollision({ ID: 'remote-probe-2:collider', LAYER: 4, MASK: 2147483647, SENSOR: 'off' });
+  extension.createKinematicCapsule({ ID: 'remote-player', X: 0, Y: 15, Z: 0, RADIUS: 5, HALF_HEIGHT: 10, LAYER: 2, MASK: 2147483647 });
+  extension.configureKinematicCapsule({ ID: 'remote-player', SKIN: 1.25, PROBE: 6, MAX_SLOPE: 60 });
+  extension.configureKinematicController({ ID: 'remote-player', JUMP_SPEED: 9, GRAVITY_SCALE: 1.2, STEP_OFFSET: 7, GROUND_SNAP: 3 });
+  extension.setKinematicCapsuleMoveIntent({ ID: 'remote-player', DX: 2, DY: 0, DZ: 0 });
   extension.createConvexHullRigidBody({ ID: 'remote-hull', VERTICES: '-3 -3 -3; 3 -3 -3; 3 -3 3; -3 -3 3; 0 3 0', X: -15, Y: 6, Z: 0, MASS: 1, MATERIAL: 'material-default' });
   extension.createPresetConvexHullRigidBody({ ID: 'remote-preset-hull', PRESET: 'wedge', X: -25, Y: 12, Z: 0, SCALE: 20, MASS: 1, MATERIAL: 'material-default' });
   extension.createPresetStaticConvexHullCollider({ ID: 'remote-preset-ramp', PRESET: 'skew-frustum', X: 30, Y: -16, Z: 0, SCALE: 20, MATERIAL: 'material-default' });
@@ -364,11 +390,13 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   extension.raycast({ X: 0, Y: 40, Z: 0, DX: 0, DY: -1, DZ: 0, LENGTH: 100 });
   extension.setDebugOverlayLayers({ LAYERS: 'contacts queries' });
   extension.showDebugOverlay();
+  extension.moveKinematicCapsule({ ID: 'remote-player', DX: 4, DY: 0, DZ: 0 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
   extension.resetDebugOverlayLayers();
 
-  assert.match(extension.worldSummary(), /4 bodies/);
+  assert.match(extension.worldSummary(), /5 bodies/);
+  assert.match(extension.worldSummary(), /1 characters/);
   assert.match(extension.worldSummary(), /1 soft bodies/);
   assert.match(extension.clothSummary({ ID: 'remote-cloth' }), /pin:top-corners/);
   assert.match(extension.clothSummary({ ID: 'remote-cloth' }), /self:on/);
@@ -378,10 +406,15 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   assert.match(extension.softBodySummary({ ID: 'remote-soft' }), /damping:0.045/);
   assert.match(extension.softBodySummary({ ID: 'remote-soft' }), /volume:0.0003/);
   assert.match(extension.softBodySummary({ ID: 'remote-soft' }), /dynamic contacts:/);
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'remote-player' }), /radius:5/);
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'remote-player' }), /jump:9/);
+  assert.match(extension.kinematicGroundSummary({ ID: 'remote-player' }), /grounded:yes/);
+  assert.equal(extension.isKinematicCapsuleGrounded({ ID: 'remote-player' }), true);
+  extension.jumpKinematicCapsule({ ID: 'remote-player' });
   assert.match(extension.jointSummary({ ID: 'remote-joint' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'remote-hinge' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'remote-fixed' }), /break force:/);
-  assert.match(extension.queryPointColliders({ X: 0, Y: 0, Z: 0 }), /3 colliders/);
+  assert.match(extension.queryPointColliders({ X: 0, Y: 0, Z: 0 }), /4 colliders/);
   assert.match(extension.queryBodyContacts({ ID: 'remote-probe' }), /(bodies touching|not found)/);
   assert.match(extension.queryColliderContacts({ ID: 'remote-probe:collider' }), /(colliders touching|not found)/);
   assert.match(extension.queryBodyTriggerEvents({ ID: 'remote-probe', PHASE: 'enter' }), /bodies in enter trigger events/);
@@ -423,6 +456,10 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.createBoxRigidBody({ ID: 'gandi-link', X: 40, Y: 2, Z: 3, SIZE: 64, MASS: 3, MATERIAL: 'rubber' });
   extension.configureBodyCollision({ ID: 'gandi-probe', LAYER: 1, MASK: 2147483647 });
   extension.configureColliderCollision({ ID: 'gandi-link:collider', LAYER: 4, MASK: 2147483647, SENSOR: 'off' });
+  extension.createKinematicCapsule({ ID: 'gandi-player', X: 1, Y: 15, Z: 3, RADIUS: 5, HALF_HEIGHT: 10, LAYER: 2, MASK: 2147483647 });
+  extension.configureKinematicCapsule({ ID: 'gandi-player', SKIN: 1.25, PROBE: 6, MAX_SLOPE: 60 });
+  extension.configureKinematicController({ ID: 'gandi-player', JUMP_SPEED: 9, GRAVITY_SCALE: 1.2, STEP_OFFSET: 7, GROUND_SNAP: 3 });
+  extension.setKinematicCapsuleMoveIntent({ ID: 'gandi-player', DX: 2, DY: 0, DZ: 0 });
   extension.createConvexHullRigidBody({ ID: 'gandi-hull', VERTICES: '-10 -10 -10; 10 -10 -10; 10 -10 10; -10 -10 10; 0 10 0', X: -30, Y: 20, Z: 3, MASS: 2, MATERIAL: 'rubber' });
   extension.createPresetConvexHullRigidBody({ ID: 'gandi-preset-hull', PRESET: 'skew-hexahedron', X: -50, Y: 30, Z: 3, SCALE: 24, MASS: 2, MATERIAL: 'rubber' });
   extension.createPresetStaticConvexHullCollider({ ID: 'gandi-preset-ramp', PRESET: 'wedge', X: 50, Y: -16, Z: 3, SCALE: 30, MATERIAL: 'rubber' });
@@ -452,18 +489,25 @@ test('Gandi extension instance runs shared blocks against the same core contract
   extension.sphereCast({ X: 1, Y: 80, Z: 3, RADIUS: 10, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
   extension.capsuleCast({ X: 1, Y: 80, Z: 3, RADIUS: 8, HALF_HEIGHT: 16, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
   extension.raycast({ X: 1, Y: 80, Z: 3, DX: 0, DY: -1, DZ: 0, LENGTH: 200 });
-  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 90, HY: 90, HZ: 90 }), /9 colliders/);
+  assert.match(extension.queryAabbColliders({ X: 1, Y: 0, Z: 3, HX: 90, HY: 90, HZ: 90 }), /10 colliders/);
   extension.setDebugOverlayLayers({ LAYERS: 'bodies contacts joints' });
   extension.showDebugOverlay();
+  extension.moveKinematicCapsule({ ID: 'gandi-player', DX: 4, DY: 0, DZ: 0 });
   extension.stepWorld({ SECONDS: 1 / 30 });
   extension.renderDebugFrame();
   extension.hideDebugOverlay();
   extension.resetDebugOverlayLayers();
 
-  assert.match(extension.worldSummary(), /4 bodies/);
+  assert.match(extension.worldSummary(), /5 bodies/);
+  assert.match(extension.worldSummary(), /1 characters/);
   assert.match(extension.worldSummary(), /1 cloths/);
   assert.match(extension.worldSummary(), /1 soft bodies/);
   assert.match(extension.rigidBodySummary({ ID: 'gandi-probe' }), /gandi-probe/);
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'gandi-player' }), /radius:5/);
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'gandi-player' }), /jump:9/);
+  assert.match(extension.kinematicGroundSummary({ ID: 'gandi-player' }), /grounded:yes/);
+  assert.equal(extension.isKinematicCapsuleGrounded({ ID: 'gandi-player' }), true);
+  extension.jumpKinematicCapsule({ ID: 'gandi-player' });
   assert.match(extension.clothSummary({ ID: 'gandi-cloth' }), /particles:20/);
   assert.match(extension.clothSummary({ ID: 'gandi-cloth' }), /self:on/);
   assert.match(extension.clothSummary({ ID: 'gandi-cloth' }), /damping:0.08/);

@@ -34,6 +34,12 @@ const LAYER_GROUPS = {
   'soft-bend': new Set(['soft-body-bend-edge']),
   'soft-pins': new Set(['soft-body-pin', 'soft-body-particle']),
   'soft-contacts': new Set(['soft-body-contact-point', 'soft-body-contact-normal']),
+  characters: new Set([
+    'character-controller',
+    'character-ground-point',
+    'character-ground-normal',
+    'character-move-path'
+  ]),
   sensors: new Set(['sensor-collider', 'sensor-origin']),
   triggers: new Set(['trigger-contact-point', 'trigger-contact-normal']),
   static: new Set(['static-collider', 'collider-origin']),
@@ -90,6 +96,10 @@ const LAYER_ALIASES = {
   'soft-bend': 'soft-bend',
   'soft-pins': 'soft-pins',
   'soft-contacts': 'soft-contacts',
+  character: 'characters',
+  characters: 'characters',
+  controller: 'characters',
+  grounded: 'characters',
   sensor: 'sensors',
   sensors: 'sensors',
   trigger: 'triggers',

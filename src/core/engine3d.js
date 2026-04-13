@@ -75,7 +75,7 @@ function parseConvexHullVertices(verticesText) {
 }
 
 function summarizeSnapshot(snapshot) {
-  return `${snapshot.bodyCount} bodies | ${snapshot.clothCount ?? 0} cloths | ${snapshot.softBodyCount ?? 0} soft bodies | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.sensorPairCount ?? 0} triggers | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
+  return `${snapshot.bodyCount} bodies | ${snapshot.characterCount ?? 0} characters | ${snapshot.clothCount ?? 0} cloths | ${snapshot.softBodyCount ?? 0} soft bodies | ${snapshot.particleCount ?? 0} particles | ${snapshot.colliderCount} colliders | ${snapshot.jointCount} joints | ${snapshot.collision.summary.pairCount} pairs | ${snapshot.collision.summary.contactCount} contacts | ${snapshot.collision.summary.sensorPairCount ?? 0} triggers | ${snapshot.collision.summary.islandCount} islands | ${snapshot.collision.summary.sleepingBodyCount} sleeping | ${snapshot.materialCount} materials | gravity ${formatVector(snapshot.gravity)} | camera pos ${formatVector(snapshot.debugCamera.position)} | camera angles ${formatVector(snapshot.debugCamera.target)} | frames ${snapshot.renderFrameCount}`;
 }
 
 function joinIds(records) {
@@ -204,6 +204,77 @@ export class Engine3D {
 
     this.hostBridge.log(`Static sensor ${collider.id} registered`);
     return collider;
+  }
+
+  createKinematicCapsule(id, x, y, z, radius, halfHeight, collisionLayer = 1, collisionMask = 0x7fffffff) {
+    const character = this.world.createKinematicCapsule({
+      id,
+      position: createVec3(x, y, z),
+      radius,
+      halfHeight,
+      collisionLayer,
+      collisionMask
+    });
+
+    if (!character) {
+      this.hostBridge.log(`Kinematic capsule ${id} could not be created`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic capsule ${character.id} registered with body ${character.bodyId}`);
+    return character;
+  }
+
+  configureKinematicCapsule(id, skinWidth, groundProbeDistance, maxGroundAngleDegrees) {
+    const character = this.world.configureKinematicCapsule(id, {
+      skinWidth,
+      groundProbeDistance,
+      maxGroundAngleDegrees
+    });
+
+    if (!character) {
+      this.hostBridge.log(`Kinematic capsule ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic capsule ${character.id} configured`);
+    return character;
+  }
+
+  configureKinematicController(id, jumpSpeed, gravityScale, stepOffset, groundSnapDistance) {
+    const character = this.world.configureKinematicController(id, {
+      jumpSpeed,
+      gravityScale,
+      stepOffset,
+      groundSnapDistance
+    });
+
+    if (!character) {
+      this.hostBridge.log(`Kinematic controller ${id} could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic controller ${character.id} configured`);
+    return character;
+  }
+
+  setKinematicCapsuleMoveIntent(id, dx, dy, dz) {
+    return this.world.setKinematicCapsuleMoveIntent(id, createVec3(dx, dy, dz));
+  }
+
+  jumpKinematicCapsule(id) {
+    const character = this.world.jumpKinematicCapsule(id);
+    if (!character) {
+      this.hostBridge.log(`Kinematic capsule ${id} could not jump`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic capsule ${character.id} jump requested`);
+    return character;
+  }
+
+  moveKinematicCapsule(id, dx, dy, dz) {
+    return this.world.moveKinematicCapsule(id, createVec3(dx, dy, dz));
   }
 
   createConvexHullRigidBody(id, verticesText, x, y, z, mass, materialId = '') {
@@ -659,7 +730,7 @@ export class Engine3D {
     const sceneDefinition = this.world.exportSceneDefinition();
     const clothCount = sceneDefinition.xpbd?.cloths?.length ?? 0;
     const softBodyCount = sceneDefinition.xpbd?.softBodies?.length ?? 0;
-    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${clothCount} cloths | ${softBodyCount} soft bodies | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
+    this.lastSceneIoSummary = `Scene exported | ${sceneDefinition.bodies.length} bodies | ${sceneDefinition.characters?.length ?? 0} characters | ${clothCount} cloths | ${softBodyCount} soft bodies | ${sceneDefinition.colliders.length} colliders | ${sceneDefinition.joints.length} joints | ${sceneDefinition.materials.length} materials`;
     return JSON.stringify(sceneDefinition);
   }
 
@@ -670,7 +741,7 @@ export class Engine3D {
         reset: true
       });
       this.lastFrame = null;
-      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.clothCount ?? 0} cloths | ${imported.softBodyCount ?? 0} soft bodies | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
+      this.lastSceneIoSummary = `Scene loaded | ${imported.bodyCount} bodies | ${imported.characterCount ?? 0} characters | ${imported.clothCount ?? 0} cloths | ${imported.softBodyCount ?? 0} soft bodies | ${imported.colliderCount} colliders | ${imported.jointCount} joints | ${imported.materialCount} materials`;
       this.hostBridge.log(this.lastSceneIoSummary);
       return true;
     } catch (error) {
@@ -700,6 +771,30 @@ export class Engine3D {
       ? ` | layer:${primaryCollider.collisionLayer} | mask:${primaryCollider.collisionMask} | sensor:${primaryCollider.isSensor ? 'on' : 'off'}`
       : '';
     return `${body.id} | motion:${body.motionType} | sleeping:${body.sleeping ? 'yes' : 'no'} | position ${formatVector(body.position)} | velocity ${formatVector(body.linearVelocity)} | colliders ${body.colliderIds.length}${collisionSummary}`;
+  }
+
+  getKinematicCapsuleSummary(id) {
+    const character = this.world.getKinematicCapsule(id);
+    if (!character) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    const body = character.bodyId ? this.world.getBody(character.bodyId) : null;
+    const collider = character.colliderId ? this.world.getCollider(character.colliderId) : null;
+    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
+  }
+
+  getKinematicGroundSummary(id) {
+    const groundState = this.world.getKinematicGroundState(id);
+    if (!groundState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    return `${id} ground | grounded:${groundState.grounded ? 'yes' : 'no'} | walkable:${groundState.walkable ? 'yes' : 'no'} | distance:${formatOptionalNumber(groundState.distance)} | angle:${formatOptionalNumber(groundState.angleDegrees)}deg | collider:${groundState.colliderId || 'none'} | body:${groundState.bodyId || 'static'} | point ${formatVector(groundState.point)} | normal ${formatVector(groundState.normal)}`;
+  }
+
+  isKinematicCapsuleGrounded(id) {
+    return this.world.isKinematicCapsuleGrounded(id);
   }
 
   getColliderSummary(id) {

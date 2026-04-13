@@ -1745,6 +1745,244 @@ test('PhysicsWorld contact enter/stay/exit events are cached for bodies and coll
   assert.equal(world.getColliderContactEvents('event-box-a:collider', 'exit').count, 1);
 });
 
+test('PhysicsWorld creates kinematic capsules and reports grounded state against floors', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+
+  const character = world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  const ground = world.getKinematicGroundState('player');
+  const snapshot = world.getSnapshot();
+
+  assert.equal(character.id, 'player');
+  assert.equal(character.bodyId, 'player');
+  assert.equal(world.getBody('player').motionType, 'kinematic');
+  assert.equal(snapshot.characterCount, 1);
+  assert.equal(ground.grounded, true);
+  assert.equal(ground.walkable, true);
+  assert.equal(ground.colliderId, 'floor:collider');
+  assert.ok((ground.angleDegrees ?? 999) < 1, `expected floor angle near 0, got ${ground.angleDegrees}`);
+});
+
+test('PhysicsWorld kinematic capsules stop before walls and keep ground state while moving', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 20, y: 15, z: 0 },
+    size: 10
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+
+  const moveResult = world.moveKinematicCapsule('player', { x: 30, y: 0, z: 0 });
+  const playerBody = world.getBody('player');
+  const frame = world.buildDebugFrame();
+
+  assert.equal(moveResult.blocked, true);
+  assert.equal(moveResult.hitColliderId, 'wall:collider');
+  assert.ok(playerBody.position.x > 8.5 && playerBody.position.x < 10.1, `expected player to stop before wall, got ${playerBody.position.x}`);
+  assert.equal(world.isKinematicCapsuleGrounded('player'), true);
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'character-controller'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'character-ground-normal'));
+});
+
+test('PhysicsWorld exports and imports kinematic capsules with ground settings intact', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicCapsule('player', {
+    skinWidth: 1.25,
+    groundProbeDistance: 6,
+    maxGroundAngleDegrees: 40
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 9,
+    gravityScale: 1.2,
+    stepOffset: 7,
+    groundSnapDistance: 3
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 4, y: 0, z: 0 });
+
+  const scene = world.exportSceneDefinition();
+  const importedWorld = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  const imported = importedWorld.importSceneDefinition(scene, {
+    reset: true
+  });
+  const importedCharacter = importedWorld.getKinematicCapsule('player');
+
+  assert.equal(imported.characterCount, 1);
+  assert.equal(importedWorld.getSnapshot().characterCount, 1);
+  assert.equal(importedCharacter.skinWidth, 1.25);
+  assert.equal(importedCharacter.groundProbeDistance, 6);
+  assert.equal(importedCharacter.maxGroundAngleDegrees, 40);
+  assert.equal(importedCharacter.jumpSpeed, 9);
+  assert.equal(importedCharacter.gravityScale, 1.2);
+  assert.equal(importedCharacter.stepOffset, 7);
+  assert.equal(importedCharacter.groundSnapDistance, 3);
+  assert.equal(importedCharacter.moveIntent.x, 4);
+  assert.equal(importedWorld.isKinematicCapsuleGrounded('player'), true);
+});
+
+test('PhysicsWorld kinematic controllers jump upward and land back on walkable ground', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 9,
+    gravityScale: 1,
+    stepOffset: 6,
+    groundSnapDistance: 2
+  });
+
+  const startY = world.getBody('player').position.y;
+  assert.equal(world.isKinematicCapsuleGrounded('player'), true);
+
+  world.jumpKinematicCapsule('player');
+  world.step(1 / 60);
+
+  const airborne = world.getKinematicCapsule('player');
+  assert.equal(airborne.grounded, false);
+  assert.ok(world.getBody('player').position.y > startY, `expected player to rise after jump, got ${world.getBody('player').position.y}`);
+  assert.ok((airborne.verticalVelocity ?? 0) > 0, `expected positive vertical velocity after jump, got ${airborne.verticalVelocity}`);
+
+  for (let index = 0; index < 180; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const landed = world.getKinematicCapsule('player');
+  assert.equal(landed.grounded, true);
+  assert.ok(Math.abs(world.getBody('player').position.y - startY) < 0.5, `expected player to land near start height, got ${world.getBody('player').position.y}`);
+  assert.equal(Math.abs(landed.verticalVelocity ?? 0) <= 1e-8, true);
+});
+
+test('PhysicsWorld kinematic controllers project movement onto walkable slopes', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'ramp',
+    vertices: [
+      { x: -10, y: -2, z: -6 },
+      { x: 10, y: -2, z: -6 },
+      { x: 10, y: -2, z: 6 },
+      { x: -10, y: -2, z: 6 },
+      { x: -10, y: 4, z: -6 },
+      { x: -10, y: 4, z: 6 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 6, y: 14.2, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: -18, y: 0, z: 0 });
+
+  for (let index = 0; index < 5; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const body = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok(body.position.x < 5, `expected player to move uphill, got x=${body.position.x}`);
+  assert.ok(body.position.y > 14.5, `expected player to climb the slope, got y=${body.position.y}`);
+  assert.equal(character.grounded, true);
+  assert.equal(character.walkable, true);
+});
+
+test('PhysicsWorld kinematic controllers use step offset to climb low ledges', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 60
+  });
+  world.createStaticBoxCollider({
+    id: 'step-a',
+    position: { x: 0, y: 5, z: 0 },
+    size: 10
+  });
+  world.createStaticBoxCollider({
+    id: 'step-b',
+    position: { x: 0, y: 5, z: 12 },
+    size: 10
+  });
+  world.createKinematicCapsule({
+    id: 'stepper',
+    position: { x: -14, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.createKinematicCapsule({
+    id: 'blocked',
+    position: { x: -14, y: 15, z: 12 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('stepper', {
+    stepOffset: 11,
+    groundSnapDistance: 2
+  });
+  world.configureKinematicController('blocked', {
+    stepOffset: 0,
+    groundSnapDistance: 2
+  });
+  world.setKinematicCapsuleMoveIntent('stepper', { x: 8, y: 0, z: 0 });
+  world.setKinematicCapsuleMoveIntent('blocked', { x: 8, y: 0, z: 0 });
+
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const steppedBody = world.getBody('stepper');
+  const blockedBody = world.getBody('blocked');
+
+  assert.ok(steppedBody.position.x > -2, `expected stepper to climb over the ledge, got x=${steppedBody.position.x}`);
+  assert.ok(steppedBody.position.y > 20, `expected stepper to stand on the raised step, got y=${steppedBody.position.y}`);
+  assert.ok(blockedBody.position.x < -9, `expected blocked character to stop before the ledge, got x=${blockedBody.position.x}`);
+});
+
 test('PhysicsWorld exposes collider world poses, body collider lookup, and world summary', () => {
   const world = new PhysicsWorld({
     gravity: { x: 0, y: -3, z: 0 }

@@ -90,6 +90,74 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createKinematicCapsule',
+        blockType: 'command',
+        text: 'create kinematic capsule [ID] at x:[X] y:[Y] z:[Z] radius:[RADIUS] half height:[HALF_HEIGHT] layer:[LAYER] mask:[MASK]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 40 },
+          Z: { type: 'number', defaultValue: 0 },
+          RADIUS: { type: 'number', defaultValue: 12 },
+          HALF_HEIGHT: { type: 'number', defaultValue: 24 },
+          LAYER: { type: 'number', defaultValue: 1 },
+          MASK: { type: 'number', defaultValue: 2147483647 }
+        }
+      },
+      {
+        opcode: 'configureKinematicCapsule',
+        blockType: 'command',
+        text: 'configure kinematic capsule [ID] skin:[SKIN] probe:[PROBE] max slope:[MAX_SLOPE]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          SKIN: { type: 'number', defaultValue: 0.5 },
+          PROBE: { type: 'number', defaultValue: 4 },
+          MAX_SLOPE: { type: 'number', defaultValue: 55 }
+        }
+      },
+      {
+        opcode: 'configureKinematicController',
+        blockType: 'command',
+        text: 'configure kinematic controller [ID] jump:[JUMP_SPEED] gravity:[GRAVITY_SCALE] step:[STEP_OFFSET] snap:[GROUND_SNAP]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          JUMP_SPEED: { type: 'number', defaultValue: 8 },
+          GRAVITY_SCALE: { type: 'number', defaultValue: 1 },
+          STEP_OFFSET: { type: 'number', defaultValue: 6 },
+          GROUND_SNAP: { type: 'number', defaultValue: 2 }
+        }
+      },
+      {
+        opcode: 'setKinematicCapsuleMoveIntent',
+        blockType: 'command',
+        text: 'set kinematic capsule [ID] move intent x:[DX] y:[DY] z:[DZ]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          DX: { type: 'number', defaultValue: 0 },
+          DY: { type: 'number', defaultValue: 0 },
+          DZ: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'jumpKinematicCapsule',
+        blockType: 'command',
+        text: 'jump kinematic capsule [ID]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'moveKinematicCapsule',
+        blockType: 'command',
+        text: 'move kinematic capsule [ID] by x:[DX] y:[DY] z:[DZ]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          DX: { type: 'number', defaultValue: 10 },
+          DY: { type: 'number', defaultValue: 0 },
+          DZ: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
         opcode: 'createConvexHullRigidBody',
         blockType: 'command',
         text: 'create convex hull rigid body [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] mass:[MASS] material:[MATERIAL]',
@@ -551,6 +619,30 @@ export function createExtensionInfo() {
         text: 'rigid body [ID] summary',
         arguments: {
           ID: { type: 'string', defaultValue: 'body-1' }
+        }
+      },
+      {
+        opcode: 'kinematicCapsuleSummary',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicGroundSummary',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] ground summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'isKinematicCapsuleGrounded',
+        blockType: 'boolean',
+        text: 'kinematic capsule [ID] grounded?',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
         }
       },
       {

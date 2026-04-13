@@ -98,6 +98,62 @@ export class Base3DExtension {
     );
   }
 
+  createKinematicCapsule(args) {
+    this.engine.createKinematicCapsule(
+      toString(args.ID, 'character'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.RADIUS, 12),
+      toNumber(args.HALF_HEIGHT, 24),
+      toNumber(args.LAYER, 1),
+      toNumber(args.MASK, 2147483647)
+    );
+  }
+
+  configureKinematicCapsule(args) {
+    this.engine.configureKinematicCapsule(
+      toString(args.ID, 'character'),
+      toNumber(args.SKIN, 0.5),
+      toNumber(args.PROBE, 4),
+      toNumber(args.MAX_SLOPE, 55)
+    );
+  }
+
+  configureKinematicController(args) {
+    this.engine.configureKinematicController(
+      toString(args.ID, 'character'),
+      toNumber(args.JUMP_SPEED, 8),
+      toNumber(args.GRAVITY_SCALE, 1),
+      toNumber(args.STEP_OFFSET, 6),
+      toNumber(args.GROUND_SNAP, 2)
+    );
+  }
+
+  setKinematicCapsuleMoveIntent(args) {
+    this.engine.setKinematicCapsuleMoveIntent(
+      toString(args.ID, 'character'),
+      toNumber(args.DX),
+      toNumber(args.DY),
+      toNumber(args.DZ)
+    );
+  }
+
+  jumpKinematicCapsule(args) {
+    this.engine.jumpKinematicCapsule(
+      toString(args.ID, 'character')
+    );
+  }
+
+  moveKinematicCapsule(args) {
+    this.engine.moveKinematicCapsule(
+      toString(args.ID, 'character'),
+      toNumber(args.DX),
+      toNumber(args.DY),
+      toNumber(args.DZ)
+    );
+  }
+
   createConvexHullRigidBody(args) {
     this.engine.createConvexHullRigidBody(
       toString(args.ID, 'body'),
@@ -462,6 +518,24 @@ export class Base3DExtension {
   rigidBodySummary(args) {
     return this.engine.getRigidBodySummary(
       toString(args.ID, 'body')
+    );
+  }
+
+  kinematicCapsuleSummary(args) {
+    return this.engine.getKinematicCapsuleSummary(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicGroundSummary(args) {
+    return this.engine.getKinematicGroundSummary(
+      toString(args.ID, 'character')
+    );
+  }
+
+  isKinematicCapsuleGrounded(args) {
+    return this.engine.isKinematicCapsuleGrounded(
+      toString(args.ID, 'character')
     );
   }
 

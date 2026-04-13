@@ -12,6 +12,7 @@ import { solveJointConstraints } from '../rigid/distance-joint-solver.js';
 import { solveNormalContactConstraints } from '../rigid/normal-contact-solver.js';
 import { ParticleWorld } from '../xpbd/particle-world.js';
 import { BodyRegistry } from './body-registry.js';
+import { CharacterRegistry } from './character-registry.js';
 import { ColliderRegistry } from './collider-registry.js';
 import { JointRegistry } from './joint-registry.js';
 import { MaterialRegistry } from './material-registry.js';
@@ -134,6 +135,27 @@ function cloneSceneSettings(world) {
     xpbdIterations: Number(world.particleWorld.iterations),
     xpbdSubsteps: Number(world.particleWorld.substeps),
     xpbdDefaultDamping: Number(world.particleWorld.defaultDamping)
+  };
+}
+
+function clampUnitInterval(value) {
+  return Math.max(-1, Math.min(1, Number(value ?? 0)));
+}
+
+function radiansToDegrees(value) {
+  return Number(value ?? 0) * (180 / Math.PI);
+}
+
+function createDefaultGroundState() {
+  return {
+    grounded: false,
+    walkable: false,
+    distance: null,
+    angleDegrees: null,
+    normal: createVec3(0, 1, 0),
+    point: createVec3(),
+    colliderId: null,
+    bodyId: null
   };
 }
 
@@ -662,6 +684,43 @@ function zeroBodyMotion(body) {
   clearVector(body.torqueAccumulator);
 }
 
+function isBlockingKinematicHit(direction, normal) {
+  if (!normal) {
+    return true;
+  }
+
+  return dotVec3(direction, normal) < -1e-4;
+}
+
+function isWalkableKinematicNormal(normal, maxGroundAngleDegrees) {
+  if (!normal) {
+    return false;
+  }
+
+  const up = createVec3(0, 1, 0);
+  const normalizedNormal = normalizeVec3(normal, up);
+  const maxSlopeRadians = toNonNegativeNumber(maxGroundAngleDegrees, 55) * (Math.PI / 180);
+  return dotVec3(normalizedNormal, up) >= Math.cos(maxSlopeRadians + 1e-6);
+}
+
+function projectOntoGroundPlane(move, groundNormal) {
+  if (!groundNormal) {
+    return cloneVec3(move ?? createVec3());
+  }
+
+  return subtractVec3(move, scaleVec3(groundNormal, dotVec3(move, groundNormal)));
+}
+
+function getForwardProgress(move, actualMove) {
+  const moveLengthSquared = lengthSquaredVec3(move);
+  if (moveLengthSquared <= 1e-8) {
+    return 0;
+  }
+
+  const direction = normalizeVec3(move, createVec3(1, 0, 0));
+  return dotVec3(actualMove, direction);
+}
+
 function resetJointSolverState(joint) {
   joint.accumulatedImpulse = 0;
   joint.accumulatedLinearImpulse = createVec3();
@@ -689,6 +748,7 @@ export class PhysicsWorld {
     this.sleepTimeThreshold = toNonNegativeNumber(options.sleepTimeThreshold, 0.5);
     this.shapeRegistry = new ShapeRegistry();
     this.bodyRegistry = new BodyRegistry();
+    this.characterRegistry = new CharacterRegistry();
     this.colliderRegistry = new ColliderRegistry();
     this.jointRegistry = new JointRegistry();
     this.materialRegistry = new MaterialRegistry();
@@ -742,6 +802,7 @@ export class PhysicsWorld {
   reset() {
     this.shapeRegistry.clear();
     this.bodyRegistry.clear();
+    this.characterRegistry.clear();
     this.colliderRegistry.clear();
     this.jointRegistry.clear();
     this.materialRegistry.clear();
@@ -772,6 +833,7 @@ export class PhysicsWorld {
       materials: this.materialRegistry.list(),
       shapes: this.shapeRegistry.list(),
       bodies: this.bodyRegistry.list(),
+      characters: this.characterRegistry.list(),
       colliders: this.colliderRegistry.list(),
       joints: this.jointRegistry.list(),
       xpbd: this.particleWorld.exportSceneDefinition()
@@ -892,6 +954,14 @@ export class PhysicsWorld {
       });
     }
 
+    for (const character of Array.isArray(scene.characters) ? scene.characters : []) {
+      if (!character?.id) {
+        continue;
+      }
+
+      this.characterRegistry.createKinematicCapsule(character);
+    }
+
     for (const collider of Array.isArray(scene.colliders) ? scene.colliders : []) {
       if (!collider?.id) {
         continue;
@@ -953,9 +1023,11 @@ export class PhysicsWorld {
     this.debugCamera.position = cameraPosition;
     this.debugCamera.target = cameraTarget;
     this.markCollisionStateDirty();
+    this.refreshKinematicCapsules();
 
     return {
       bodyCount: this.bodyRegistry.count(),
+      characterCount: this.characterRegistry.count(),
       colliderCount: this.colliderRegistry.count(),
       jointCount: this.jointRegistry.count(),
       materialCount: this.materialRegistry.count(),
@@ -1072,6 +1144,85 @@ export class PhysicsWorld {
     }
 
     return this.getBody(body.id);
+  }
+
+  getKinematicCapsule(characterId) {
+    return this.characterRegistry.get(characterId);
+  }
+
+  listKinematicCapsules() {
+    return this.characterRegistry.list();
+  }
+
+  configureKinematicCapsule(characterId, options = {}) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    if (options.skinWidth !== undefined) {
+      character.skinWidth = toNonNegativeNumber(options.skinWidth, character.skinWidth ?? 0.5);
+    }
+
+    if (options.groundProbeDistance !== undefined) {
+      character.groundProbeDistance = toNonNegativeNumber(options.groundProbeDistance, character.groundProbeDistance ?? 4);
+    }
+
+    if (options.maxGroundAngleDegrees !== undefined) {
+      character.maxGroundAngleDegrees = toNonNegativeNumber(options.maxGroundAngleDegrees, character.maxGroundAngleDegrees ?? 55);
+    }
+
+    if (options.enabled !== undefined) {
+      character.enabled = Boolean(options.enabled);
+    }
+
+    this.updateKinematicGroundState(character.id);
+    return this.getKinematicCapsule(character.id);
+  }
+
+  configureKinematicController(characterId, options = {}) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    if (options.jumpSpeed !== undefined) {
+      character.jumpSpeed = toOptionalNumber(options.jumpSpeed, character.jumpSpeed ?? 8) ?? (character.jumpSpeed ?? 8);
+    }
+
+    if (options.gravityScale !== undefined) {
+      character.gravityScale = toNonNegativeNumber(options.gravityScale, character.gravityScale ?? 1);
+    }
+
+    if (options.stepOffset !== undefined) {
+      character.stepOffset = toNonNegativeNumber(options.stepOffset, character.stepOffset ?? 6);
+    }
+
+    if (options.groundSnapDistance !== undefined) {
+      character.groundSnapDistance = toNonNegativeNumber(options.groundSnapDistance, character.groundSnapDistance ?? 2);
+    }
+
+    return this.getKinematicCapsule(character.id);
+  }
+
+  setKinematicCapsuleMoveIntent(characterId, moveIntent = createVec3()) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    character.moveIntent = cloneVec3(moveIntent);
+    return this.getKinematicCapsule(character.id);
+  }
+
+  jumpKinematicCapsule(characterId) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    character.jumpRequested = true;
+    return this.getKinematicCapsule(character.id);
   }
 
   resolveBodyLocalAnchor(bodyId, options = {}) {
@@ -1615,6 +1766,515 @@ export class PhysicsWorld {
       body: this.getBody(body.id),
       collider
     };
+  }
+
+  createKinematicCapsule(options = {}) {
+    const resolvedId = String(options.id ?? '').trim() || null;
+    const radius = toPositiveNumber(options.radius, 12);
+    const halfHeight = toPositiveNumber(options.halfHeight, 24);
+    const { shape, body, collider } = this.createCapsuleBody({
+      id: resolvedId,
+      motionType: 'kinematic',
+      position: options.position ?? createVec3(),
+      rotation: options.rotation ?? createIdentityQuat(),
+      radius,
+      halfHeight,
+      materialId: options.materialId,
+      collisionLayer: options.collisionLayer,
+      collisionMask: options.collisionMask,
+      canSleep: false,
+      bodyUserData: options.bodyUserData ?? null,
+      shapeUserData: options.shapeUserData ?? null,
+      colliderUserData: options.colliderUserData ?? null
+    });
+
+    const character = this.characterRegistry.createKinematicCapsule({
+      id: resolvedId ?? body.id,
+      bodyId: body.id,
+      colliderId: collider.id,
+      shapeId: shape.id,
+      radius,
+      halfHeight,
+      skinWidth: options.skinWidth,
+      groundProbeDistance: options.groundProbeDistance,
+      maxGroundAngleDegrees: options.maxGroundAngleDegrees,
+      gravityScale: options.gravityScale,
+      jumpSpeed: options.jumpSpeed,
+      stepOffset: options.stepOffset,
+      groundSnapDistance: options.groundSnapDistance,
+      moveIntent: options.moveIntent,
+      verticalVelocity: options.verticalVelocity,
+      jumpRequested: options.jumpRequested,
+      enabled: options.enabled,
+      userData: options.userData ?? null
+    });
+
+    this.updateKinematicGroundState(character.id);
+    return this.getKinematicCapsule(character.id);
+  }
+
+  buildKinematicMoveResult(characterId, options = {}) {
+    return {
+      characterId: String(characterId ?? '').trim() || null,
+      startPosition: cloneVec3(options.startPosition ?? createVec3()),
+      endPosition: cloneVec3(options.endPosition ?? createVec3()),
+      requestedMove: cloneVec3(options.requestedMove ?? createVec3()),
+      actualMove: cloneVec3(options.actualMove ?? createVec3()),
+      blocked: options.blocked === true,
+      hitColliderId: String(options.hitColliderId ?? '').trim() || null,
+      hitBodyId: String(options.hitBodyId ?? '').trim() || null,
+      hitNormal: cloneVec3(options.hitNormal ?? createVec3()),
+      hitDistance: options.hitDistance ?? null
+    };
+  }
+
+  traceKinematicCapsuleMotion(character, body, shape, requestedMove = createVec3(), options = {}) {
+    const startPosition = cloneVec3(options.startPosition ?? body.position);
+    const requestedMoveVector = cloneVec3(requestedMove ?? createVec3());
+    const actualMove = createVec3();
+    let currentPosition = cloneVec3(startPosition);
+    let remainingMove = cloneVec3(requestedMoveVector);
+    let hitColliderId = null;
+    let hitBodyId = null;
+    let hitDistance = null;
+    let hitNormal = createVec3();
+    let blocked = false;
+    const maxPasses = Math.max(1, Math.floor(toPositiveNumber(options.maxPasses, 2)));
+    const maxHitAttempts = Math.max(1, Math.floor(toPositiveNumber(options.maxHitAttempts, 6)));
+
+    for (let passIndex = 0; passIndex < maxPasses; passIndex += 1) {
+      const remainingLengthSquared = lengthSquaredVec3(remainingMove);
+      if (remainingLengthSquared <= 1e-8) {
+        break;
+      }
+
+      const remainingLength = Math.sqrt(remainingLengthSquared);
+      const direction = scaleVec3(remainingMove, 1 / remainingLength);
+      const ignoredColliderIds = new Set([
+        ...(Array.isArray(body.colliderIds) ? body.colliderIds : []),
+        ...(Array.isArray(options.excludeColliderIds) ? options.excludeColliderIds : [])
+      ]);
+      let hit = { hit: false };
+      for (let hitAttempt = 0; hitAttempt < maxHitAttempts; hitAttempt += 1) {
+        const candidateHit = this.shapeCastAgainstWorld({
+          castType: 'capsule',
+          queryShape: shape,
+          origin: currentPosition,
+          direction,
+          maxDistance: remainingLength,
+          radius: character.radius,
+          halfHeight: character.halfHeight,
+          rotation: body.rotation ?? createIdentityQuat(),
+          excludeBodyId: options.excludeBodyId ?? body.id,
+          excludeColliderIds: Array.from(ignoredColliderIds),
+          ignoreDynamicTargets: options.ignoreDynamicTargets === true,
+          ignoreSensors: options.ignoreSensors !== false,
+          storeResult: false
+        });
+
+        if (!candidateHit.hit) {
+          hit = candidateHit;
+          break;
+        }
+
+        if (isBlockingKinematicHit(direction, candidateHit.normal)) {
+          hit = candidateHit;
+          break;
+        }
+
+        if (!candidateHit.colliderId) {
+          hit = candidateHit;
+          break;
+        }
+
+        ignoredColliderIds.add(candidateHit.colliderId);
+      }
+
+      if (!hit.hit) {
+        currentPosition = addVec3(currentPosition, remainingMove);
+        actualMove.x += remainingMove.x;
+        actualMove.y += remainingMove.y;
+        actualMove.z += remainingMove.z;
+        remainingMove = createVec3();
+        break;
+      }
+
+      blocked = true;
+      hitColliderId = hit.colliderId ?? hitColliderId;
+      hitBodyId = hit.bodyId ?? hitBodyId;
+      hitDistance = hit.distance ?? hitDistance;
+      hitNormal = cloneVec3(hit.normal ?? hitNormal);
+
+      const safeDistance = Math.max(0, Math.min(remainingLength, Number(hit.distance ?? 0) - character.skinWidth));
+      if (safeDistance > 1e-8) {
+        const movedSegment = scaleVec3(direction, safeDistance);
+        currentPosition = addVec3(currentPosition, movedSegment);
+        actualMove.x += movedSegment.x;
+        actualMove.y += movedSegment.y;
+        actualMove.z += movedSegment.z;
+      }
+
+      const leftoverDistance = Math.max(0, remainingLength - safeDistance);
+      if (leftoverDistance <= 1e-8 || !hit.normal) {
+        remainingMove = createVec3();
+        break;
+      }
+
+      const leftoverMove = scaleVec3(direction, leftoverDistance);
+      const slideMove = subtractVec3(leftoverMove, scaleVec3(hit.normal, dotVec3(leftoverMove, hit.normal)));
+      if (lengthSquaredVec3(slideMove) <= 1e-8) {
+        remainingMove = createVec3();
+        break;
+      }
+
+      remainingMove = slideMove;
+    }
+
+    return this.buildKinematicMoveResult(character.id, {
+      startPosition,
+      endPosition: currentPosition,
+      requestedMove: requestedMoveVector,
+      actualMove,
+      blocked,
+      hitColliderId,
+      hitBodyId,
+      hitNormal,
+      hitDistance
+    });
+  }
+
+  applyKinematicMoveResult(character, body, moveResult, options = {}) {
+    body.position = cloneVec3(moveResult?.endPosition ?? body.position);
+    zeroBodyMotion(body);
+
+    character.lastRequestedMove = cloneVec3(moveResult?.requestedMove ?? createVec3());
+    character.lastActualMove = cloneVec3(moveResult?.actualMove ?? createVec3());
+    character.lastHitColliderId = moveResult?.hitColliderId ?? null;
+    character.lastHitBodyId = moveResult?.hitBodyId ?? null;
+    character.lastHitDistance = moveResult?.hitDistance ?? null;
+    character.lastHitNormal = cloneVec3(moveResult?.hitNormal ?? createVec3());
+
+    this.markCollisionStateDirty();
+    if (options.updateGroundState !== false) {
+      this.updateKinematicGroundState(character.id);
+    }
+
+    return this.buildKinematicMoveResult(character.id, {
+      startPosition: moveResult?.startPosition,
+      endPosition: moveResult?.endPosition,
+      requestedMove: moveResult?.requestedMove,
+      actualMove: moveResult?.actualMove,
+      blocked: moveResult?.blocked,
+      hitColliderId: moveResult?.hitColliderId,
+      hitBodyId: moveResult?.hitBodyId,
+      hitNormal: moveResult?.hitNormal,
+      hitDistance: moveResult?.hitDistance
+    });
+  }
+
+  tryKinematicCapsuleStepMove(character, body, shape, horizontalMove = createVec3()) {
+    const stepOffset = toNonNegativeNumber(character.stepOffset, 0);
+    if (stepOffset <= 1e-8 || lengthSquaredVec3(horizontalMove) <= 1e-8) {
+      return null;
+    }
+
+    const startPosition = cloneVec3(body.position);
+    const upResult = this.traceKinematicCapsuleMotion(character, body, shape, createVec3(0, stepOffset, 0), {
+      startPosition,
+      maxPasses: 1
+    });
+    const liftedPosition = cloneVec3(upResult.endPosition);
+    if (liftedPosition.y <= startPosition.y + 1e-6) {
+      return null;
+    }
+
+    const horizontalResult = this.traceKinematicCapsuleMotion(character, body, shape, horizontalMove, {
+      startPosition: liftedPosition
+    });
+    if (getForwardProgress(horizontalMove, horizontalResult.actualMove) <= 1e-4) {
+      return null;
+    }
+
+    const downDistance = stepOffset + toNonNegativeNumber(character.groundSnapDistance, 2) + character.skinWidth;
+    const downResult = this.traceKinematicCapsuleMotion(character, body, shape, createVec3(0, -downDistance, 0), {
+      startPosition: horizontalResult.endPosition,
+      maxPasses: 1
+    });
+
+    if (!downResult.blocked || !isWalkableKinematicNormal(downResult.hitNormal, character.maxGroundAngleDegrees)) {
+      return null;
+    }
+
+    return this.buildKinematicMoveResult(character.id, {
+      startPosition,
+      endPosition: downResult.endPosition,
+      requestedMove: addVec3(createVec3(0, stepOffset, 0), addVec3(horizontalMove, createVec3(0, -downDistance, 0))),
+      actualMove: subtractVec3(downResult.endPosition, startPosition),
+      blocked: horizontalResult.blocked || downResult.blocked,
+      hitColliderId: horizontalResult.hitColliderId ?? downResult.hitColliderId,
+      hitBodyId: horizontalResult.hitBodyId ?? downResult.hitBodyId,
+      hitNormal: downResult.hitNormal ?? horizontalResult.hitNormal,
+      hitDistance: downResult.hitDistance ?? horizontalResult.hitDistance
+    });
+  }
+
+  moveKinematicCapsule(characterId, motion = createVec3()) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character || character.enabled === false) {
+      return null;
+    }
+
+    const body = this.bodyRegistry.getMutable(character.bodyId);
+    const shape = this.getShape(character.shapeId);
+    if (!body || !shape) {
+      return null;
+    }
+
+    const moveResult = this.traceKinematicCapsuleMotion(character, body, shape, motion);
+    return this.applyKinematicMoveResult(character, body, moveResult, {
+      updateGroundState: true
+    });
+  }
+
+  stepKinematicCapsules(deltaTime) {
+    let movedAnyCharacter = false;
+    this.characterRegistry.forEachMutable((character) => {
+      if (!character || character.enabled === false) {
+        return;
+      }
+
+      const body = this.bodyRegistry.getMutable(character.bodyId);
+      const shape = this.getShape(character.shapeId);
+      if (!body || !shape) {
+        return;
+      }
+
+      this.updateKinematicGroundState(character.id);
+      const wasGrounded = character.grounded === true && character.walkable === true;
+      let verticalVelocity = toOptionalNumber(character.verticalVelocity, 0) ?? 0;
+      let blocked = false;
+      let lastHitColliderId = null;
+      let lastHitBodyId = null;
+      let lastHitDistance = null;
+      let lastHitNormal = createVec3();
+      const totalRequestedMove = createVec3();
+      const totalActualMove = createVec3();
+
+      if (character.jumpRequested === true && wasGrounded) {
+        verticalVelocity = toOptionalNumber(character.jumpSpeed, 8) ?? 8;
+      }
+      character.jumpRequested = false;
+
+      const moveIntent = cloneVec3(character.moveIntent ?? createVec3());
+      let horizontalMove = scaleVec3(createVec3(moveIntent.x, 0, moveIntent.z), deltaTime);
+      if (wasGrounded && character.walkable && lengthSquaredVec3(horizontalMove) > 1e-8) {
+        horizontalMove = projectOntoGroundPlane(horizontalMove, character.groundNormal ?? createVec3(0, 1, 0));
+      }
+
+      if (!wasGrounded || verticalVelocity > 0) {
+        verticalVelocity += Number(this.gravity.y ?? -9.81) * toNonNegativeNumber(character.gravityScale, 1) * deltaTime;
+      } else if (verticalVelocity < 0) {
+        verticalVelocity = 0;
+      }
+
+      const startPosition = cloneVec3(body.position);
+
+      if (verticalVelocity > 1e-8) {
+        const upwardMove = createVec3(0, verticalVelocity * deltaTime, 0);
+        const upwardResult = this.traceKinematicCapsuleMotion(character, body, shape, upwardMove, {
+          startPosition: body.position,
+          maxPasses: 1
+        });
+        body.position = cloneVec3(upwardResult.endPosition);
+        totalRequestedMove.x += upwardMove.x;
+        totalRequestedMove.y += upwardMove.y;
+        totalRequestedMove.z += upwardMove.z;
+        totalActualMove.x += upwardResult.actualMove.x;
+        totalActualMove.y += upwardResult.actualMove.y;
+        totalActualMove.z += upwardResult.actualMove.z;
+        blocked = blocked || upwardResult.blocked;
+        if (upwardResult.hitColliderId) {
+          lastHitColliderId = upwardResult.hitColliderId;
+          lastHitBodyId = upwardResult.hitBodyId;
+          lastHitDistance = upwardResult.hitDistance;
+          lastHitNormal = cloneVec3(upwardResult.hitNormal);
+        }
+        if (upwardResult.blocked && (upwardResult.hitNormal?.y ?? 0) < -0.2) {
+          verticalVelocity = 0;
+        }
+      }
+
+      if (lengthSquaredVec3(horizontalMove) > 1e-8) {
+        let horizontalResult = this.traceKinematicCapsuleMotion(character, body, shape, horizontalMove, {
+          startPosition: body.position
+        });
+        const stepCandidate = wasGrounded && character.walkable && (horizontalResult.hitNormal?.y ?? 1) < 0.35
+          ? this.tryKinematicCapsuleStepMove(character, body, shape, horizontalMove)
+          : null;
+        if (
+          stepCandidate &&
+          getForwardProgress(horizontalMove, stepCandidate.actualMove) >
+            getForwardProgress(horizontalMove, horizontalResult.actualMove) + 1e-4
+        ) {
+          horizontalResult = stepCandidate;
+        }
+
+        body.position = cloneVec3(horizontalResult.endPosition);
+        totalRequestedMove.x += horizontalMove.x;
+        totalRequestedMove.y += horizontalMove.y;
+        totalRequestedMove.z += horizontalMove.z;
+        totalActualMove.x += horizontalResult.actualMove.x;
+        totalActualMove.y += horizontalResult.actualMove.y;
+        totalActualMove.z += horizontalResult.actualMove.z;
+        blocked = blocked || horizontalResult.blocked;
+        if (horizontalResult.hitColliderId) {
+          lastHitColliderId = horizontalResult.hitColliderId;
+          lastHitBodyId = horizontalResult.hitBodyId;
+          lastHitDistance = horizontalResult.hitDistance;
+          lastHitNormal = cloneVec3(horizontalResult.hitNormal);
+        }
+      }
+
+      const shouldSnapToGround = verticalVelocity <= 0;
+      const downwardDistance = Math.max(0, -verticalVelocity * deltaTime) + (shouldSnapToGround ? toNonNegativeNumber(character.groundSnapDistance, 2) : 0);
+      if (downwardDistance > 1e-8) {
+        const downResult = this.traceKinematicCapsuleMotion(character, body, shape, createVec3(0, -downwardDistance, 0), {
+          startPosition: body.position,
+          maxPasses: 1
+        });
+        body.position = cloneVec3(downResult.endPosition);
+        totalRequestedMove.y -= downwardDistance;
+        totalActualMove.x += downResult.actualMove.x;
+        totalActualMove.y += downResult.actualMove.y;
+        totalActualMove.z += downResult.actualMove.z;
+        blocked = blocked || downResult.blocked;
+        if (downResult.hitColliderId) {
+          lastHitColliderId = downResult.hitColliderId;
+          lastHitBodyId = downResult.hitBodyId;
+          lastHitDistance = downResult.hitDistance;
+          lastHitNormal = cloneVec3(downResult.hitNormal);
+        }
+        if (downResult.blocked && isWalkableKinematicNormal(downResult.hitNormal, character.maxGroundAngleDegrees)) {
+          verticalVelocity = 0;
+        }
+      }
+
+      zeroBodyMotion(body);
+      character.verticalVelocity = verticalVelocity;
+      character.lastRequestedMove = cloneVec3(totalRequestedMove);
+      character.lastActualMove = cloneVec3(totalActualMove);
+      character.lastHitColliderId = lastHitColliderId;
+      character.lastHitBodyId = lastHitBodyId;
+      character.lastHitDistance = lastHitDistance;
+      character.lastHitNormal = cloneVec3(lastHitNormal);
+
+      this.updateKinematicGroundState(character.id);
+      if (verticalVelocity > 1e-6) {
+        character.grounded = false;
+        character.walkable = false;
+      } else if (character.grounded === true && verticalVelocity <= 0) {
+        character.verticalVelocity = 0;
+      }
+
+      movedAnyCharacter = movedAnyCharacter ||
+        lengthSquaredVec3(subtractVec3(body.position, startPosition)) > 1e-8 ||
+        Math.abs(verticalVelocity) > 1e-8;
+      if (blocked) {
+        movedAnyCharacter = true;
+      }
+    });
+
+    if (movedAnyCharacter) {
+      this.markCollisionStateDirty();
+    }
+
+    return movedAnyCharacter;
+  }
+
+  updateKinematicGroundState(characterId) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    const body = this.bodyRegistry.getMutable(character.bodyId);
+    const shape = this.getShape(character.shapeId);
+    if (!body || !shape) {
+      return this.getKinematicCapsule(character.id);
+    }
+
+    const up = createVec3(0, 1, 0);
+    const groundProbeDistance = toNonNegativeNumber(character.groundProbeDistance, 4);
+    const hit = this.shapeCastAgainstWorld({
+      castType: 'capsule',
+      queryShape: shape,
+      origin: body.position,
+      direction: createVec3(0, -1, 0),
+      maxDistance: groundProbeDistance + character.skinWidth + 1e-4,
+      radius: character.radius,
+      halfHeight: character.halfHeight,
+      rotation: body.rotation ?? createIdentityQuat(),
+      excludeBodyId: body.id,
+      excludeColliderIds: body.colliderIds,
+      ignoreDynamicTargets: false,
+      ignoreSensors: true,
+      storeResult: false
+    });
+
+    const nextGroundState = createDefaultGroundState();
+    if (hit.hit && hit.normal) {
+      const normalizedNormal = normalizeVec3(hit.normal, up);
+      const angleDegrees = radiansToDegrees(Math.acos(clampUnitInterval(dotVec3(normalizedNormal, up))));
+      const walkable = angleDegrees <= character.maxGroundAngleDegrees + 1e-6;
+
+      nextGroundState.grounded = walkable && Number(hit.distance ?? Number.POSITIVE_INFINITY) <= groundProbeDistance + character.skinWidth + 1e-4;
+      nextGroundState.walkable = walkable;
+      nextGroundState.distance = Number(hit.distance ?? 0);
+      nextGroundState.angleDegrees = angleDegrees;
+      nextGroundState.normal = normalizedNormal;
+      nextGroundState.point = cloneVec3(hit.point ?? createVec3());
+      nextGroundState.colliderId = hit.colliderId ?? null;
+      nextGroundState.bodyId = hit.bodyId ?? null;
+    }
+
+    if ((toOptionalNumber(character.verticalVelocity, 0) ?? 0) > 1e-6) {
+      nextGroundState.grounded = false;
+      nextGroundState.walkable = false;
+    }
+
+    character.grounded = nextGroundState.grounded;
+    character.walkable = nextGroundState.walkable;
+    character.groundDistance = nextGroundState.distance;
+    character.groundAngleDegrees = nextGroundState.angleDegrees;
+    character.groundNormal = cloneVec3(nextGroundState.normal);
+    character.groundPoint = cloneVec3(nextGroundState.point);
+    character.groundColliderId = nextGroundState.colliderId;
+    character.groundBodyId = nextGroundState.bodyId;
+
+    return this.getKinematicCapsule(character.id);
+  }
+
+  getKinematicGroundState(characterId) {
+    const character = this.getKinematicCapsule(characterId);
+    if (!character) {
+      return null;
+    }
+
+    return {
+      grounded: character.grounded === true,
+      walkable: character.walkable === true,
+      distance: character.groundDistance ?? null,
+      angleDegrees: character.groundAngleDegrees ?? null,
+      normal: cloneVec3(character.groundNormal ?? createVec3(0, 1, 0)),
+      point: cloneVec3(character.groundPoint ?? createVec3()),
+      colliderId: character.groundColliderId ?? null,
+      bodyId: character.groundBodyId ?? null
+    };
+  }
+
+  isKinematicCapsuleGrounded(characterId) {
+    const character = this.getKinematicCapsule(characterId);
+    return Boolean(character?.grounded);
   }
 
   createConvexHullBody(options = {}) {
@@ -2283,6 +2943,7 @@ export class PhysicsWorld {
 
     while (this.accumulatorSeconds + 1e-12 >= this.fixedDeltaTime && performedSubsteps < this.maxSubsteps) {
       this.wakeBodiesFromExternalActivity();
+      this.stepKinematicCapsules(this.fixedDeltaTime);
       const ccdEvents = this.integrateRigidBodies(this.fixedDeltaTime);
       ccdEventCount += ccdEvents.length;
       const solverStats = this.solveRigidContacts(this.fixedDeltaTime, this.simulationTick + 1);
@@ -2302,6 +2963,10 @@ export class PhysicsWorld {
 
     if (performedSubsteps === this.maxSubsteps && this.accumulatorSeconds > this.fixedDeltaTime) {
       this.accumulatorSeconds = this.fixedDeltaTime;
+    }
+
+    if (this.characterRegistry.count() > 0) {
+      this.refreshKinematicCapsules();
     }
 
     this.lastSolverStats = aggregatedSolverStats;
@@ -2335,6 +3000,16 @@ export class PhysicsWorld {
       localVector.z * Number(body.inverseInertia.z ?? 0)
     );
     return rotateVec3ByQuat(rotation, localResult);
+  }
+
+  refreshKinematicCapsules() {
+    this.characterRegistry.forEachMutable((character) => {
+      if (!character || character.enabled === false) {
+        return;
+      }
+
+      this.updateKinematicGroundState(character.id);
+    });
   }
 
   buildContinuousCastSpec(body) {
@@ -3408,6 +4083,78 @@ export class PhysicsWorld {
       );
     }
 
+    for (const character of this.characterRegistry.list()) {
+      const body = character.bodyId ? this.getBody(character.bodyId) : null;
+      if (!body) {
+        continue;
+      }
+
+      const source = {
+        characterId: character.id,
+        bodyId: character.bodyId,
+        colliderId: character.colliderId,
+        grounded: character.grounded === true,
+        walkable: character.walkable === true
+      };
+
+      primitives.push(
+        createDebugPoint({
+          id: `${character.id}:controller`,
+          category: 'character-controller',
+          position: body.position,
+          color: DEFAULT_DEBUG_COLORS.characterController,
+          size: 6,
+          source
+        })
+      );
+
+      if (lengthSquaredVec3(character.lastActualMove ?? createVec3()) > 1e-8) {
+        primitives.push(
+          createDebugLine({
+            id: `${character.id}:move-path`,
+            category: 'character-move-path',
+            start: body.position,
+            end: addVec3(body.position, character.lastActualMove),
+            color: DEFAULT_DEBUG_COLORS.characterMovePath,
+            source
+          })
+        );
+      }
+
+      if (character.groundColliderId && character.groundPoint && character.groundNormal) {
+        primitives.push(
+          createDebugPoint({
+            id: `${character.id}:ground-point`,
+            category: 'character-ground-point',
+            position: character.groundPoint,
+            color: DEFAULT_DEBUG_COLORS.characterGroundPoint,
+            size: 5,
+            source: {
+              ...source,
+              groundColliderId: character.groundColliderId,
+              groundBodyId: character.groundBodyId
+            }
+          })
+        );
+
+        primitives.push(
+          createDebugLine({
+            id: `${character.id}:ground-normal`,
+            category: 'character-ground-normal',
+            start: character.groundPoint,
+            end: addScaledVec3(character.groundPoint, character.groundNormal, Math.max(10, (character.groundProbeDistance ?? 4) * 4)),
+            color: DEFAULT_DEBUG_COLORS.characterGroundNormal,
+            source: {
+              ...source,
+              groundColliderId: character.groundColliderId,
+              groundBodyId: character.groundBodyId,
+              groundAngleDegrees: character.groundAngleDegrees
+            }
+          })
+        );
+      }
+    }
+
     for (const joint of collisionState.joints) {
       const anchors = this.getJointWorldAnchors(joint.id);
       if (!anchors) {
@@ -3750,6 +4497,8 @@ export class PhysicsWorld {
       primitives,
       stats: {
       bodyCount: this.bodyRegistry.count(),
+      characterCount: this.characterRegistry.count(),
+      groundedCharacterCount: this.characterRegistry.list().filter((character) => character.grounded === true).length,
       clothCount: xpbdSnapshot.clothCount,
       softBodyCount: xpbdSnapshot.softBodyCount ?? 0,
       particleCount: xpbdSnapshot.particleCount,
@@ -3801,6 +4550,7 @@ export class PhysicsWorld {
     return {
       debugCamera: cloneCamera(this.debugCamera),
       bodyCount: this.bodyRegistry.count(),
+      characterCount: this.characterRegistry.count(),
       clothCount: this.particleWorld.countCloths(),
       softBodyCount: this.particleWorld.countSoftBodies(),
       particleCount: this.particleWorld.countParticles(),
@@ -3809,6 +4559,7 @@ export class PhysicsWorld {
       jointCount: this.jointRegistry.count(),
       materialCount: this.materialRegistry.count(),
       bodies: this.bodyRegistry.list(),
+      characters: this.characterRegistry.list(),
       shapes: this.shapeRegistry.list(),
       colliders: this.colliderRegistry.list(),
       joints: this.jointRegistry.list(),
