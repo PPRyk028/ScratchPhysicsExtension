@@ -56,6 +56,7 @@ export const DEFAULT_DEBUG_COLORS = Object.freeze({
   rigidBodyCenter: Object.freeze({ r: 255, g: 196, b: 61, a: 1 }),
   sleepingRigidBodyWireframe: Object.freeze({ r: 145, g: 160, b: 174, a: 1 }),
   staticColliderWireframe: Object.freeze({ r: 107, g: 222, b: 157, a: 1 }),
+  oneWayPlatformWireframe: Object.freeze({ r: 255, g: 204, b: 102, a: 1 }),
   sensorColliderWireframe: Object.freeze({ r: 241, g: 102, b: 255, a: 1 }),
   sensorOrigin: Object.freeze({ r: 255, g: 170, b: 255, a: 1 }),
   broadphaseAabb: Object.freeze({ r: 250, g: 128, b: 114, a: 0.9 }),

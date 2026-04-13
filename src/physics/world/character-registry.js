@@ -47,6 +47,13 @@ function createDefaultCandidateCache() {
   };
 }
 
+function createDefaultGroundBodyLocalPoint() {
+  return {
+    valid: false,
+    point: createVec3()
+  };
+}
+
 export class CharacterRegistry extends BaseRegistry {
   constructor() {
     super('character');
@@ -68,9 +75,15 @@ export class CharacterRegistry extends BaseRegistry {
       jumpSpeed: character.jumpSpeed,
       stepOffset: character.stepOffset,
       groundSnapDistance: character.groundSnapDistance,
+      airControlFactor: character.airControlFactor,
+      coyoteTimeSeconds: character.coyoteTimeSeconds,
+      jumpBufferSeconds: character.jumpBufferSeconds,
+      rideMovingPlatforms: character.rideMovingPlatforms !== false,
       enabled: character.enabled !== false,
       jumpRequested: character.jumpRequested === true,
       verticalVelocity: character.verticalVelocity ?? 0,
+      coyoteTimer: character.coyoteTimer ?? 0,
+      jumpBufferTimer: character.jumpBufferTimer ?? 0,
       moveIntent: cloneVec3(character.moveIntent ?? createVec3()),
       grounded: character.grounded === true,
       walkable: character.walkable === true,
@@ -88,6 +101,14 @@ export class CharacterRegistry extends BaseRegistry {
       lastHitDistance: character.lastHitDistance ?? null,
       lastRecoveryNormal: cloneVec3(character.lastRecoveryNormal ?? createVec3()),
       lastRecoveryDistance: character.lastRecoveryDistance ?? 0,
+      groundBodyLocalPoint: {
+        valid: character.groundBodyLocalPoint?.valid === true,
+        point: cloneVec3(character.groundBodyLocalPoint?.point ?? createVec3())
+      },
+      platformVelocity: cloneVec3(character.platformVelocity ?? createVec3()),
+      inheritedVelocity: cloneVec3(character.inheritedVelocity ?? createVec3()),
+      lastPlatformCarry: cloneVec3(character.lastPlatformCarry ?? createVec3()),
+      lastPlatformBodyId: character.lastPlatformBodyId ?? null,
       userData: cloneNullableValue(character.userData)
     };
   }
@@ -109,9 +130,15 @@ export class CharacterRegistry extends BaseRegistry {
       jumpSpeed: toFiniteNumber(options.jumpSpeed, 8),
       stepOffset: Math.max(0, toFiniteNumber(options.stepOffset, 6)),
       groundSnapDistance: Math.max(0, toFiniteNumber(options.groundSnapDistance, 2)),
+      airControlFactor: Math.max(0, toFiniteNumber(options.airControlFactor, 1)),
+      coyoteTimeSeconds: Math.max(0, toFiniteNumber(options.coyoteTimeSeconds, 0.1)),
+      jumpBufferSeconds: Math.max(0, toFiniteNumber(options.jumpBufferSeconds, 0.1)),
+      rideMovingPlatforms: options.rideMovingPlatforms !== false,
       enabled: options.enabled !== false,
       jumpRequested: options.jumpRequested === true,
       verticalVelocity: toFiniteNumber(options.verticalVelocity, 0),
+      coyoteTimer: Math.max(0, toFiniteNumber(options.coyoteTimer, 0)),
+      jumpBufferTimer: Math.max(0, toFiniteNumber(options.jumpBufferTimer, 0)),
       moveIntent: cloneVec3(options.moveIntent ?? createVec3()),
       grounded: groundState.grounded === true,
       walkable: groundState.walkable === true,
@@ -133,6 +160,11 @@ export class CharacterRegistry extends BaseRegistry {
       motionFaceCache: options.motionFaceCache ?? createDefaultFaceCache(),
       groundCandidateCache: options.groundCandidateCache ?? createDefaultCandidateCache(),
       motionCandidateCache: options.motionCandidateCache ?? createDefaultCandidateCache(),
+      groundBodyLocalPoint: options.groundBodyLocalPoint ?? createDefaultGroundBodyLocalPoint(),
+      platformVelocity: cloneVec3(options.platformVelocity ?? createVec3()),
+      inheritedVelocity: cloneVec3(options.inheritedVelocity ?? createVec3()),
+      lastPlatformCarry: cloneVec3(options.lastPlatformCarry ?? createVec3()),
+      lastPlatformBodyId: String(options.lastPlatformBodyId ?? '').trim() || null,
       userData: cloneNullableValue(options.userData)
     });
   }

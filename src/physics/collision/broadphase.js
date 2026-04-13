@@ -113,6 +113,7 @@ export function createBroadphaseProxy(options = {}) {
     isDynamic: motionType === 'dynamic',
     isKinematic: motionType === 'kinematic',
     isSensor: Boolean(options.isSensor),
+    isOneWay: Boolean(options.isOneWay) && !Boolean(options.isSensor),
     collisionLayer: Number(options.collisionLayer ?? 1),
     collisionMask: Number(options.collisionMask ?? 0x7fffffff),
     aabb: cloneAabb(options.aabb)

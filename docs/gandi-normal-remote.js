@@ -141,6 +141,17 @@ class Base3DExtension {
     );
   }
 
+  createStaticBoxOneWayPlatform(args) {
+    this.engine.createStaticBoxOneWayPlatform(
+      toString(args.ID, 'one-way-box'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SIZE, 100),
+      toString(args.MATERIAL, '')
+    );
+  }
+
   createStaticBoxSensor(args) {
     this.engine.createStaticBoxSensor(
       toString(args.ID, 'sensor'),
@@ -182,6 +193,16 @@ class Base3DExtension {
       toNumber(args.GRAVITY_SCALE, 1),
       toNumber(args.STEP_OFFSET, 6),
       toNumber(args.GROUND_SNAP, 2)
+    );
+  }
+
+  configureKinematicControllerAdvanced(args) {
+    this.engine.configureKinematicControllerAdvanced(
+      toString(args.ID, 'character'),
+      toNumber(args.AIR_CONTROL, 1),
+      toNumber(args.COYOTE, 0.1),
+      toNumber(args.BUFFER, 0.1),
+      toString(args.PLATFORMS, 'on').toLowerCase() === 'on'
     );
   }
 
@@ -237,6 +258,17 @@ class Base3DExtension {
   createStaticConvexHullCollider(args) {
     this.engine.createStaticConvexHullCollider(
       toString(args.ID, 'collider'),
+      toString(args.VERTICES, ''),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  createStaticConvexHullOneWayPlatform(args) {
+    this.engine.createStaticConvexHullOneWayPlatform(
+      toString(args.ID, 'one-way-hull'),
       toString(args.VERTICES, ''),
       toNumber(args.X),
       toNumber(args.Y),
@@ -390,6 +422,13 @@ class Base3DExtension {
       toNumber(args.LAYER, 1),
       toNumber(args.MASK, 2147483647),
       toString(args.SENSOR, 'off').toLowerCase() === 'on'
+    );
+  }
+
+  configureColliderOneWay(args) {
+    this.engine.configureColliderOneWay(
+      toString(args.ID, 'collider'),
+      toString(args.ONE_WAY, 'on').toLowerCase() === 'on'
     );
   }
 
@@ -943,6 +982,19 @@ class Engine3D {
     return collider;
   }
 
+  createStaticBoxOneWayPlatform(id, x, y, z, size, materialId = '') {
+    const { collider } = this.world.createStaticBoxCollider({
+      id,
+      position: createVec3(x, y, z),
+      size,
+      materialId,
+      isOneWay: true
+    });
+
+    this.hostBridge.log(`One-way platform ${collider.id} registered`);
+    return collider;
+  }
+
   createStaticBoxSensor(id, x, y, z, size, collisionLayer = 1, collisionMask = 0x7fffffff) {
     const { collider } = this.world.createStaticBoxSensor({
       id,
@@ -1008,6 +1060,23 @@ class Engine3D {
     return character;
   }
 
+  configureKinematicControllerAdvanced(id, airControlFactor, coyoteTimeSeconds, jumpBufferSeconds, rideMovingPlatforms) {
+    const character = this.world.configureKinematicController(id, {
+      airControlFactor,
+      coyoteTimeSeconds,
+      jumpBufferSeconds,
+      rideMovingPlatforms
+    });
+
+    if (!character) {
+      this.hostBridge.log(`Kinematic controller ${id} advanced settings could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic controller ${character.id} advanced settings configured`);
+    return character;
+  }
+
   setKinematicCapsuleMoveIntent(id, dx, dy, dz) {
     return this.world.setKinematicCapsuleMoveIntent(id, createVec3(dx, dy, dz));
   }
@@ -1063,6 +1132,20 @@ class Engine3D {
     });
 
     this.hostBridge.log(`Static convex hull collider ${collider.id} registered with ${vertices.length} vertices`);
+    return collider;
+  }
+
+  createStaticConvexHullOneWayPlatform(id, verticesText, x, y, z, materialId = '') {
+    const vertices = parseConvexHullVertices(verticesText);
+    const { collider } = this.world.createStaticConvexHullCollider({
+      id,
+      position: createVec3(x, y, z),
+      vertices,
+      materialId,
+      isOneWay: true
+    });
+
+    this.hostBridge.log(`Static convex hull one-way platform ${collider.id} registered with ${vertices.length} vertices`);
     return collider;
   }
 
@@ -1240,6 +1323,18 @@ class Engine3D {
     }
 
     this.hostBridge.log(`Collider ${collider.id} collision filtering configured`);
+    return collider;
+  }
+
+  configureColliderOneWay(id, isOneWay) {
+    const collider = this.world.configureColliderOneWay(id, isOneWay);
+
+    if (!collider) {
+      this.hostBridge.log(`Collider ${id} could not be configured for one-way platform behavior`);
+      return null;
+    }
+
+    this.hostBridge.log(`Collider ${collider.id} one-way platform behavior configured`);
     return collider;
   }
 
@@ -1531,7 +1626,7 @@ class Engine3D {
 
     const body = character.bodyId ? this.world.getBody(character.bodyId) : null;
     const collider = character.colliderId ? this.world.getCollider(character.colliderId) : null;
-    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
+    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
   }
 
   getKinematicGroundSummary(id) {
@@ -1554,7 +1649,7 @@ class Engine3D {
     }
 
     const pose = this.world.getColliderWorldPose(id);
-    return `${collider.id} | body:${collider.bodyId || 'static'} | shape:${collider.shapeId} | material:${collider.materialId} | sensor:${collider.isSensor ? 'on' : 'off'} | layer:${collider.collisionLayer} | mask:${collider.collisionMask} | position ${formatVector(pose.position)}`;
+    return `${collider.id} | body:${collider.bodyId || 'static'} | shape:${collider.shapeId} | material:${collider.materialId} | sensor:${collider.isSensor ? 'on' : 'off'} | one-way:${collider.isOneWay ? 'on' : 'off'} | layer:${collider.collisionLayer} | mask:${collider.collisionMask} | position ${formatVector(pose.position)}`;
   }
 
   getMaterialSummary(id) {
@@ -2798,6 +2893,7 @@ function createBroadphaseProxy(options = {}) {
     isDynamic: motionType === 'dynamic',
     isKinematic: motionType === 'kinematic',
     isSensor: Boolean(options.isSensor),
+    isOneWay: Boolean(options.isOneWay) && !Boolean(options.isSensor),
     collisionLayer: Number(options.collisionLayer ?? 1),
     collisionMask: Number(options.collisionMask ?? 0x7fffffff),
     aabb: cloneAabb(options.aabb)
@@ -5409,6 +5505,7 @@ const DEFAULT_DEBUG_COLORS = Object.freeze({
   rigidBodyCenter: Object.freeze({ r: 255, g: 196, b: 61, a: 1 }),
   sleepingRigidBodyWireframe: Object.freeze({ r: 145, g: 160, b: 174, a: 1 }),
   staticColliderWireframe: Object.freeze({ r: 107, g: 222, b: 157, a: 1 }),
+  oneWayPlatformWireframe: Object.freeze({ r: 255, g: 204, b: 102, a: 1 }),
   sensorColliderWireframe: Object.freeze({ r: 241, g: 102, b: 255, a: 1 }),
   sensorOrigin: Object.freeze({ r: 255, g: 170, b: 255, a: 1 }),
   broadphaseAabb: Object.freeze({ r: 250, g: 128, b: 114, a: 0.9 }),
@@ -8981,6 +9078,8 @@ const KINEMATIC_CHARACTER_CAST_DISTANCE_TOLERANCE = 0.05;
 const KINEMATIC_FACE_QUERY_EPSILON = 1e-4;
 const KINEMATIC_MOTION_FACE_APPROACH_EPSILON = 1e-3;
 const KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE = 0.15;
+const KINEMATIC_ONE_WAY_MIN_UP = 0.1;
+const KINEMATIC_ONE_WAY_RECOVERY_DEPTH = 0.35;
 
 function toPositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -9771,13 +9870,23 @@ function isPointInsideWorldFace(point, face, tolerance = KINEMATIC_FACE_QUERY_EP
     return false;
   }
 
+  let windingSign = 0;
   for (let index = 0; index < face.points.length; index += 1) {
     const start = face.points[index];
     const end = face.points[(index + 1) % face.points.length];
     const edge = subtractVec3(end, start);
     const toPoint = subtractVec3(point, start);
     const side = dotVec3(crossVec3(edge, toPoint), face.normal);
-    if (side < -tolerance) {
+    if (Math.abs(side) <= tolerance) {
+      continue;
+    }
+
+    if (windingSign === 0) {
+      windingSign = Math.sign(side);
+      continue;
+    }
+
+    if (side * windingSign < -tolerance) {
       return false;
     }
   }
@@ -9800,6 +9909,38 @@ function getPointDistanceSquaredToWorldFaceBoundary(point, face) {
   }
 
   return bestDistanceSquared;
+}
+
+function isOneWayPlatformCollider(colliderLike) {
+  return colliderLike?.isOneWay === true && colliderLike?.isSensor !== true;
+}
+
+function isUpwardOneWayFace(face) {
+  return Number(face?.normal?.y ?? 0) > KINEMATIC_ONE_WAY_MIN_UP;
+}
+
+function shouldIgnoreKinematicOneWayMotionFace(faceContext, direction) {
+  if (!isOneWayPlatformCollider(faceContext)) {
+    return false;
+  }
+
+  if (!isUpwardOneWayFace(faceContext.face)) {
+    return true;
+  }
+
+  return Number(direction?.y ?? 0) >= -1e-4;
+}
+
+function shouldIgnoreKinematicOneWayCastHit(collider, hit, direction) {
+  if (!isOneWayPlatformCollider(collider)) {
+    return false;
+  }
+
+  if (Number(hit?.normal?.y ?? 0) <= KINEMATIC_ONE_WAY_MIN_UP) {
+    return true;
+  }
+
+  return Number(direction?.y ?? 0) >= -1e-4;
 }
 
 function ensureKinematicFaceCache(character, cacheKey) {
@@ -9964,7 +10105,7 @@ function updateKinematicCandidateCache(character, cacheKey, queryAabb, broadphas
   const nextColliderIds = [];
 
   for (const proxy of Array.isArray(broadphaseProxies) ? broadphaseProxies : []) {
-    if (proxy.isSensor || proxy.motionType !== 'static' || (proxy.shapeType !== 'box' && proxy.shapeType !== 'convex-hull')) {
+    if (proxy.isSensor || (proxy.shapeType !== 'box' && proxy.shapeType !== 'convex-hull')) {
       continue;
     }
 
@@ -10444,6 +10585,7 @@ class PhysicsWorld {
     const collider = this.colliderRegistry.createCollider({
       ...options,
       materialId: this.resolveMaterialId(options.materialId),
+      isOneWay: options.isOneWay,
       collisionLayer: normalizeCollisionBits(options.collisionLayer, DEFAULT_COLLISION_LAYER),
       collisionMask: normalizeCollisionBits(options.collisionMask, DEFAULT_COLLISION_MASK)
     });
@@ -10473,10 +10615,17 @@ class PhysicsWorld {
 
     if (options.isSensor !== undefined) {
       collider.isSensor = Boolean(options.isSensor);
+      if (collider.isSensor) {
+        collider.isOneWay = false;
+      }
     }
 
     if (options.enabled !== undefined) {
       collider.enabled = Boolean(options.enabled);
+    }
+
+    if (options.isOneWay !== undefined && !collider.isSensor) {
+      collider.isOneWay = Boolean(options.isOneWay);
     }
 
     if (collider.bodyId) {
@@ -10485,6 +10634,12 @@ class PhysicsWorld {
 
     this.markCollisionStateDirty();
     return this.getCollider(collider.id);
+  }
+
+  configureColliderOneWay(colliderId, enabled) {
+    return this.configureColliderCollision(colliderId, {
+      isOneWay: enabled
+    });
   }
 
   configureBodyCollision(bodyId, options = {}) {
@@ -10554,6 +10709,32 @@ class PhysicsWorld {
 
     if (options.groundSnapDistance !== undefined) {
       character.groundSnapDistance = toNonNegativeNumber(options.groundSnapDistance, character.groundSnapDistance ?? 2);
+    }
+
+    if (options.airControlFactor !== undefined) {
+      character.airControlFactor = Math.max(0, Number.isFinite(Number(options.airControlFactor))
+        ? Number(options.airControlFactor)
+        : (character.airControlFactor ?? 1));
+    }
+
+    if (options.coyoteTimeSeconds !== undefined) {
+      character.coyoteTimeSeconds = toNonNegativeNumber(options.coyoteTimeSeconds, character.coyoteTimeSeconds ?? 0.1);
+      character.coyoteTimer = Math.min(
+        toNonNegativeNumber(character.coyoteTimer, 0),
+        character.coyoteTimeSeconds
+      );
+    }
+
+    if (options.jumpBufferSeconds !== undefined) {
+      character.jumpBufferSeconds = toNonNegativeNumber(options.jumpBufferSeconds, character.jumpBufferSeconds ?? 0.1);
+      character.jumpBufferTimer = Math.min(
+        toNonNegativeNumber(character.jumpBufferTimer, 0),
+        character.jumpBufferSeconds
+      );
+    }
+
+    if (options.rideMovingPlatforms !== undefined) {
+      character.rideMovingPlatforms = Boolean(options.rideMovingPlatforms);
     }
 
     return this.getKinematicCapsule(character.id);
@@ -11156,6 +11337,12 @@ class PhysicsWorld {
       jumpSpeed: options.jumpSpeed,
       stepOffset: options.stepOffset,
       groundSnapDistance: options.groundSnapDistance,
+      airControlFactor: options.airControlFactor,
+      coyoteTimeSeconds: options.coyoteTimeSeconds,
+      jumpBufferSeconds: options.jumpBufferSeconds,
+      rideMovingPlatforms: options.rideMovingPlatforms,
+      coyoteTimer: options.coyoteTimer,
+      jumpBufferTimer: options.jumpBufferTimer,
       moveIntent: options.moveIntent,
       verticalVelocity: options.verticalVelocity,
       jumpRequested: options.jumpRequested,
@@ -11202,12 +11389,6 @@ class PhysicsWorld {
       return null;
     }
 
-    const body = collider.bodyId ? this.getBody(collider.bodyId) : null;
-    const motionType = body?.motionType ?? 'static';
-    if (motionType !== 'static') {
-      return null;
-    }
-
     const worldPose = this.getColliderWorldPose(collider.id);
     if (!worldPose) {
       return null;
@@ -11224,6 +11405,7 @@ class PhysicsWorld {
       bodyId: collider.bodyId ?? null,
       shapeId: collider.shapeId,
       materialId: collider.materialId ?? null,
+      isOneWay: collider.isOneWay === true,
       shapeType: shape.type,
       face
     };
@@ -11239,6 +11421,10 @@ class PhysicsWorld {
     const origin = cloneVec3(options.origin ?? body.position);
     const bottomSphereCenter = createKinematicBottomSphereCenter(character, origin);
     const face = faceContext.face;
+    if (isOneWayPlatformCollider(faceContext) && !isUpwardOneWayFace(face)) {
+      return null;
+    }
+
     if (!isWalkableKinematicNormal(face.normal, character.maxGroundAngleDegrees)) {
       return null;
     }
@@ -11259,7 +11445,10 @@ class PhysicsWorld {
     }
 
     const sphereCenterAtHit = addVec3(bottomSphereCenter, createVec3(0, -distance, 0));
-    const contactPoint = subtractVec3(sphereCenterAtHit, scaleVec3(face.normal, radius));
+    const contactOffset = signedDistance <= radius
+      ? Math.max(0, signedDistance)
+      : radius;
+    const contactPoint = subtractVec3(sphereCenterAtHit, scaleVec3(face.normal, contactOffset));
     if (!isPointInsideWorldFace(contactPoint, face, Math.max(character.skinWidth, 0.15))) {
       return null;
     }
@@ -11302,6 +11491,23 @@ class PhysicsWorld {
     const rotation = cloneQuat(options.rotation ?? body.rotation ?? createIdentityQuat());
     const origin = cloneVec3(options.origin ?? body.position);
     const face = faceContext.face;
+    if (shouldIgnoreKinematicOneWayMotionFace(faceContext, queryDirection)) {
+      return createShapeCastMiss({
+        castType: 'capsule',
+        origin,
+        direction: queryDirection,
+        maxDistance: queryDistance,
+        radius: character.radius,
+        halfHeight: character.halfHeight,
+        rotation,
+        sampleOrigins: [cloneVec3(origin)],
+        sampleEndPoints: [addScaledVec3(origin, queryDirection, queryDistance)],
+        proxyCount: options.proxyCount ?? 0,
+        candidateCount: options.candidateCount ?? 1,
+        testedShapeCount: options.testedShapeCount ?? 1
+      });
+    }
+
     const approachSpeed = -dotVec3(queryDirection, face.normal);
     if (approachSpeed <= KINEMATIC_MOTION_FACE_APPROACH_EPSILON) {
       return null;
@@ -11417,6 +11623,7 @@ class PhysicsWorld {
     let candidateCount = 0;
     let testedShapeCount = 0;
     let fallbackRequired = false;
+    let hasNonStaticPolygonalCandidate = false;
 
     for (const proxy of prioritizedProxies) {
       if (excludeColliderIds.has(proxy.colliderId)) {
@@ -11437,9 +11644,13 @@ class PhysicsWorld {
 
       candidateCount += 1;
 
-      if (proxy.motionType !== 'static' || (proxy.shapeType !== 'box' && proxy.shapeType !== 'convex-hull')) {
+      if (proxy.shapeType !== 'box' && proxy.shapeType !== 'convex-hull') {
         fallbackRequired = true;
         continue;
+      }
+
+      if (proxy.motionType !== 'static') {
+        hasNonStaticPolygonalCandidate = true;
       }
 
       const shape = this.getShape(proxy.shapeId);
@@ -11468,6 +11679,10 @@ class PhysicsWorld {
 
       let cachedFaceHit = null;
       for (const face of faceQueue) {
+        if (proxy.isOneWay === true && !isUpwardOneWayFace(face)) {
+          continue;
+        }
+
         if (!isWalkableKinematicNormal(face.normal, character.maxGroundAngleDegrees)) {
           continue;
         }
@@ -11537,11 +11752,32 @@ class PhysicsWorld {
       padding: Math.max(character.skinWidth + 0.5, radius * 0.25, 1)
     });
 
-    if (!nearestHit || fallbackRequired) {
+    if (nearestHit) {
+      return nearestHit;
+    }
+
+    if (fallbackRequired) {
       return null;
     }
 
-    return nearestHit;
+    if (candidateCount > 0 && hasNonStaticPolygonalCandidate) {
+      return createShapeCastMiss({
+        castType: 'capsule',
+        origin,
+        direction: createVec3(0, -1, 0),
+        maxDistance: queryDistance,
+        radius,
+        halfHeight: character.halfHeight,
+        rotation: cloneQuat(body.rotation ?? createIdentityQuat()),
+        sampleOrigins: [cloneVec3(origin)],
+        sampleEndPoints: [addVec3(origin, createVec3(0, -queryDistance, 0))],
+        proxyCount: broadphaseProxies.length,
+        candidateCount,
+        testedShapeCount
+      });
+    }
+
+    return null;
   }
 
   queryFastStaticKinematicMotion(character, body, shape, direction, maxDistance, options = {}) {
@@ -11568,6 +11804,10 @@ class PhysicsWorld {
       character?.groundFaceCache?.stableFrames >= 2 ? this.getCachedStaticKinematicFace(character.groundFaceCache) : null
     ].filter(Boolean);
     for (const cachedMotionContext of cachedMotionContexts) {
+      if (shouldIgnoreKinematicOneWayMotionFace(cachedMotionContext, direction)) {
+        continue;
+      }
+
       const cachedMotionHit = this.evaluateKinematicMotionFaceHit(character, body, shape, cachedMotionContext, direction, maxDistance, {
         origin: options.origin,
         rotation: options.rotation,
@@ -11656,13 +11896,21 @@ class PhysicsWorld {
         : faces;
 
       for (const face of faceQueue) {
-        const evaluated = this.evaluateKinematicMotionFaceHit(character, body, shape, {
+        const faceContext = {
           colliderId: proxy.colliderId,
           bodyId: proxy.bodyId,
           shapeId: proxy.shapeId,
           materialId: proxy.materialId,
+          isOneWay: proxy.isOneWay === true,
           shapeType: proxy.shapeType,
           face
+        };
+        if (shouldIgnoreKinematicOneWayMotionFace(faceContext, queryDirection)) {
+          continue;
+        }
+
+        const evaluated = this.evaluateKinematicMotionFaceHit(character, body, shape, {
+          ...faceContext
         }, queryDirection, queryDistance, {
           origin,
           rotation,
@@ -11832,6 +12080,7 @@ class PhysicsWorld {
         if (faces.length === 0) {
           continue;
         }
+        const isOneWay = proxy.isOneWay === true;
 
         const cachedFaces = [
           findWorldFaceById(faces, character?.groundFaceCache?.colliderId === proxy.colliderId ? character?.groundFaceCache?.faceId : null),
@@ -11842,12 +12091,20 @@ class PhysicsWorld {
           : faces;
 
         for (const face of faceQueue) {
+          if (isOneWay && !isUpwardOneWayFace(face)) {
+            continue;
+          }
+
           const supportFeature = getShapeSupportFeature(shape, {
             position: origin,
             rotation
           }, scaleVec3(face.normal, -1));
           const supportPoint = cloneVec3(supportFeature.worldPoint);
           const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
+          if (isOneWay && signedDistance < -Math.max(character.skinWidth + recoveryPadding, KINEMATIC_ONE_WAY_RECOVERY_DEPTH)) {
+            continue;
+          }
+
           if (signedDistance >= -1e-4 || signedDistance < -maxRecoveryDepth) {
             continue;
           }
@@ -11952,6 +12209,38 @@ class PhysicsWorld {
       }
     }
 
+    const ignoredColliderIds = new Set(Array.isArray(options.excludeColliderIds) ? options.excludeColliderIds.map((id) => String(id ?? '').trim()).filter(Boolean) : []);
+    const maxIgnoreAttempts = 8;
+
+    for (let attempt = 0; attempt < maxIgnoreAttempts; attempt += 1) {
+      const result = this.shapeCastAgainstWorld({
+        ...options,
+        castType: 'capsule',
+        queryShape: shape,
+        radius: character.radius,
+        halfHeight: character.halfHeight,
+        rotation: cloneQuat(options.rotation ?? body.rotation ?? createIdentityQuat()),
+        excludeColliderIds: Array.from(ignoredColliderIds),
+        distanceTolerance: options.distanceTolerance ?? Math.max(KINEMATIC_CHARACTER_CAST_DISTANCE_TOLERANCE, toNonNegativeNumber(character.skinWidth, 0.5) * 0.25),
+        maxDepth: options.maxDepth ?? KINEMATIC_CHARACTER_CAST_MAX_DEPTH
+      });
+
+      if (!result.hit) {
+        return result;
+      }
+
+      const hitCollider = result.colliderId ? this.getCollider(result.colliderId) : null;
+      if (!shouldIgnoreKinematicOneWayCastHit(hitCollider, result, direction)) {
+        return result;
+      }
+
+      if (!result.colliderId || ignoredColliderIds.has(result.colliderId)) {
+        return result;
+      }
+
+      ignoredColliderIds.add(result.colliderId);
+    }
+
     return this.shapeCastAgainstWorld({
       ...options,
       castType: 'capsule',
@@ -11959,6 +12248,7 @@ class PhysicsWorld {
       radius: character.radius,
       halfHeight: character.halfHeight,
       rotation: cloneQuat(options.rotation ?? body.rotation ?? createIdentityQuat()),
+      excludeColliderIds: Array.from(ignoredColliderIds),
       distanceTolerance: options.distanceTolerance ?? Math.max(KINEMATIC_CHARACTER_CAST_DISTANCE_TOLERANCE, toNonNegativeNumber(character.skinWidth, 0.5) * 0.25),
       maxDepth: options.maxDepth ?? KINEMATIC_CHARACTER_CAST_MAX_DEPTH
     });
@@ -12135,6 +12425,59 @@ class PhysicsWorld {
     });
   }
 
+  applyKinematicPlatformCarry(character, body, shape, deltaTime) {
+    if (!character || !body || !shape) {
+      return null;
+    }
+
+    character.lastPlatformCarry = createVec3();
+    character.lastPlatformBodyId = null;
+    character.platformVelocity = createVec3();
+
+    if (
+      character.rideMovingPlatforms === false ||
+      character.grounded !== true ||
+      character.walkable !== true ||
+      !character.groundBodyId ||
+      character.groundBodyLocalPoint?.valid !== true
+    ) {
+      return null;
+    }
+
+    const groundBody = this.bodyRegistry.getMutable(character.groundBodyId);
+    if (!groundBody || groundBody.enabled === false) {
+      return null;
+    }
+
+    const localPoint = cloneVec3(character.groundBodyLocalPoint.point ?? createVec3());
+    const currentGroundPoint = addVec3(
+      groundBody.position,
+      rotateVec3ByQuat(groundBody.rotation ?? createIdentityQuat(), localPoint)
+    );
+    const previousGroundPoint = cloneVec3(character.groundPoint ?? createVec3());
+    const platformCarry = subtractVec3(currentGroundPoint, previousGroundPoint);
+
+    if (lengthSquaredVec3(platformCarry) <= 1e-10) {
+      return null;
+    }
+
+    const carryResult = this.traceKinematicCapsuleMotion(character, body, shape, platformCarry, {
+      startPosition: body.position,
+      maxPasses: 1
+    });
+
+    body.position = cloneVec3(carryResult.endPosition);
+    character.lastPlatformCarry = cloneVec3(carryResult.actualMove ?? createVec3());
+    character.lastPlatformBodyId = groundBody.id;
+    if (deltaTime > 1e-8) {
+      character.platformVelocity = scaleVec3(character.lastPlatformCarry, 1 / deltaTime);
+    }
+    return {
+      requestedMove: platformCarry,
+      moveResult: carryResult
+    };
+  }
+
   tryKinematicCapsuleStepMove(character, body, shape, horizontalMove = createVec3()) {
     const stepOffset = toNonNegativeNumber(character.stepOffset, 0);
     if (stepOffset <= 1e-8 || lengthSquaredVec3(horizontalMove) <= 1e-8) {
@@ -12212,6 +12555,15 @@ class PhysicsWorld {
         return;
       }
 
+      const startPosition = cloneVec3(body.position);
+      let blocked = false;
+      let lastHitColliderId = null;
+      let lastHitBodyId = null;
+      let lastHitDistance = null;
+      let lastHitNormal = createVec3();
+      const totalRequestedMove = createVec3();
+      const totalActualMove = createVec3();
+
       const initialRecovery = this.recoverKinematicStaticOverlaps(character, body, shape, {
         maxIterations: 2,
         padding: 0.02
@@ -12222,26 +12574,74 @@ class PhysicsWorld {
         totalRecoveryDistance += initialRecovery.distance;
         lastRecoveryNormal = cloneVec3(character.lastRecoveryNormal ?? createVec3());
       }
+
+      const platformCarry = this.applyKinematicPlatformCarry(character, body, shape, deltaTime);
+      if (platformCarry) {
+        totalRequestedMove.x += platformCarry.requestedMove.x;
+        totalRequestedMove.y += platformCarry.requestedMove.y;
+        totalRequestedMove.z += platformCarry.requestedMove.z;
+        totalActualMove.x += platformCarry.moveResult.actualMove.x;
+        totalActualMove.y += platformCarry.moveResult.actualMove.y;
+        totalActualMove.z += platformCarry.moveResult.actualMove.z;
+        blocked = blocked || platformCarry.moveResult.blocked;
+        if (platformCarry.moveResult.hitColliderId) {
+          lastHitColliderId = platformCarry.moveResult.hitColliderId;
+          lastHitBodyId = platformCarry.moveResult.hitBodyId;
+          lastHitDistance = platformCarry.moveResult.hitDistance;
+          lastHitNormal = cloneVec3(platformCarry.moveResult.hitNormal);
+        }
+      }
+
       this.updateKinematicGroundState(character.id);
       const wasGrounded = character.grounded === true && character.walkable === true;
+      const supportVelocity = cloneVec3(character.platformVelocity ?? createVec3());
       let verticalVelocity = toOptionalNumber(character.verticalVelocity, 0) ?? 0;
-      let blocked = false;
-      let lastHitColliderId = null;
-      let lastHitBodyId = null;
-      let lastHitDistance = null;
-      let lastHitNormal = createVec3();
-      const totalRequestedMove = createVec3();
-      const totalActualMove = createVec3();
+      if (wasGrounded) {
+        character.coyoteTimer = toNonNegativeNumber(character.coyoteTimeSeconds, 0.1);
+      } else {
+        character.coyoteTimer = Math.max(0, toNonNegativeNumber(character.coyoteTimer, 0) - deltaTime);
+      }
 
-      if (character.jumpRequested === true && wasGrounded) {
-        verticalVelocity = toOptionalNumber(character.jumpSpeed, 8) ?? 8;
+      if (character.jumpRequested === true) {
+        character.jumpBufferTimer = Math.max(
+          toNonNegativeNumber(character.jumpBufferTimer, 0),
+          toNonNegativeNumber(character.jumpBufferSeconds, 0.1),
+          deltaTime
+        );
       }
       character.jumpRequested = false;
 
+      const wantsJump = toNonNegativeNumber(character.jumpBufferTimer, 0) > 1e-8;
+      const canGroundJump = wasGrounded || toNonNegativeNumber(character.coyoteTimer, 0) > 1e-8;
+      let jumpedThisFrame = false;
+      if (wantsJump && canGroundJump) {
+        verticalVelocity = (toOptionalNumber(character.jumpSpeed, 8) ?? 8) + Number(supportVelocity.y ?? 0);
+        character.jumpBufferTimer = 0;
+        character.coyoteTimer = 0;
+        character.grounded = false;
+        character.walkable = false;
+        character.inheritedVelocity = createVec3(Number(supportVelocity.x ?? 0), 0, Number(supportVelocity.z ?? 0));
+        jumpedThisFrame = true;
+      } else {
+        character.jumpBufferTimer = Math.max(0, toNonNegativeNumber(character.jumpBufferTimer, 0) - deltaTime);
+      }
+
       const moveIntent = cloneVec3(character.moveIntent ?? createVec3());
       let horizontalMove = scaleVec3(createVec3(moveIntent.x, 0, moveIntent.z), deltaTime);
-      if (wasGrounded && character.walkable && lengthSquaredVec3(horizontalMove) > 1e-8) {
+      if (wasGrounded && character.walkable && !jumpedThisFrame && lengthSquaredVec3(horizontalMove) > 1e-8) {
         horizontalMove = projectOntoGroundPlane(horizontalMove, character.groundNormal ?? createVec3(0, 1, 0));
+      } else if ((!wasGrounded || jumpedThisFrame) && lengthSquaredVec3(horizontalMove) > 1e-8) {
+        horizontalMove = scaleVec3(horizontalMove, Math.max(0, toNonNegativeNumber(character.airControlFactor, 1)));
+      }
+      if (!wasGrounded || jumpedThisFrame) {
+        horizontalMove = addVec3(
+          horizontalMove,
+          scaleVec3(createVec3(
+            Number(character.inheritedVelocity?.x ?? 0),
+            0,
+            Number(character.inheritedVelocity?.z ?? 0)
+          ), deltaTime)
+        );
       }
 
       if (!wasGrounded || verticalVelocity > 0) {
@@ -12249,8 +12649,6 @@ class PhysicsWorld {
       } else if (verticalVelocity < 0) {
         verticalVelocity = 0;
       }
-
-      const startPosition = cloneVec3(body.position);
 
       if (verticalVelocity > 1e-8) {
         const upwardMove = createVec3(0, verticalVelocity * deltaTime, 0);
@@ -12365,6 +12763,31 @@ class PhysicsWorld {
         character.walkable = false;
       } else if (character.grounded === true && verticalVelocity <= 0) {
         character.verticalVelocity = 0;
+        character.coyoteTimer = toNonNegativeNumber(character.coyoteTimeSeconds, 0.1);
+      } else {
+        character.coyoteTimer = Math.max(0, toNonNegativeNumber(character.coyoteTimer, 0));
+      }
+
+      if (character.grounded === true && character.walkable === true) {
+        character.inheritedVelocity = createVec3();
+      } else if (wasGrounded && !jumpedThisFrame) {
+        character.inheritedVelocity = createVec3(Number(supportVelocity.x ?? 0), 0, Number(supportVelocity.z ?? 0));
+        if (Math.abs(verticalVelocity) <= 1e-6) {
+          character.verticalVelocity = Number(supportVelocity.y ?? 0);
+        }
+      }
+
+      if (
+        character.grounded === true &&
+        character.walkable === true &&
+        toNonNegativeNumber(character.jumpBufferTimer, 0) > 1e-8 &&
+        character.verticalVelocity <= 0
+      ) {
+        character.verticalVelocity = toOptionalNumber(character.jumpSpeed, 8) ?? 8;
+        character.jumpBufferTimer = 0;
+        character.coyoteTimer = 0;
+        character.grounded = false;
+        character.walkable = false;
       }
 
       movedAnyCharacter = movedAnyCharacter ||
@@ -12438,6 +12861,29 @@ class PhysicsWorld {
     character.groundPoint = cloneVec3(nextGroundState.point);
     character.groundColliderId = nextGroundState.colliderId;
     character.groundBodyId = nextGroundState.bodyId;
+    if (nextGroundState.grounded && nextGroundState.bodyId) {
+      const groundBody = this.bodyRegistry.get(nextGroundState.bodyId);
+      if (groundBody) {
+        const localGroundPoint = inverseRotateVec3ByQuat(
+          groundBody.rotation ?? createIdentityQuat(),
+          subtractVec3(nextGroundState.point, groundBody.position)
+        );
+        character.groundBodyLocalPoint = {
+          valid: true,
+          point: cloneVec3(localGroundPoint)
+        };
+      } else {
+        character.groundBodyLocalPoint = {
+          valid: false,
+          point: createVec3()
+        };
+      }
+    } else {
+      character.groundBodyLocalPoint = {
+        valid: false,
+        point: createVec3()
+      };
+    }
 
     if (hit.hit && hit.algorithm === 'character-ground-face-v1' && hit.featureId) {
       updateKinematicFaceCache(character, 'groundFaceCache', hit);
@@ -12522,6 +12968,7 @@ class PhysicsWorld {
       bodyId: null,
       materialId: options.materialId,
       isSensor: options.isSensor,
+      isOneWay: options.isOneWay,
       collisionLayer: options.collisionLayer,
       collisionMask: options.collisionMask,
       localPose: {
@@ -12550,6 +12997,7 @@ class PhysicsWorld {
       bodyId: null,
       materialId: options.materialId,
       isSensor: options.isSensor,
+      isOneWay: options.isOneWay,
       collisionLayer: options.collisionLayer,
       collisionMask: options.collisionMask,
       localPose: {
@@ -12568,6 +13016,7 @@ class PhysicsWorld {
   createStaticBoxSensor(options = {}) {
     return this.createStaticBoxCollider({
       ...options,
+      isOneWay: false,
       isSensor: true
     });
   }
@@ -12575,6 +13024,7 @@ class PhysicsWorld {
   createStaticConvexHullSensor(options = {}) {
     return this.createStaticConvexHullCollider({
       ...options,
+      isOneWay: false,
       isSensor: true
     });
   }
@@ -13137,10 +13587,10 @@ class PhysicsWorld {
 
     while (this.accumulatorSeconds + 1e-12 >= this.fixedDeltaTime && performedSubsteps < this.maxSubsteps) {
       this.wakeBodiesFromExternalActivity();
-      this.stepKinematicCapsules(this.fixedDeltaTime);
       const ccdEvents = this.integrateRigidBodies(this.fixedDeltaTime);
       ccdEventCount += ccdEvents.length;
       const solverStats = this.solveRigidContacts(this.fixedDeltaTime, this.simulationTick + 1);
+      this.stepKinematicCapsules(this.fixedDeltaTime);
       const dynamicClothColliders = this.listDynamicClothColliders();
       this.lastXpbdStats = this.particleWorld.step(this.fixedDeltaTime, {
         staticColliders: staticClothColliders,
@@ -13428,6 +13878,7 @@ class PhysicsWorld {
         shapeType: shape.type,
         motionType: body?.motionType ?? 'static',
         isSensor: mutableCollider.isSensor,
+        isOneWay: mutableCollider.isOneWay,
         collisionLayer: mutableCollider.collisionLayer,
         collisionMask: mutableCollider.collisionMask,
         aabb
@@ -14223,13 +14674,16 @@ class PhysicsWorld {
         materialId: collider.materialId,
         collisionLayer: collider.collisionLayer,
         collisionMask: collider.collisionMask,
-        isSensor: collider.isSensor
+        isSensor: collider.isSensor,
+        isOneWay: collider.isOneWay === true
       };
       const wireColor = collider.isSensor
         ? DEFAULT_DEBUG_COLORS.sensorColliderWireframe
         : body
           ? (body.sleeping ? DEFAULT_DEBUG_COLORS.sleepingRigidBodyWireframe : DEFAULT_DEBUG_COLORS.rigidBodyWireframe)
-          : DEFAULT_DEBUG_COLORS.staticColliderWireframe;
+          : collider.isOneWay === true
+            ? DEFAULT_DEBUG_COLORS.oneWayPlatformWireframe
+            : DEFAULT_DEBUG_COLORS.staticColliderWireframe;
       const wireCategory = collider.isSensor
         ? 'sensor-collider'
         : body
@@ -15026,6 +15480,13 @@ function createDefaultCandidateCache() {
     stableFrames: 0
   };
 }
+
+function createDefaultGroundBodyLocalPoint() {
+  return {
+    valid: false,
+    point: createVec3()
+  };
+}
 class CharacterRegistry extends BaseRegistry {
   constructor() {
     super('character');
@@ -15047,9 +15508,15 @@ class CharacterRegistry extends BaseRegistry {
       jumpSpeed: character.jumpSpeed,
       stepOffset: character.stepOffset,
       groundSnapDistance: character.groundSnapDistance,
+      airControlFactor: character.airControlFactor,
+      coyoteTimeSeconds: character.coyoteTimeSeconds,
+      jumpBufferSeconds: character.jumpBufferSeconds,
+      rideMovingPlatforms: character.rideMovingPlatforms !== false,
       enabled: character.enabled !== false,
       jumpRequested: character.jumpRequested === true,
       verticalVelocity: character.verticalVelocity ?? 0,
+      coyoteTimer: character.coyoteTimer ?? 0,
+      jumpBufferTimer: character.jumpBufferTimer ?? 0,
       moveIntent: cloneVec3(character.moveIntent ?? createVec3()),
       grounded: character.grounded === true,
       walkable: character.walkable === true,
@@ -15067,6 +15534,14 @@ class CharacterRegistry extends BaseRegistry {
       lastHitDistance: character.lastHitDistance ?? null,
       lastRecoveryNormal: cloneVec3(character.lastRecoveryNormal ?? createVec3()),
       lastRecoveryDistance: character.lastRecoveryDistance ?? 0,
+      groundBodyLocalPoint: {
+        valid: character.groundBodyLocalPoint?.valid === true,
+        point: cloneVec3(character.groundBodyLocalPoint?.point ?? createVec3())
+      },
+      platformVelocity: cloneVec3(character.platformVelocity ?? createVec3()),
+      inheritedVelocity: cloneVec3(character.inheritedVelocity ?? createVec3()),
+      lastPlatformCarry: cloneVec3(character.lastPlatformCarry ?? createVec3()),
+      lastPlatformBodyId: character.lastPlatformBodyId ?? null,
       userData: cloneNullableValue(character.userData)
     };
   }
@@ -15088,9 +15563,15 @@ class CharacterRegistry extends BaseRegistry {
       jumpSpeed: toFiniteNumber(options.jumpSpeed, 8),
       stepOffset: Math.max(0, toFiniteNumber(options.stepOffset, 6)),
       groundSnapDistance: Math.max(0, toFiniteNumber(options.groundSnapDistance, 2)),
+      airControlFactor: Math.max(0, toFiniteNumber(options.airControlFactor, 1)),
+      coyoteTimeSeconds: Math.max(0, toFiniteNumber(options.coyoteTimeSeconds, 0.1)),
+      jumpBufferSeconds: Math.max(0, toFiniteNumber(options.jumpBufferSeconds, 0.1)),
+      rideMovingPlatforms: options.rideMovingPlatforms !== false,
       enabled: options.enabled !== false,
       jumpRequested: options.jumpRequested === true,
       verticalVelocity: toFiniteNumber(options.verticalVelocity, 0),
+      coyoteTimer: Math.max(0, toFiniteNumber(options.coyoteTimer, 0)),
+      jumpBufferTimer: Math.max(0, toFiniteNumber(options.jumpBufferTimer, 0)),
       moveIntent: cloneVec3(options.moveIntent ?? createVec3()),
       grounded: groundState.grounded === true,
       walkable: groundState.walkable === true,
@@ -15112,6 +15593,11 @@ class CharacterRegistry extends BaseRegistry {
       motionFaceCache: options.motionFaceCache ?? createDefaultFaceCache(),
       groundCandidateCache: options.groundCandidateCache ?? createDefaultCandidateCache(),
       motionCandidateCache: options.motionCandidateCache ?? createDefaultCandidateCache(),
+      groundBodyLocalPoint: options.groundBodyLocalPoint ?? createDefaultGroundBodyLocalPoint(),
+      platformVelocity: cloneVec3(options.platformVelocity ?? createVec3()),
+      inheritedVelocity: cloneVec3(options.inheritedVelocity ?? createVec3()),
+      lastPlatformCarry: cloneVec3(options.lastPlatformCarry ?? createVec3()),
+      lastPlatformBodyId: String(options.lastPlatformBodyId ?? '').trim() || null,
       userData: cloneNullableValue(options.userData)
     });
   }
@@ -15152,6 +15638,7 @@ class ColliderRegistry extends BaseRegistry {
       materialId: collider.materialId,
       enabled: collider.enabled,
       isSensor: collider.isSensor,
+      isOneWay: collider.isOneWay,
       collisionLayer: collider.collisionLayer,
       collisionMask: collider.collisionMask,
       localPose: createLocalPose(collider.localPose),
@@ -15168,6 +15655,7 @@ class ColliderRegistry extends BaseRegistry {
       materialId: String(options.materialId ?? '').trim() || null,
       enabled: options.enabled !== false,
       isSensor: Boolean(options.isSensor),
+      isOneWay: Boolean(options.isOneWay) && !Boolean(options.isSensor),
       collisionLayer: normalizeCollisionBits(options.collisionLayer, 1),
       collisionMask: normalizeCollisionBits(options.collisionMask, 0x7fffffff),
       localPose: createLocalPose(options.localPose),
@@ -16242,6 +16730,18 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'configureKinematicControllerAdvanced',
+        blockType: 'command',
+        text: 'configure kinematic controller advanced [ID] air:[AIR_CONTROL] coyote:[COYOTE] buffer:[BUFFER] platforms [PLATFORMS]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          AIR_CONTROL: { type: 'number', defaultValue: 1 },
+          COYOTE: { type: 'number', defaultValue: 0.1 },
+          BUFFER: { type: 'number', defaultValue: 0.1 },
+          PLATFORMS: { type: 'string', menu: 'ON_OFF', defaultValue: 'on' }
+        }
+      },
+      {
         opcode: 'setKinematicCapsuleMoveIntent',
         blockType: 'command',
         text: 'set kinematic capsule [ID] move intent x:[DX] y:[DY] z:[DZ]',
@@ -16314,6 +16814,19 @@ function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createStaticBoxOneWayPlatform',
+        blockType: 'command',
+        text: 'create static box one-way platform [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'one-way-box-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
         opcode: 'createStaticBoxSensor',
         blockType: 'command',
         text: 'create static box sensor [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] layer:[LAYER] mask:[MASK]',
@@ -16336,6 +16849,19 @@ function createExtensionInfo() {
           VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
           X: { type: 'number', defaultValue: 0 },
           Y: { type: 'number', defaultValue: -100 },
+          Z: { type: 'number', defaultValue: 0 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createStaticConvexHullOneWayPlatform',
+        blockType: 'command',
+        text: 'create static convex hull one-way platform [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'one-way-hull-1' },
+          VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
           Z: { type: 'number', defaultValue: 0 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
         }
@@ -16495,6 +17021,15 @@ function createExtensionInfo() {
           LAYER: { type: 'number', defaultValue: 1 },
           MASK: { type: 'number', defaultValue: 2147483647 },
           SENSOR: { type: 'string', menu: 'ON_OFF', defaultValue: 'off' }
+        }
+      },
+      {
+        opcode: 'configureColliderOneWay',
+        blockType: 'command',
+        text: 'configure collider [ID] one-way [ONE_WAY]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'one-way-box-1:collider' },
+          ONE_WAY: { type: 'string', menu: 'ON_OFF', defaultValue: 'on' }
         }
       },
       {

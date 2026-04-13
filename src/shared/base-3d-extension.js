@@ -120,6 +120,17 @@ export class Base3DExtension {
     );
   }
 
+  createStaticBoxOneWayPlatform(args) {
+    this.engine.createStaticBoxOneWayPlatform(
+      toString(args.ID, 'one-way-box'),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toNumber(args.SIZE, 100),
+      toString(args.MATERIAL, '')
+    );
+  }
+
   createStaticBoxSensor(args) {
     this.engine.createStaticBoxSensor(
       toString(args.ID, 'sensor'),
@@ -161,6 +172,16 @@ export class Base3DExtension {
       toNumber(args.GRAVITY_SCALE, 1),
       toNumber(args.STEP_OFFSET, 6),
       toNumber(args.GROUND_SNAP, 2)
+    );
+  }
+
+  configureKinematicControllerAdvanced(args) {
+    this.engine.configureKinematicControllerAdvanced(
+      toString(args.ID, 'character'),
+      toNumber(args.AIR_CONTROL, 1),
+      toNumber(args.COYOTE, 0.1),
+      toNumber(args.BUFFER, 0.1),
+      toString(args.PLATFORMS, 'on').toLowerCase() === 'on'
     );
   }
 
@@ -216,6 +237,17 @@ export class Base3DExtension {
   createStaticConvexHullCollider(args) {
     this.engine.createStaticConvexHullCollider(
       toString(args.ID, 'collider'),
+      toString(args.VERTICES, ''),
+      toNumber(args.X),
+      toNumber(args.Y),
+      toNumber(args.Z),
+      toString(args.MATERIAL, '')
+    );
+  }
+
+  createStaticConvexHullOneWayPlatform(args) {
+    this.engine.createStaticConvexHullOneWayPlatform(
+      toString(args.ID, 'one-way-hull'),
       toString(args.VERTICES, ''),
       toNumber(args.X),
       toNumber(args.Y),
@@ -369,6 +401,13 @@ export class Base3DExtension {
       toNumber(args.LAYER, 1),
       toNumber(args.MASK, 2147483647),
       toString(args.SENSOR, 'off').toLowerCase() === 'on'
+    );
+  }
+
+  configureColliderOneWay(args) {
+    this.engine.configureColliderOneWay(
+      toString(args.ID, 'collider'),
+      toString(args.ONE_WAY, 'on').toLowerCase() === 'on'
     );
   }
 

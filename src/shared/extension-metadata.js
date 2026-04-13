@@ -128,6 +128,18 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'configureKinematicControllerAdvanced',
+        blockType: 'command',
+        text: 'configure kinematic controller advanced [ID] air:[AIR_CONTROL] coyote:[COYOTE] buffer:[BUFFER] platforms [PLATFORMS]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          AIR_CONTROL: { type: 'number', defaultValue: 1 },
+          COYOTE: { type: 'number', defaultValue: 0.1 },
+          BUFFER: { type: 'number', defaultValue: 0.1 },
+          PLATFORMS: { type: 'string', menu: 'ON_OFF', defaultValue: 'on' }
+        }
+      },
+      {
         opcode: 'setKinematicCapsuleMoveIntent',
         blockType: 'command',
         text: 'set kinematic capsule [ID] move intent x:[DX] y:[DY] z:[DZ]',
@@ -200,6 +212,19 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'createStaticBoxOneWayPlatform',
+        blockType: 'command',
+        text: 'create static box one-way platform [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'one-way-box-1' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
+          Z: { type: 'number', defaultValue: 0 },
+          SIZE: { type: 'number', defaultValue: 100 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
         opcode: 'createStaticBoxSensor',
         blockType: 'command',
         text: 'create static box sensor [ID] at x:[X] y:[Y] z:[Z] size:[SIZE] layer:[LAYER] mask:[MASK]',
@@ -222,6 +247,19 @@ export function createExtensionInfo() {
           VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
           X: { type: 'number', defaultValue: 0 },
           Y: { type: 'number', defaultValue: -100 },
+          Z: { type: 'number', defaultValue: 0 },
+          MATERIAL: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'createStaticConvexHullOneWayPlatform',
+        blockType: 'command',
+        text: 'create static convex hull one-way platform [ID] vertices:[VERTICES] at x:[X] y:[Y] z:[Z] material:[MATERIAL]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'one-way-hull-1' },
+          VERTICES: { type: 'string', defaultValue: '-50 -50 -50; 50 -50 -50; 50 -50 50; -50 -50 50; 0 50 0' },
+          X: { type: 'number', defaultValue: 0 },
+          Y: { type: 'number', defaultValue: 0 },
           Z: { type: 'number', defaultValue: 0 },
           MATERIAL: { type: 'string', defaultValue: 'material-default' }
         }
@@ -381,6 +419,15 @@ export function createExtensionInfo() {
           LAYER: { type: 'number', defaultValue: 1 },
           MASK: { type: 'number', defaultValue: 2147483647 },
           SENSOR: { type: 'string', menu: 'ON_OFF', defaultValue: 'off' }
+        }
+      },
+      {
+        opcode: 'configureColliderOneWay',
+        blockType: 'command',
+        text: 'configure collider [ID] one-way [ONE_WAY]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'one-way-box-1:collider' },
+          ONE_WAY: { type: 'string', menu: 'ON_OFF', defaultValue: 'on' }
         }
       },
       {

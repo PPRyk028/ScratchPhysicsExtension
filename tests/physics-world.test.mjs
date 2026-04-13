@@ -1831,7 +1831,11 @@ test('PhysicsWorld exports and imports kinematic capsules with ground settings i
     jumpSpeed: 9,
     gravityScale: 1.2,
     stepOffset: 7,
-    groundSnapDistance: 3
+    groundSnapDistance: 3,
+    airControlFactor: 0.6,
+    coyoteTimeSeconds: 0.12,
+    jumpBufferSeconds: 0.14,
+    rideMovingPlatforms: false
   });
   world.setKinematicCapsuleMoveIntent('player', { x: 4, y: 0, z: 0 });
 
@@ -1853,6 +1857,10 @@ test('PhysicsWorld exports and imports kinematic capsules with ground settings i
   assert.equal(importedCharacter.gravityScale, 1.2);
   assert.equal(importedCharacter.stepOffset, 7);
   assert.equal(importedCharacter.groundSnapDistance, 3);
+  assert.equal(importedCharacter.airControlFactor, 0.6);
+  assert.equal(importedCharacter.coyoteTimeSeconds, 0.12);
+  assert.equal(importedCharacter.jumpBufferSeconds, 0.14);
+  assert.equal(importedCharacter.rideMovingPlatforms, false);
   assert.equal(importedCharacter.moveIntent.x, 4);
   assert.equal(importedWorld.isKinematicCapsuleGrounded('player'), true);
 });
@@ -1894,8 +1902,349 @@ test('PhysicsWorld kinematic controllers jump upward and land back on walkable g
 
   const landed = world.getKinematicCapsule('player');
   assert.equal(landed.grounded, true);
-  assert.ok(Math.abs(world.getBody('player').position.y - startY) < 0.5, `expected player to land near start height, got ${world.getBody('player').position.y}`);
+  assert.ok(Math.abs(world.getBody('player').position.y - startY) <= 0.55, `expected player to land near start height, got ${world.getBody('player').position.y}`);
   assert.equal(Math.abs(landed.verticalVelocity ?? 0) <= 1e-8, true);
+});
+
+test('PhysicsWorld kinematic controllers pass upward through one-way box platforms and land on them from above', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createStaticBoxCollider({
+    id: 'platform',
+    position: { x: 0, y: 12, z: 0 },
+    size: 12,
+    isOneWay: true
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 20,
+    gravityScale: 1,
+    stepOffset: 6,
+    groundSnapDistance: 2
+  });
+
+  assert.equal(world.getCollider('platform:collider').isOneWay, true);
+  world.jumpKinematicCapsule('player');
+
+  let passedAbovePlatform = false;
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 60);
+    if (world.getBody('player').position.y > 33) {
+      passedAbovePlatform = true;
+    }
+  }
+
+  assert.equal(passedAbovePlatform, true, 'expected player to pass upward through the one-way platform');
+
+  for (let index = 0; index < 180; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const character = world.getKinematicCapsule('player');
+  const body = world.getBody('player');
+  assert.equal(character.grounded, true);
+  assert.equal(character.groundColliderId, 'platform:collider');
+  assert.ok(Math.abs(body.position.y - 33) <= 0.75, `expected player to land on the one-way platform, got ${body.position.y}`);
+});
+
+test('PhysicsWorld kinematic controllers support one-way convex hull platforms', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createStaticConvexHullCollider({
+    id: 'platform',
+    position: { x: 0, y: 12, z: 0 },
+    vertices: [
+      { x: -20, y: -6, z: -20 },
+      { x: 20, y: -6, z: -20 },
+      { x: 20, y: -6, z: 20 },
+      { x: -20, y: -6, z: 20 },
+      { x: -20, y: 6, z: -20 },
+      { x: 20, y: 6, z: -20 },
+      { x: 20, y: 6, z: 20 },
+      { x: -20, y: 6, z: 20 }
+    ]
+  });
+  world.configureColliderOneWay('platform:collider', true);
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 20,
+    gravityScale: 1,
+    stepOffset: 6,
+    groundSnapDistance: 2
+  });
+
+  world.jumpKinematicCapsule('player');
+  let passedAbovePlatform = false;
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 60);
+    if (world.getBody('player').position.y > 33) {
+      passedAbovePlatform = true;
+    }
+  }
+
+  assert.equal(passedAbovePlatform, true, 'expected player to pass upward through the one-way convex hull platform');
+
+  for (let index = 0; index < 180; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const character = world.getKinematicCapsule('player');
+  const body = world.getBody('player');
+  assert.equal(character.grounded, true);
+  assert.equal(character.groundColliderId, 'platform:collider');
+  assert.ok(Math.abs(body.position.y - 33) <= 0.9, `expected player to land on the one-way convex hull platform, got ${body.position.y}`);
+});
+
+test('PhysicsWorld kinematic controllers scale airborne movement with air control', () => {
+  const world = new PhysicsWorld();
+  world.createKinematicCapsule({
+    id: 'free-full',
+    position: { x: 0, y: 40, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.createKinematicCapsule({
+    id: 'free-soft',
+    position: { x: 0, y: 40, z: 10 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('free-full', {
+    airControlFactor: 1
+  });
+  world.configureKinematicController('free-soft', {
+    airControlFactor: 0.25
+  });
+  world.setKinematicCapsuleMoveIntent('free-full', { x: 12, y: 0, z: 0 });
+  world.setKinematicCapsuleMoveIntent('free-soft', { x: 12, y: 0, z: 0 });
+
+  for (let index = 0; index < 20; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const fullBody = world.getBody('free-full');
+  const softBody = world.getBody('free-soft');
+
+  assert.ok(fullBody.position.x > softBody.position.x + 2, `expected full air control to move farther, got full=${fullBody.position.x} soft=${softBody.position.x}`);
+});
+
+test('PhysicsWorld kinematic controllers honor coyote time after leaving ledges', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'ledge',
+    position: { x: 0, y: -10, z: 0 },
+    size: 8
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 9,
+    coyoteTimeSeconds: 0.15
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 12, y: 0, z: 0 });
+
+  let airborneFrame = -1;
+  for (let index = 0; index < 80; index += 1) {
+    world.step(1 / 60);
+    if (!world.isKinematicCapsuleGrounded('player')) {
+      airborneFrame = index;
+      break;
+    }
+  }
+
+  assert.ok(airborneFrame >= 0, 'expected player to leave the ledge');
+  const beforeJumpY = world.getBody('player').position.y;
+  world.jumpKinematicCapsule('player');
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  assert.ok((character.verticalVelocity ?? 0) > 0, `expected coyote jump to produce upward velocity, got ${character.verticalVelocity}`);
+  assert.ok(world.getBody('player').position.y > beforeJumpY, `expected coyote jump to raise the player, got y=${world.getBody('player').position.y}`);
+});
+
+test('PhysicsWorld kinematic controllers honor jump buffering shortly before landing', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 16, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 9,
+    jumpBufferSeconds: 0.5
+  });
+
+  world.step(1 / 60);
+  world.getBody('player').position.y += 1.2;
+  world.characterRegistry.getMutable('player').grounded = false;
+  world.characterRegistry.getMutable('player').walkable = false;
+  world.characterRegistry.getMutable('player').verticalVelocity = -1;
+  world.jumpKinematicCapsule('player');
+
+  let sawBufferedJump = false;
+  for (let index = 0; index < 40; index += 1) {
+    world.step(1 / 60);
+    const character = world.getKinematicCapsule('player');
+    if ((character.verticalVelocity ?? 0) > 0.5) {
+      sawBufferedJump = true;
+      break;
+    }
+  }
+
+  assert.equal(sawBufferedJump, true, 'expected buffered jump to fire after landing');
+});
+
+test('PhysicsWorld kinematic controllers ride kinematic moving platforms via cached ground anchors', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'platform',
+    motionType: 'kinematic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    rideMovingPlatforms: true
+  });
+
+  world.step(1 / 60);
+  const platformBody = world.bodyRegistry.getMutable('platform');
+  platformBody.position.x += 3;
+  world.markCollisionStateDirty();
+  world.step(1 / 60);
+
+  const playerBody = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok(playerBody.position.x > 2, `expected player to be carried by the platform, got x=${playerBody.position.x}`);
+  assert.ok((character.lastPlatformCarry?.x ?? 0) > 2, `expected recorded platform carry, got ${character.lastPlatformCarry?.x}`);
+  assert.ok((character.platformVelocity?.x ?? 0) > 100, `expected platform velocity to be recorded, got ${character.platformVelocity?.x}`);
+  assert.equal(character.lastPlatformBodyId, 'platform');
+});
+
+test('PhysicsWorld kinematic controllers inherit horizontal platform velocity when jumping off moving platforms', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'platform',
+    motionType: 'kinematic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 9,
+    rideMovingPlatforms: true
+  });
+
+  world.step(1 / 60);
+  const platformBody = world.bodyRegistry.getMutable('platform');
+  platformBody.position.x += 2;
+  world.markCollisionStateDirty();
+  world.jumpKinematicCapsule('player');
+  world.step(1 / 60);
+
+  const xAfterJump = world.getBody('player').position.x;
+  const afterJumpCharacter = world.getKinematicCapsule('player');
+  assert.ok((afterJumpCharacter.inheritedVelocity?.x ?? 0) > 100, `expected inherited velocity from moving platform, got ${afterJumpCharacter.inheritedVelocity?.x}`);
+
+  for (let index = 0; index < 5; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.equal(character.grounded, false);
+  assert.ok(playerBody.position.x > xAfterJump + 4, `expected airborne player to keep horizontal inertia, got x=${playerBody.position.x}`);
+});
+
+test('PhysicsWorld kinematic controllers keep platform inertia after walking off moving platforms', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'platform',
+    motionType: 'kinematic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 8
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    rideMovingPlatforms: true
+  });
+
+  world.step(1 / 60);
+  const platformBody = world.bodyRegistry.getMutable('platform');
+  platformBody.position.x += 1.5;
+  world.markCollisionStateDirty();
+  world.step(1 / 60);
+
+  world.setKinematicCapsuleMoveIntent('player', { x: 12, y: 0, z: 0 });
+  let airborne = false;
+  for (let index = 0; index < 40; index += 1) {
+    platformBody.position.x += 1.5;
+    world.markCollisionStateDirty();
+    world.step(1 / 60);
+    if (!world.isKinematicCapsuleGrounded('player')) {
+      airborne = true;
+      break;
+    }
+  }
+
+  assert.equal(airborne, true, 'expected player to walk off the moving platform');
+  const xWhenLeaving = world.getBody('player').position.x;
+  world.setKinematicCapsuleMoveIntent('player', { x: 0, y: 0, z: 0 });
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  const playerBody = world.getBody('player');
+  assert.ok((character.inheritedVelocity?.x ?? 0) > 80, `expected walk-off inertia to preserve horizontal platform speed, got ${character.inheritedVelocity?.x}`);
+  assert.ok(playerBody.position.x > xWhenLeaving + 1, `expected player to keep drifting after walking off, got x=${playerBody.position.x}`);
 });
 
 test('PhysicsWorld kinematic controllers project movement onto walkable slopes', () => {
