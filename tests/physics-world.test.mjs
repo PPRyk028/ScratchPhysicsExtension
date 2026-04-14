@@ -1854,6 +1854,68 @@ test('PhysicsWorld kinematic controller hit callbacks cache enter, stay, and exi
   assert.equal(frame.primitives.some((primitive) => primitive.category === 'character-hit-point'), false);
 });
 
+test('PhysicsWorld grounded kinematic controller hit callbacks prefer blocking walls over walkable ground', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -70, z: 0 },
+    size: 140
+  });
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 40, y: 15, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 0, z: 0 },
+    radius: 8,
+    halfHeight: 16
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 9,
+    gravityScale: 1,
+    stepOffset: 8,
+    groundSnapDistance: 3
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 20, y: 0, z: 0 });
+
+  let sawWallEnter = false;
+  for (let frameIndex = 0; frameIndex < 120; frameIndex += 1) {
+    world.step(1 / 60);
+    const enterEvents = world.getKinematicCapsuleHitEvents('player', 'enter');
+    const stayEvents = world.getKinematicCapsuleHitEvents('player', 'stay');
+    const exitEvents = world.getKinematicCapsuleHitEvents('player', 'exit');
+    const lastHit = world.getKinematicCapsuleLastHit('player');
+
+    if (enterEvents.colliders.some((collider) => collider.id === 'wall:collider')) {
+      sawWallEnter = true;
+    }
+
+    if (sawWallEnter) {
+      assert.equal(lastHit?.colliderId, 'wall:collider');
+      assert.equal(exitEvents.colliderCount, 0);
+      assert.equal(
+        enterEvents.colliders.some((collider) => collider.id === 'floor:collider') ||
+        stayEvents.colliders.some((collider) => collider.id === 'floor:collider'),
+        false
+      );
+    }
+
+    if (sawWallEnter && frameIndex >= 80) {
+      assert.equal(stayEvents.colliderCount, 1);
+      assert.equal(stayEvents.colliders[0].id, 'wall:collider');
+    }
+  }
+
+  assert.equal(sawWallEnter, true);
+  const frame = world.buildDebugFrame();
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'character-hit-point'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'character-hit-normal'));
+});
+
 test('PhysicsWorld exports and imports kinematic capsules with ground settings intact', () => {
   const world = new PhysicsWorld({
     gravity: { x: 0, y: 0, z: 0 }

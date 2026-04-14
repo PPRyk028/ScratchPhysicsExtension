@@ -1650,7 +1650,8 @@ class Engine3D {
 
     const body = character.bodyId ? this.world.getBody(character.bodyId) : null;
     const collider = character.colliderId ? this.world.getCollider(character.colliderId) : null;
-    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | last hit:${character.lastHitColliderId || 'none'} | last hit body:${character.lastHitBodyId || 'none'} | last hit distance:${formatOptionalNumber(character.lastHitDistance)} | last hit algorithm:${character.lastHitAlgorithm || 'none'} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
+    const lastHit = this.world.getKinematicCapsuleLastHit(id);
+    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | last hit:${lastHit?.colliderId || 'none'} | last hit body:${lastHit?.bodyId || 'none'} | last hit distance:${formatOptionalNumber(lastHit?.distance)} | last hit algorithm:${lastHit?.algorithm || 'none'} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
   }
 
   getKinematicGroundSummary(id) {
@@ -9530,6 +9531,11 @@ function cloneControllerHitEvent(controllerHitEvent) {
   return createControllerHitEvent(controllerHitEvent);
 }
 
+function isRelevantControllerHitEvent(controllerHitEvent) {
+  const hit = createControllerHitEvent(controllerHitEvent);
+  return hit.blocking === true && hit.walkable !== true;
+}
+
 function createEmptyControllerHitEventState() {
   return {
     hitsByKey: new Map(),
@@ -11617,7 +11623,7 @@ class PhysicsWorld {
 
     const collider = this.getCollider(moveResult.hitColliderId);
     const shape = collider ? this.getShape(collider.shapeId) : null;
-    return createControllerHitEvent({
+    const hitRecord = createControllerHitEvent({
       characterId: character.id,
       characterBodyId: character.bodyId,
       characterColliderId: character.colliderId,
@@ -11633,12 +11639,138 @@ class PhysicsWorld {
       blocking: options.blocking ?? moveResult.blocked === true,
       walkable: options.walkable ?? isWalkableKinematicNormal(moveResult.hitNormal, character.maxGroundAngleDegrees)
     });
+
+    return isRelevantControllerHitEvent(hitRecord)
+      ? hitRecord
+      : null;
+  }
+
+  createSustainedControllerHitRecords(currentHits, previousHitsByKey, characterIds = null) {
+    const currentHitsByKey = new Map();
+    for (const hit of Array.isArray(currentHits) ? currentHits : []) {
+      const normalizedHit = createControllerHitEvent(hit);
+      const key = createControllerHitKey(normalizedHit.characterId, normalizedHit.colliderId);
+      if (key) {
+        currentHitsByKey.set(key, normalizedHit);
+      }
+    }
+
+    const scopedCharacterIds = new Set(
+      Array.isArray(characterIds)
+        ? characterIds.map((id) => String(id ?? '').trim()).filter(Boolean)
+        : []
+    );
+    const useScopedCharacters = scopedCharacterIds.size > 0;
+    const sustainedHits = [];
+
+    if (!(previousHitsByKey instanceof Map)) {
+      return sustainedHits;
+    }
+
+    for (const [key, previousHit] of previousHitsByKey.entries()) {
+      if (currentHitsByKey.has(key) || !isRelevantControllerHitEvent(previousHit)) {
+        continue;
+      }
+
+      if (useScopedCharacters && !scopedCharacterIds.has(previousHit.characterId)) {
+        continue;
+      }
+
+      const character = this.characterRegistry.getMutable(previousHit.characterId);
+      if (!character || character.enabled === false) {
+        continue;
+      }
+
+      const body = this.bodyRegistry.getMutable(character.bodyId);
+      const shape = this.getShape(character.shapeId);
+      if (!body || !shape) {
+        continue;
+      }
+
+      const requestedMove = cloneVec3(character.lastRequestedMove ?? character.moveIntent ?? createVec3());
+      if (lengthSquaredVec3(requestedMove) <= 1e-8) {
+        continue;
+      }
+
+      const hitNormal = normalizeVec3(previousHit.normal ?? createVec3(), createVec3());
+      if (lengthSquaredVec3(hitNormal) <= 1e-8 || dotVec3(requestedMove, hitNormal) >= -1e-4) {
+        continue;
+      }
+
+      let point = cloneOptionalVec3(previousHit.point ?? null);
+      let normal = cloneVec3(hitNormal);
+      let featureId = previousHit.featureId ?? null;
+      let algorithm = previousHit.algorithm || 'controller-hit-cache-v1';
+      let canPersist = false;
+
+      const cachedFace = this.getCachedStaticKinematicFace({
+        colliderId: previousHit.colliderId,
+        faceId: previousHit.featureId
+      });
+
+      if (cachedFace?.face) {
+        const supportFeature = getShapeSupportFeature(shape, {
+          position: body.position,
+          rotation: body.rotation ?? createIdentityQuat()
+        }, scaleVec3(cachedFace.face.normal, -1));
+        const supportPoint = cloneVec3(supportFeature.worldPoint);
+        const signedDistance = dotVec3(supportPoint, cachedFace.face.normal) - cachedFace.face.planeOffset;
+        const persistTolerance = Math.max(character.skinWidth + 0.05, 0.15);
+        if (signedDistance >= -persistTolerance && signedDistance <= persistTolerance) {
+          const projectedPoint = subtractVec3(supportPoint, scaleVec3(cachedFace.face.normal, signedDistance));
+          if (isPointInsideWorldFace(projectedPoint, cachedFace.face, Math.max(character.skinWidth, 0.15))) {
+            point = projectedPoint;
+            normal = cloneVec3(cachedFace.face.normal);
+            featureId = cachedFace.face.id;
+            algorithm = 'controller-hit-cache-v1';
+            canPersist = true;
+          }
+        }
+      } else if (previousHit.point) {
+        const supportFeature = getShapeSupportFeature(shape, {
+          position: body.position,
+          rotation: body.rotation ?? createIdentityQuat()
+        }, scaleVec3(hitNormal, -1));
+        const supportPoint = cloneVec3(supportFeature.worldPoint);
+        const pointDelta = subtractVec3(supportPoint, previousHit.point);
+        const signedDistance = dotVec3(pointDelta, hitNormal);
+        const persistTolerance = Math.max(character.skinWidth + 0.05, 0.15);
+        if (signedDistance >= -persistTolerance && signedDistance <= persistTolerance) {
+          point = subtractVec3(supportPoint, scaleVec3(hitNormal, signedDistance));
+          canPersist = true;
+        }
+      }
+
+      if (!canPersist) {
+        continue;
+      }
+
+      sustainedHits.push(createControllerHitEvent({
+        ...previousHit,
+        point,
+        normal,
+        featureId,
+        algorithm,
+        distance: 0,
+        sources: normalizeControllerHitSources([...(previousHit.sources ?? []), 'cache-stay'])
+      }));
+    }
+
+    return sustainedHits;
   }
 
   commitControllerHitEvents(currentHits, options = {}) {
     const previousState = this.lastControllerHitEventState ?? createEmptyControllerHitEventState();
+    const normalizedCurrentHits = (Array.isArray(currentHits) ? currentHits : [])
+      .map((hit) => createControllerHitEvent(hit))
+      .filter((hit) => isRelevantControllerHitEvent(hit));
+    const sustainedHits = this.createSustainedControllerHitRecords(
+      normalizedCurrentHits,
+      previousState.hitsByKey,
+      Array.isArray(options.characterIds) ? options.characterIds : null
+    );
     const nextState = buildControllerHitEventState(
-      currentHits,
+      normalizedCurrentHits.concat(sustainedHits),
       previousState.hitsByKey,
       Array.isArray(options.characterIds) ? options.characterIds : null
     );
@@ -11699,6 +11831,36 @@ class PhysicsWorld {
   getKinematicCapsuleLastHit(characterId) {
     const character = this.getKinematicCapsule(characterId);
     if (!character) {
+      return null;
+    }
+
+    const activeControllerHits = Array.from(
+      (this.lastControllerHitEventState?.hitsByKey ?? new Map()).values()
+    )
+      .map((event) => createControllerHitEvent(event))
+      .filter((event) => event.characterId === character.id && isRelevantControllerHitEvent(event))
+      .sort((left, right) => {
+        const leftDistance = Number.isFinite(Number(left.distance)) ? Number(left.distance) : Number.POSITIVE_INFINITY;
+        const rightDistance = Number.isFinite(Number(right.distance)) ? Number(right.distance) : Number.POSITIVE_INFINITY;
+        return leftDistance - rightDistance;
+      });
+
+    if (activeControllerHits.length > 0) {
+      const preferredHit = activeControllerHits[0];
+      return {
+        characterId: character.id,
+        colliderId: preferredHit.colliderId ?? null,
+        bodyId: preferredHit.bodyId ?? null,
+        distance: preferredHit.distance ?? null,
+        normal: cloneVec3(preferredHit.normal ?? createVec3()),
+        point: cloneOptionalVec3(preferredHit.point ?? null),
+        featureId: preferredHit.featureId ?? null,
+        algorithm: preferredHit.algorithm ?? null
+      };
+    }
+
+    const rawLastHitIsGround = character.lastHitColliderId && character.lastHitColliderId === character.groundColliderId;
+    if (!character.lastHitColliderId || rawLastHitIsGround) {
       return null;
     }
 
@@ -15208,19 +15370,20 @@ class PhysicsWorld {
         );
       }
 
-      if (character.lastHitColliderId && character.lastHitPoint && lengthSquaredVec3(character.lastHitNormal ?? createVec3()) > 1e-8) {
+      const controllerHit = this.getKinematicCapsuleLastHit(character.id);
+      if (controllerHit?.colliderId && controllerHit.point && lengthSquaredVec3(controllerHit.normal ?? createVec3()) > 1e-8) {
         primitives.push(
           createDebugPoint({
             id: `${character.id}:hit-point`,
             category: 'character-hit-point',
-            position: character.lastHitPoint,
+            position: controllerHit.point,
             color: DEFAULT_DEBUG_COLORS.characterHitPoint,
             size: 5,
             source: {
               ...source,
-              hitColliderId: character.lastHitColliderId,
-              hitBodyId: character.lastHitBodyId,
-              hitAlgorithm: character.lastHitAlgorithm
+              hitColliderId: controllerHit.colliderId,
+              hitBodyId: controllerHit.bodyId,
+              hitAlgorithm: controllerHit.algorithm
             }
           })
         );
@@ -15229,14 +15392,14 @@ class PhysicsWorld {
           createDebugLine({
             id: `${character.id}:hit-normal`,
             category: 'character-hit-normal',
-            start: character.lastHitPoint,
-            end: addScaledVec3(character.lastHitPoint, character.lastHitNormal, 14),
+            start: controllerHit.point,
+            end: addScaledVec3(controllerHit.point, controllerHit.normal, 14),
             color: DEFAULT_DEBUG_COLORS.characterHitNormal,
             source: {
               ...source,
-              hitColliderId: character.lastHitColliderId,
-              hitBodyId: character.lastHitBodyId,
-              hitAlgorithm: character.lastHitAlgorithm
+              hitColliderId: controllerHit.colliderId,
+              hitBodyId: controllerHit.bodyId,
+              hitAlgorithm: controllerHit.algorithm
             }
           })
         );
