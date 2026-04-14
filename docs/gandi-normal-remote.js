@@ -9228,7 +9228,7 @@ const { cloneAabb, computeLocalShapeAabb, computeShapeWorldAabb, createAabbFromC
 const { buildBroadphasePairs, cloneBroadphasePair, cloneBroadphaseProxy, createBroadphaseProxy } = __require(8);
 const { cloneContactPair, runNarrowphase } = __require(11);
 const { capsuleCastShape, castConvexShapesWithToi, cloneRaycastResult, cloneShapeCastResult, computeSweptShapeAabb, createRaycastResult, createShapeCastResult, raycastShape, sphereCastShape } = __require(12);
-const { composePoses, createTangentBasis, getClosestPointOnSegment, getShapeSupportFeature, transformPointByPose } = __require(7);
+const { composePoses, createTangentBasis, getCapsuleSegmentEndpoints, getClosestPointOnSegment, getShapeSupportFeature, transformPointByPose } = __require(7);
 const { DEFAULT_DEBUG_COLORS, createDebugFrame, createDebugLine, createDebugPoint, createDebugWireBox } = __require(13);
 const { cloneManifold, ManifoldCache } = __require(14);
 const { cloneQuat, createIdentityQuat, integrateQuat, inverseRotateVec3ByQuat, rotateVec3ByQuat } = __require(5);
@@ -10258,6 +10258,59 @@ function getPointDistanceSquaredToWorldFaceBoundary(point, face) {
   }
 
   return bestDistanceSquared;
+}
+
+function getWorldFaceCentroid(face) {
+  if (!face || !Array.isArray(face.points) || face.points.length === 0) {
+    return createVec3();
+  }
+
+  let centroid = createVec3();
+  for (const point of face.points) {
+    centroid = addVec3(centroid, point);
+  }
+
+  return scaleVec3(centroid, 1 / face.points.length);
+}
+
+function getKinematicFaceSupportFeature(shape, worldPose, face) {
+  const faceNormal = normalizeVec3(face?.normal ?? createVec3(0, 1, 0), createVec3(0, 1, 0));
+  const supportDirection = scaleVec3(faceNormal, -1);
+  if (shape?.type !== 'capsule') {
+    return getShapeSupportFeature(shape, worldPose, supportDirection);
+  }
+
+  const segment = getCapsuleSegmentEndpoints(shape, worldPose);
+  const segmentDelta = subtractVec3(segment.end, segment.start);
+  const segmentLengthSquared = lengthSquaredVec3(segmentDelta);
+  if (segmentLengthSquared <= 1e-12) {
+    return getShapeSupportFeature(shape, worldPose, supportDirection);
+  }
+
+  const startProjection = dotVec3(segment.start, faceNormal);
+  const endProjection = dotVec3(segment.end, faceNormal);
+  let axisPoint = null;
+  let featureId = 'capsule:side';
+  let featureType = 'capsule-side';
+
+  if (Math.abs(startProjection - endProjection) <= 1e-6) {
+    axisPoint = getClosestPointOnSegment(getWorldFaceCentroid(face), segment.start, segment.end);
+  } else if (startProjection < endProjection) {
+    axisPoint = cloneVec3(segment.start);
+    featureId = 'capsule:start';
+    featureType = 'capsule-cap';
+  } else {
+    axisPoint = cloneVec3(segment.end);
+    featureId = 'capsule:end';
+    featureType = 'capsule-cap';
+  }
+
+  return {
+    worldPoint: addScaledVec3(axisPoint, supportDirection, Number(shape.geometry?.radius ?? 0)),
+    localPoint: null,
+    featureId,
+    featureType
+  };
 }
 
 function isOneWayPlatformCollider(colliderLike) {
@@ -12176,10 +12229,10 @@ class PhysicsWorld {
       });
 
       if (cachedFace?.face) {
-        const supportFeature = getShapeSupportFeature(shape, {
+        const supportFeature = getKinematicFaceSupportFeature(shape, {
           position: body.position,
           rotation: body.rotation ?? createIdentityQuat()
-        }, scaleVec3(cachedFace.face.normal, -1));
+        }, cachedFace.face);
         const supportPoint = cloneVec3(supportFeature.worldPoint);
         const signedDistance = dotVec3(supportPoint, cachedFace.face.normal) - cachedFace.face.planeOffset;
         const persistTolerance = Math.max(character.skinWidth + 0.05, 0.15);
@@ -12487,22 +12540,27 @@ class PhysicsWorld {
       return null;
     }
 
-    const supportFeature = getShapeSupportFeature(shape, {
+    const supportFeature = getKinematicFaceSupportFeature(shape, {
       position: origin,
       rotation
-    }, scaleVec3(face.normal, -1));
+    }, face);
     const supportPoint = cloneVec3(supportFeature.worldPoint);
     const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
-    if (signedDistance <= KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE) {
+    const overlapTolerance = Math.max(character.skinWidth + 0.05, KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE);
+    if (signedDistance < -overlapTolerance) {
       return null;
     }
 
-    const planeDistance = signedDistance / approachSpeed;
+    const planeDistance = signedDistance <= KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE
+      ? 0
+      : signedDistance / approachSpeed;
     if (planeDistance < 0 || planeDistance > queryDistance + Math.max(character.skinWidth, 0.25)) {
       return null;
     }
 
-    const contactPoint = addScaledVec3(supportPoint, queryDirection, planeDistance);
+    const contactPoint = planeDistance <= 1e-8
+      ? subtractVec3(supportPoint, scaleVec3(face.normal, signedDistance))
+      : addScaledVec3(supportPoint, queryDirection, planeDistance);
     if (!isPointInsideWorldFace(contactPoint, face, Math.max(character.skinWidth, 0.1))) {
       const boundaryDistanceSquared = getPointDistanceSquaredToWorldFaceBoundary(contactPoint, face);
       const edgeFallbackDistance = Math.max(character.radius + character.skinWidth, 0.75);
@@ -12898,10 +12956,10 @@ class PhysicsWorld {
         });
 
         if (!evaluated) {
-          const supportFeature = getShapeSupportFeature(shape, {
+          const supportFeature = getKinematicFaceSupportFeature(shape, {
             position: origin,
             rotation
-          }, scaleVec3(face.normal, -1));
+          }, face);
           const supportPoint = cloneVec3(supportFeature.worldPoint);
           const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
           if (signedDistance > KINEMATIC_MOTION_FACE_INSIDE_TOLERANCE) {
@@ -13076,10 +13134,10 @@ class PhysicsWorld {
             continue;
           }
 
-          const supportFeature = getShapeSupportFeature(shape, {
+          const supportFeature = getKinematicFaceSupportFeature(shape, {
             position: origin,
             rotation
-          }, scaleVec3(face.normal, -1));
+          }, face);
           const supportPoint = cloneVec3(supportFeature.worldPoint);
           const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
           if (isOneWay && signedDistance < -Math.max(character.skinWidth + recoveryPadding, KINEMATIC_ONE_WAY_RECOVERY_DEPTH)) {
