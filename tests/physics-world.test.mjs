@@ -2687,6 +2687,89 @@ test('PhysicsWorld kinematic motion queries use the fast static convex face path
   assert.equal(hit.colliderId, 'wall:collider');
 });
 
+test('PhysicsWorld kinematic motion queries keep elevated capsules blocked by static box walls', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 40, y: 34, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 18, y: 36.5, z: 0 },
+    radius: 12,
+    halfHeight: 24
+  });
+  world.configureKinematicCapsule('player', {
+    skinWidth: 0.5,
+    groundProbeDistance: 6,
+    maxGroundAngleDegrees: 55
+  });
+
+  const character = world.getKinematicCapsule('player');
+  const body = world.getBody('player');
+  const shape = world.getShape(character.shapeId);
+  const hit = world.characterShapeCastAgainstWorld(character, body, shape, {
+    origin: body.position,
+    direction: { x: 1, y: 0, z: 0 },
+    maxDistance: 0.03,
+    rotation: body.rotation,
+    excludeBodyId: body.id,
+    excludeColliderIds: body.colliderIds,
+    ignoreDynamicTargets: false,
+    ignoreSensors: true,
+    storeResult: false,
+    queryMode: 'motion'
+  });
+
+  assert.equal(hit.hit, true, 'expected elevated capsule to detect the blocking box wall');
+  assert.equal(hit.algorithm, 'character-motion-face-v1');
+  assert.equal(hit.colliderId, 'wall:collider');
+  assert.ok(Math.abs(hit.normal.x + 1) <= 1e-6, `expected wall normal to point left, got ${JSON.stringify(hit.normal)}`);
+});
+
+test('PhysicsWorld kinematic controllers do not pass through elevated static box blockers while grounded', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -50, z: 0 },
+    size: 100
+  });
+  world.createStaticBoxCollider({
+    id: 'wall',
+    position: { x: 40, y: 34, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 100, z: 0 },
+    radius: 12,
+    halfHeight: 24
+  });
+  world.configureKinematicCapsule('player', {
+    skinWidth: 0.5,
+    groundProbeDistance: 6,
+    maxGroundAngleDegrees: 55
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 8,
+    gravityScale: 1,
+    stepOffset: 6,
+    groundSnapDistance: 2
+  });
+
+  for (let index = 0; index < 4000; index += 1) {
+    world.setKinematicCapsuleMoveIntent('player', { x: 30, y: 0, z: 0 });
+    world.step(0.001);
+  }
+
+  const body = world.getBody('player');
+  const lastHit = world.getKinematicCapsuleLastHit('player');
+  assert.ok(body.position.x <= 18.5, `expected grounded controller to stay blocked by the elevated wall, got x=${body.position.x}`);
+  assert.equal(lastHit?.colliderId, 'wall:collider');
+  assert.equal(lastHit?.algorithm, 'character-motion-face-v1');
+});
+
 test('PhysicsWorld kinematic controllers keep moving across flat static convex hull tops', () => {
   const world = new PhysicsWorld();
   world.createStaticConvexHullCollider({
