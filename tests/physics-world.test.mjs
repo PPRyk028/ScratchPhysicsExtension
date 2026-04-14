@@ -2015,6 +2015,134 @@ test('PhysicsWorld kinematic controllers jump upward and land back on walkable g
   assert.equal(Math.abs(landed.verticalVelocity ?? 0) <= 1e-8, true);
 });
 
+test('PhysicsWorld kinematic controllers can set vertical velocity directly', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+
+  const startY = world.getBody('player').position.y;
+  world.setKinematicCapsuleVerticalVelocity('player', 10);
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  assert.ok(world.getBody('player').position.y > startY, `expected player to rise after setting vertical velocity, got ${world.getBody('player').position.y}`);
+  assert.ok((character.verticalVelocity ?? 0) > 0, `expected positive vertical velocity, got ${character.verticalVelocity}`);
+  assert.equal(character.grounded, false);
+});
+
+test('PhysicsWorld kinematic controllers can launch with horizontal and vertical velocity', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+
+  const startPosition = { ...world.getBody('player').position };
+  world.launchKinematicCapsule('player', { x: 6, y: 8, z: 0 });
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  const body = world.getBody('player');
+  assert.ok(body.position.x > startPosition.x + 0.05, `expected launch to move player horizontally, got ${body.position.x}`);
+  assert.ok(body.position.y > startPosition.y, `expected launch to move player upward, got ${body.position.y}`);
+  assert.ok((character.verticalVelocity ?? 0) > 0, `expected positive launch vertical velocity, got ${character.verticalVelocity}`);
+  assert.equal(character.grounded, false);
+});
+
+test('PhysicsWorld kinematic controllers smoothly update capsule size when crouching', () => {
+  const world = new PhysicsWorld();
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 20, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+
+  const startCharacter = world.getKinematicCapsule('player');
+  assert.equal(startCharacter.halfHeight, 10);
+  assert.equal(startCharacter.radius, 5);
+
+  world.setKinematicCapsuleCrouch('player', 6, 3, 20);
+  world.step(1 / 60);
+
+  const midCharacter = world.getKinematicCapsule('player');
+  assert.ok(midCharacter.halfHeight < 10, `expected half height to shrink, got ${midCharacter.halfHeight}`);
+  assert.ok(midCharacter.radius < 5, `expected radius to shrink, got ${midCharacter.radius}`);
+
+  for (let index = 0; index < 20; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const crouchedCharacter = world.getKinematicCapsule('player');
+  assert.ok(Math.abs(crouchedCharacter.halfHeight - 6) <= 0.5, `expected crouch half height near 6, got ${crouchedCharacter.halfHeight}`);
+  assert.ok(Math.abs(crouchedCharacter.radius - 3) <= 0.5, `expected crouch radius near 3, got ${crouchedCharacter.radius}`);
+});
+
+test('PhysicsWorld kinematic controllers can drop through one-way platforms', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20
+  });
+  world.createStaticBoxCollider({
+    id: 'platform',
+    position: { x: 0, y: 12, z: 0 },
+    size: 12,
+    isOneWay: true
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 33, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 9,
+    gravityScale: 1,
+    stepOffset: 6,
+    groundSnapDistance: 2
+  });
+
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 60);
+  }
+  const groundedCharacter = world.getKinematicCapsule('player');
+  assert.equal(groundedCharacter.groundColliderId, 'platform:collider');
+
+  world.dropThroughOneWayPlatforms('player', 0.25);
+  for (let index = 0; index < 180; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const droppedCharacter = world.getKinematicCapsule('player');
+  assert.equal(droppedCharacter.groundColliderId, 'floor:collider');
+  const droppedBody = world.getBody('player');
+  const expectedStandHeight = (droppedCharacter.halfHeight ?? 0) +
+    (droppedCharacter.radius ?? 0) +
+    (droppedCharacter.skinWidth ?? 0);
+  assert.ok(
+    droppedBody.position.y <= expectedStandHeight + 0.2,
+    `expected player to settle on the floor, got ${droppedBody.position.y}`
+  );
+});
+
 test('PhysicsWorld kinematic controllers pass upward through one-way box platforms and land on them from above', () => {
   const world = new PhysicsWorld();
   world.createStaticBoxCollider({

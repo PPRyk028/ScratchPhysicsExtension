@@ -292,6 +292,28 @@ export class Engine3D {
     return this.world.setKinematicCapsuleMoveIntent(id, createVec3(dx, dy, dz));
   }
 
+  setKinematicCapsuleCrouch(id, halfHeight, radius, speed) {
+    const character = this.world.setKinematicCapsuleCrouch(id, halfHeight, radius, speed);
+    if (!character) {
+      this.hostBridge.log(`Kinematic capsule ${id} crouch could not be set`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic capsule ${character.id} crouch target set to half height ${halfHeight} radius ${radius}`);
+    return character;
+  }
+
+  setKinematicCapsuleVerticalVelocity(id, velocity) {
+    const character = this.world.setKinematicCapsuleVerticalVelocity(id, velocity);
+    if (!character) {
+      this.hostBridge.log(`Kinematic capsule ${id} vertical velocity could not be set`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic capsule ${character.id} vertical velocity set to ${velocity}`);
+    return character;
+  }
+
   jumpKinematicCapsule(id) {
     const character = this.world.jumpKinematicCapsule(id);
     if (!character) {
@@ -300,6 +322,28 @@ export class Engine3D {
     }
 
     this.hostBridge.log(`Kinematic capsule ${character.id} jump requested`);
+    return character;
+  }
+
+  dropThroughOneWayPlatforms(id, durationSeconds) {
+    const character = this.world.dropThroughOneWayPlatforms(id, durationSeconds);
+    if (!character) {
+      this.hostBridge.log(`Kinematic capsule ${id} could not drop through one-way platforms`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic capsule ${character.id} dropping through one-way platforms`);
+    return character;
+  }
+
+  launchKinematicCapsule(id, dx, dy, dz) {
+    const character = this.world.launchKinematicCapsule(id, createVec3(dx, dy, dz));
+    if (!character) {
+      this.hostBridge.log(`Kinematic capsule ${id} could not be launched`);
+      return null;
+    }
+
+    this.hostBridge.log(`Kinematic capsule ${character.id} launched with velocity ${dx}, ${dy}, ${dz}`);
     return character;
   }
 
@@ -850,6 +894,15 @@ export class Engine3D {
     return `${id} ground | grounded:${groundState.grounded ? 'yes' : 'no'} | walkable:${groundState.walkable ? 'yes' : 'no'} | distance:${formatOptionalNumber(groundState.distance)} | angle:${formatOptionalNumber(groundState.angleDegrees)}deg | collider:${groundState.colliderId || 'none'} | body:${groundState.bodyId || 'static'} | point ${formatVector(groundState.point)} | normal ${formatVector(groundState.normal)}`;
   }
 
+  getKinematicGroundCollider(id) {
+    const groundState = this.world.getKinematicGroundState(id);
+    if (!groundState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    return groundState.colliderId || 'none';
+  }
+
   isKinematicCapsuleGrounded(id) {
     return this.world.isKinematicCapsuleGrounded(id);
   }
@@ -865,6 +918,15 @@ export class Engine3D {
     const stayEvents = this.world.getKinematicCapsuleHitEvents(id, 'stay');
     const exitEvents = this.world.getKinematicCapsuleHitEvents(id, 'exit');
     return `${id} hit | last hit:${lastHit?.colliderId || 'none'} | body:${lastHit?.bodyId || 'none'} | distance:${formatOptionalNumber(lastHit?.distance)} | algorithm:${lastHit?.algorithm || 'none'} | normal ${formatVector(lastHit?.normal ?? createVec3())} | enter:${enterEvents.colliderCount} | stay:${stayEvents.colliderCount} | exit:${exitEvents.colliderCount}`;
+  }
+
+  getKinematicBlockingCollider(id) {
+    const character = this.world.getKinematicCapsule(id);
+    if (!character) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    return this.world.getKinematicCapsuleLastHit(id)?.colliderId || 'none';
   }
 
   getColliderSummary(id) {

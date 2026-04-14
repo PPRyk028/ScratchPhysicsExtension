@@ -151,11 +151,51 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'setKinematicCapsuleCrouch',
+        blockType: 'command',
+        text: 'set kinematic capsule [ID] crouch half height [HALF_HEIGHT] radius [RADIUS] speed [SPEED]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          HALF_HEIGHT: { type: 'number', defaultValue: 12 },
+          RADIUS: { type: 'number', defaultValue: 6 },
+          SPEED: { type: 'number', defaultValue: 20 }
+        }
+      },
+      {
+        opcode: 'setKinematicCapsuleVerticalVelocity',
+        blockType: 'command',
+        text: 'set kinematic capsule [ID] vertical velocity [VELOCITY]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          VELOCITY: { type: 'number', defaultValue: 10 }
+        }
+      },
+      {
         opcode: 'jumpKinematicCapsule',
         blockType: 'command',
         text: 'jump kinematic capsule [ID]',
         arguments: {
           ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'dropThroughOneWayPlatforms',
+        blockType: 'command',
+        text: 'drop through one-way platforms for kinematic capsule [ID] duration [SECONDS]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          SECONDS: { type: 'number', defaultValue: 0.2 }
+        }
+      },
+      {
+        opcode: 'launchKinematicCapsule',
+        blockType: 'command',
+        text: 'launch kinematic capsule [ID] x:[DX] y:[DY] z:[DZ]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' },
+          DX: { type: 'number', defaultValue: 0 },
+          DY: { type: 'number', defaultValue: 12 },
+          DZ: { type: 'number', defaultValue: 0 }
         }
       },
       {
@@ -685,9 +725,25 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'kinematicGroundCollider',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] ground collider',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
         opcode: 'kinematicCapsuleHitSummary',
         blockType: 'reporter',
         text: 'kinematic capsule [ID] hit summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicBlockingCollider',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] blocking collider',
         arguments: {
           ID: { type: 'string', defaultValue: 'player-1' }
         }

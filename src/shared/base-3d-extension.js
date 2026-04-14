@@ -194,9 +194,41 @@ export class Base3DExtension {
     );
   }
 
+  setKinematicCapsuleCrouch(args) {
+    this.engine.setKinematicCapsuleCrouch(
+      toString(args.ID, 'character'),
+      toNumber(args.HALF_HEIGHT),
+      toNumber(args.RADIUS),
+      toNumber(args.SPEED, 20)
+    );
+  }
+
+  setKinematicCapsuleVerticalVelocity(args) {
+    this.engine.setKinematicCapsuleVerticalVelocity(
+      toString(args.ID, 'character'),
+      toNumber(args.VELOCITY)
+    );
+  }
+
   jumpKinematicCapsule(args) {
     this.engine.jumpKinematicCapsule(
       toString(args.ID, 'character')
+    );
+  }
+
+  dropThroughOneWayPlatforms(args) {
+    this.engine.dropThroughOneWayPlatforms(
+      toString(args.ID, 'character'),
+      toNumber(args.SECONDS, 0.2)
+    );
+  }
+
+  launchKinematicCapsule(args) {
+    this.engine.launchKinematicCapsule(
+      toString(args.ID, 'character'),
+      toNumber(args.DX),
+      toNumber(args.DY),
+      toNumber(args.DZ)
     );
   }
 
@@ -606,8 +638,20 @@ export class Base3DExtension {
     );
   }
 
+  kinematicGroundCollider(args) {
+    return this.engine.getKinematicGroundCollider(
+      toString(args.ID, 'character')
+    );
+  }
+
   kinematicCapsuleHitSummary(args) {
     return this.engine.getKinematicCapsuleHitSummary(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicBlockingCollider(args) {
+    return this.engine.getKinematicBlockingCollider(
       toString(args.ID, 'character')
     );
   }

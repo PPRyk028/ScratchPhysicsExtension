@@ -54,6 +54,18 @@ function createDefaultGroundBodyLocalPoint() {
   };
 }
 
+function createDefaultLaunchVelocity() {
+  return createVec3();
+}
+
+function createDefaultCrouchState() {
+  return {
+    targetRadius: null,
+    targetHalfHeight: null,
+    speed: 20
+  };
+}
+
 export class CharacterRegistry extends BaseRegistry {
   constructor() {
     super('character');
@@ -81,6 +93,8 @@ export class CharacterRegistry extends BaseRegistry {
       rideMovingPlatforms: character.rideMovingPlatforms !== false,
       enabled: character.enabled !== false,
       jumpRequested: character.jumpRequested === true,
+      launchRequested: character.launchRequested === true,
+      launchVelocity: cloneVec3(character.launchVelocity ?? createDefaultLaunchVelocity()),
       verticalVelocity: character.verticalVelocity ?? 0,
       coyoteTimer: character.coyoteTimer ?? 0,
       jumpBufferTimer: character.jumpBufferTimer ?? 0,
@@ -104,6 +118,10 @@ export class CharacterRegistry extends BaseRegistry {
       lastHitAlgorithm: character.lastHitAlgorithm ?? null,
       lastRecoveryNormal: cloneVec3(character.lastRecoveryNormal ?? createVec3()),
       lastRecoveryDistance: character.lastRecoveryDistance ?? 0,
+      crouchTargetRadius: character.crouchTargetRadius ?? createDefaultCrouchState().targetRadius,
+      crouchTargetHalfHeight: character.crouchTargetHalfHeight ?? createDefaultCrouchState().targetHalfHeight,
+      crouchSpeed: character.crouchSpeed ?? createDefaultCrouchState().speed,
+      oneWayDropTimer: character.oneWayDropTimer ?? 0,
       groundBodyLocalPoint: {
         valid: character.groundBodyLocalPoint?.valid === true,
         point: cloneVec3(character.groundBodyLocalPoint?.point ?? createVec3())
@@ -139,6 +157,8 @@ export class CharacterRegistry extends BaseRegistry {
       rideMovingPlatforms: options.rideMovingPlatforms !== false,
       enabled: options.enabled !== false,
       jumpRequested: options.jumpRequested === true,
+      launchRequested: options.launchRequested === true,
+      launchVelocity: cloneVec3(options.launchVelocity ?? createDefaultLaunchVelocity()),
       verticalVelocity: toFiniteNumber(options.verticalVelocity, 0),
       coyoteTimer: Math.max(0, toFiniteNumber(options.coyoteTimer, 0)),
       jumpBufferTimer: Math.max(0, toFiniteNumber(options.jumpBufferTimer, 0)),
@@ -162,6 +182,10 @@ export class CharacterRegistry extends BaseRegistry {
       lastHitAlgorithm: String(options.lastHitAlgorithm ?? '').trim() || null,
       lastRecoveryNormal: cloneVec3(options.lastRecoveryNormal ?? createVec3()),
       lastRecoveryDistance: toFiniteNumber(options.lastRecoveryDistance, 0),
+      crouchTargetRadius: options.crouchTargetRadius ?? createDefaultCrouchState().targetRadius,
+      crouchTargetHalfHeight: options.crouchTargetHalfHeight ?? createDefaultCrouchState().targetHalfHeight,
+      crouchSpeed: toFiniteNumber(options.crouchSpeed, createDefaultCrouchState().speed),
+      oneWayDropTimer: toFiniteNumber(options.oneWayDropTimer, 0),
       groundFaceCache: options.groundFaceCache ?? createDefaultFaceCache(),
       motionFaceCache: options.motionFaceCache ?? createDefaultFaceCache(),
       groundCandidateCache: options.groundCandidateCache ?? createDefaultCandidateCache(),

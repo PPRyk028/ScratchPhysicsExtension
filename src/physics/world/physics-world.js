@@ -1043,9 +1043,13 @@ function isUpwardOneWayFace(face) {
   return Number(face?.normal?.y ?? 0) > KINEMATIC_ONE_WAY_MIN_UP;
 }
 
-function shouldIgnoreKinematicOneWayMotionFace(faceContext, direction) {
+function shouldIgnoreKinematicOneWayMotionFace(faceContext, direction, character) {
   if (!isOneWayPlatformCollider(faceContext)) {
     return false;
+  }
+
+  if ((character?.oneWayDropTimer ?? 0) > 1e-6) {
+    return true;
   }
 
   if (!isUpwardOneWayFace(faceContext.face)) {
@@ -1055,9 +1059,13 @@ function shouldIgnoreKinematicOneWayMotionFace(faceContext, direction) {
   return Number(direction?.y ?? 0) >= -1e-4;
 }
 
-function shouldIgnoreKinematicOneWayCastHit(collider, hit, direction) {
+function shouldIgnoreKinematicOneWayCastHit(collider, hit, direction, character) {
   if (!isOneWayPlatformCollider(collider)) {
     return false;
+  }
+
+  if ((character?.oneWayDropTimer ?? 0) > 1e-6) {
+    return true;
   }
 
   if (Number(hit?.normal?.y ?? 0) <= KINEMATIC_ONE_WAY_MIN_UP) {
@@ -1110,6 +1118,17 @@ function updateKinematicFaceCache(character, cacheKey, hit) {
   cache.distance = hit.distance ?? null;
   cache.stableFrames = isSameFace ? cache.stableFrames + 1 : 1;
   return cache;
+}
+
+function moveTowardScalar(current, target, maxDelta) {
+  if (!Number.isFinite(current) || !Number.isFinite(target)) {
+    return target;
+  }
+  const delta = target - current;
+  if (Math.abs(delta) <= maxDelta) {
+    return target;
+  }
+  return current + Math.sign(delta) * maxDelta;
 }
 
 function getPrioritizedStaticProxyList(proxies, prioritizedColliderIds = []) {
@@ -1876,6 +1895,35 @@ export class PhysicsWorld {
     return this.getKinematicCapsule(character.id);
   }
 
+  setKinematicCapsuleCrouch(characterId, halfHeight, radius, speed = 20) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    character.crouchTargetHalfHeight = toNonNegativeNumber(halfHeight, character.halfHeight ?? 0);
+    character.crouchTargetRadius = toNonNegativeNumber(radius, character.radius ?? 0);
+    character.crouchSpeed = toNonNegativeNumber(speed, character.crouchSpeed ?? 20);
+    return this.getKinematicCapsule(character.id);
+  }
+
+  setKinematicCapsuleVerticalVelocity(characterId, verticalVelocity = 0) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    character.verticalVelocity = toOptionalNumber(verticalVelocity, character.verticalVelocity ?? 0) ?? (character.verticalVelocity ?? 0);
+    character.jumpRequested = false;
+    if ((character.verticalVelocity ?? 0) > 1e-8) {
+      character.jumpBufferTimer = 0;
+      character.coyoteTimer = 0;
+      character.grounded = false;
+      character.walkable = false;
+    }
+    return this.getKinematicCapsule(character.id);
+  }
+
   jumpKinematicCapsule(characterId) {
     const character = this.characterRegistry.getMutable(characterId);
     if (!character) {
@@ -1883,6 +1931,73 @@ export class PhysicsWorld {
     }
 
     character.jumpRequested = true;
+    return this.getKinematicCapsule(character.id);
+  }
+
+  dropThroughOneWayPlatforms(characterId, durationSeconds = 0.2) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    let minimumDropTime = 0;
+    const body = this.bodyRegistry.getMutable(character.bodyId);
+    if (body && character.groundColliderId) {
+      const collisionState = this.ensureCollisionState();
+      const proxy = collisionState.broadphaseProxies.find(
+        (candidate) => candidate.colliderId === character.groundColliderId
+      );
+      if (proxy?.isOneWay === true && proxy.aabb?.center && proxy.aabb?.halfExtents) {
+        const bottomSphereCenter = createKinematicBottomSphereCenter(character, body.position);
+        const bottomPointY = bottomSphereCenter.y - Math.max(0, Number(character.radius ?? 0));
+        const minY = proxy.aabb.center.y - proxy.aabb.halfExtents.y;
+        const clearDistance = Math.max(0, bottomPointY - minY + Math.max(0, Number(character.skinWidth ?? 0)));
+        const gravityStrength = Math.abs(Number(this.gravity?.y ?? 0));
+        if (gravityStrength > 1e-6 && clearDistance > 1e-6) {
+          minimumDropTime = Math.sqrt((2 * clearDistance) / gravityStrength);
+        }
+      }
+    }
+
+    character.oneWayDropTimer = Math.max(
+      toNonNegativeNumber(durationSeconds, 0.2),
+      minimumDropTime,
+      toNonNegativeNumber(character.oneWayDropTimer, 0)
+    );
+    character.grounded = false;
+    character.walkable = false;
+    character.groundDistance = null;
+    character.groundAngleDegrees = null;
+    character.groundNormal = createVec3(0, 1, 0);
+    character.groundPoint = createVec3();
+    character.groundColliderId = null;
+    character.groundBodyId = null;
+    character.groundBodyLocalPoint = {
+      valid: false,
+      point: createVec3()
+    };
+    clearKinematicFaceCache(character, 'groundFaceCache');
+    clearKinematicFaceCache(character, 'motionFaceCache');
+    clearKinematicCandidateCache(character, 'groundCandidateCache');
+    clearKinematicCandidateCache(character, 'motionCandidateCache');
+    return this.getKinematicCapsule(character.id);
+  }
+
+  launchKinematicCapsule(characterId, velocity = createVec3()) {
+    const character = this.characterRegistry.getMutable(characterId);
+    if (!character) {
+      return null;
+    }
+
+    character.launchVelocity = cloneVec3(velocity);
+    character.launchRequested = lengthSquaredVec3(character.launchVelocity) > 1e-8;
+    character.jumpRequested = false;
+    character.jumpBufferTimer = 0;
+    character.coyoteTimer = 0;
+    if (character.launchRequested) {
+      character.grounded = false;
+      character.walkable = false;
+    }
     return this.getKinematicCapsule(character.id);
   }
 
@@ -2472,6 +2587,12 @@ export class PhysicsWorld {
       moveIntent: options.moveIntent,
       verticalVelocity: options.verticalVelocity,
       jumpRequested: options.jumpRequested,
+      crouchTargetRadius: options.crouchTargetRadius,
+      crouchTargetHalfHeight: options.crouchTargetHalfHeight,
+      crouchSpeed: options.crouchSpeed,
+      oneWayDropTimer: options.oneWayDropTimer,
+      launchRequested: options.launchRequested,
+      launchVelocity: options.launchVelocity,
       enabled: options.enabled,
       userData: options.userData ?? null
     });
@@ -2525,6 +2646,40 @@ export class PhysicsWorld {
     return isRelevantControllerHitEvent(hitRecord)
       ? hitRecord
       : null;
+  }
+
+  updateKinematicCapsuleCrouch(character, body, shape, deltaTime) {
+    if (!character || !body || !shape || shape.type !== 'capsule') {
+      return false;
+    }
+
+    const targetHalfHeight = toNonNegativeNumber(
+      character.crouchTargetHalfHeight ?? character.halfHeight,
+      character.halfHeight ?? shape.geometry.halfHeight
+    );
+    const targetRadius = toNonNegativeNumber(
+      character.crouchTargetRadius ?? character.radius,
+      character.radius ?? shape.geometry.radius
+    );
+    const speed = toNonNegativeNumber(character.crouchSpeed, 20);
+    if (speed <= 0) {
+      return false;
+    }
+
+    const maxDelta = speed * Math.max(0, Number(deltaTime ?? 0));
+    const nextHalfHeight = moveTowardScalar(shape.geometry.halfHeight, targetHalfHeight, maxDelta);
+    const nextRadius = moveTowardScalar(shape.geometry.radius, targetRadius, maxDelta);
+    if (Math.abs(nextHalfHeight - shape.geometry.halfHeight) <= 1e-6 &&
+      Math.abs(nextRadius - shape.geometry.radius) <= 1e-6) {
+      return false;
+    }
+
+    shape.geometry.halfHeight = Math.max(0, nextHalfHeight);
+    shape.geometry.radius = Math.max(0, nextRadius);
+    character.halfHeight = shape.geometry.halfHeight;
+    character.radius = shape.geometry.radius;
+    this.markCollisionStateDirty();
+    return true;
   }
 
   createSustainedControllerHitRecords(currentHits, previousHitsByKey, characterIds = null) {
@@ -2807,6 +2962,9 @@ export class PhysicsWorld {
     const origin = cloneVec3(options.origin ?? body.position);
     const bottomSphereCenter = createKinematicBottomSphereCenter(character, origin);
     const face = faceContext.face;
+    if (isOneWayPlatformCollider(faceContext) && (character?.oneWayDropTimer ?? 0) > 1e-6) {
+      return null;
+    }
     if (isOneWayPlatformCollider(faceContext) && !isUpwardOneWayFace(face)) {
       return null;
     }
@@ -2877,7 +3035,7 @@ export class PhysicsWorld {
     const rotation = cloneQuat(options.rotation ?? body.rotation ?? createIdentityQuat());
     const origin = cloneVec3(options.origin ?? body.position);
     const face = faceContext.face;
-    if (shouldIgnoreKinematicOneWayMotionFace(faceContext, queryDirection)) {
+    if (shouldIgnoreKinematicOneWayMotionFace(faceContext, queryDirection, character)) {
       return createShapeCastMiss({
         castType: 'capsule',
         origin,
@@ -3021,6 +3179,10 @@ export class PhysicsWorld {
       }
 
       if (proxy.isSensor) {
+        continue;
+      }
+
+      if (proxy.isOneWay === true && (character?.oneWayDropTimer ?? 0) > 1e-6) {
         continue;
       }
 
@@ -3190,7 +3352,7 @@ export class PhysicsWorld {
       character?.groundFaceCache?.stableFrames >= 2 ? this.getCachedStaticKinematicFace(character.groundFaceCache) : null
     ].filter(Boolean);
     for (const cachedMotionContext of cachedMotionContexts) {
-      if (shouldIgnoreKinematicOneWayMotionFace(cachedMotionContext, direction)) {
+      if (shouldIgnoreKinematicOneWayMotionFace(cachedMotionContext, direction, character)) {
         continue;
       }
 
@@ -3291,7 +3453,7 @@ export class PhysicsWorld {
           shapeType: proxy.shapeType,
           face
         };
-        if (shouldIgnoreKinematicOneWayMotionFace(faceContext, queryDirection)) {
+        if (shouldIgnoreKinematicOneWayMotionFace(faceContext, queryDirection, character)) {
           continue;
         }
 
@@ -3467,6 +3629,9 @@ export class PhysicsWorld {
           continue;
         }
         const isOneWay = proxy.isOneWay === true;
+        if (isOneWay && (character?.oneWayDropTimer ?? 0) > 1e-6) {
+          continue;
+        }
 
         const cachedFaces = [
           findWorldFaceById(faces, character?.groundFaceCache?.colliderId === proxy.colliderId ? character?.groundFaceCache?.faceId : null),
@@ -3616,7 +3781,7 @@ export class PhysicsWorld {
       }
 
       const hitCollider = result.colliderId ? this.getCollider(result.colliderId) : null;
-      if (!shouldIgnoreKinematicOneWayCastHit(hitCollider, result, direction)) {
+      if (!shouldIgnoreKinematicOneWayCastHit(hitCollider, result, direction, character)) {
         return result;
       }
 
@@ -3951,10 +4116,16 @@ export class PhysicsWorld {
       }
 
       const body = this.bodyRegistry.getMutable(character.bodyId);
-      const shape = this.getShape(character.shapeId);
+      const shape = this.shapeRegistry.getMutable(character.shapeId);
       if (!body || !shape) {
         return;
       }
+
+      if (toNonNegativeNumber(character.oneWayDropTimer, 0) > 0) {
+        character.oneWayDropTimer = Math.max(0, toNonNegativeNumber(character.oneWayDropTimer, 0) - Math.max(0, deltaTime));
+      }
+
+      this.updateKinematicCapsuleCrouch(character, body, shape, deltaTime);
 
       const startPosition = cloneVec3(body.position);
       let blocked = false;
@@ -4028,6 +4199,7 @@ export class PhysicsWorld {
       const wantsJump = toNonNegativeNumber(character.jumpBufferTimer, 0) > 1e-8;
       const canGroundJump = wasGrounded || toNonNegativeNumber(character.coyoteTimer, 0) > 1e-8;
       let jumpedThisFrame = false;
+      let launchedThisFrame = false;
       if (wantsJump && canGroundJump) {
         verticalVelocity = (toOptionalNumber(character.jumpSpeed, 8) ?? 8) + Number(supportVelocity.y ?? 0);
         character.jumpBufferTimer = 0;
@@ -4040,14 +4212,33 @@ export class PhysicsWorld {
         character.jumpBufferTimer = Math.max(0, toNonNegativeNumber(character.jumpBufferTimer, 0) - deltaTime);
       }
 
+      if (character.launchRequested === true) {
+        const launchVelocity = cloneVec3(character.launchVelocity ?? createVec3());
+        character.launchRequested = false;
+        character.launchVelocity = createVec3();
+        launchedThisFrame = lengthSquaredVec3(launchVelocity) > 1e-8;
+        if (launchedThisFrame) {
+          verticalVelocity = Number(launchVelocity.y ?? 0);
+          character.jumpBufferTimer = 0;
+          character.coyoteTimer = 0;
+          character.grounded = false;
+          character.walkable = false;
+          character.inheritedVelocity = createVec3(
+            Number(launchVelocity.x ?? 0),
+            0,
+            Number(launchVelocity.z ?? 0)
+          );
+        }
+      }
+
       const moveIntent = cloneVec3(character.moveIntent ?? createVec3());
       let horizontalMove = scaleVec3(createVec3(moveIntent.x, 0, moveIntent.z), deltaTime);
-      if (wasGrounded && character.walkable && !jumpedThisFrame && lengthSquaredVec3(horizontalMove) > 1e-8) {
+      if (wasGrounded && character.walkable && !jumpedThisFrame && !launchedThisFrame && lengthSquaredVec3(horizontalMove) > 1e-8) {
         horizontalMove = projectOntoGroundPlane(horizontalMove, character.groundNormal ?? createVec3(0, 1, 0));
-      } else if ((!wasGrounded || jumpedThisFrame) && lengthSquaredVec3(horizontalMove) > 1e-8) {
+      } else if ((!wasGrounded || jumpedThisFrame || launchedThisFrame) && lengthSquaredVec3(horizontalMove) > 1e-8) {
         horizontalMove = scaleVec3(horizontalMove, Math.max(0, toNonNegativeNumber(character.airControlFactor, 1)));
       }
-      if (!wasGrounded || jumpedThisFrame) {
+      if (!wasGrounded || jumpedThisFrame || launchedThisFrame) {
         horizontalMove = addVec3(
           horizontalMove,
           scaleVec3(createVec3(
@@ -4201,7 +4392,7 @@ export class PhysicsWorld {
 
       if (character.grounded === true && character.walkable === true) {
         character.inheritedVelocity = createVec3();
-      } else if (wasGrounded && !jumpedThisFrame) {
+      } else if (wasGrounded && !jumpedThisFrame && !launchedThisFrame) {
         character.inheritedVelocity = createVec3(Number(supportVelocity.x ?? 0), 0, Number(supportVelocity.z ?? 0));
         if (Math.abs(verticalVelocity) <= 1e-6) {
           character.verticalVelocity = Number(supportVelocity.y ?? 0);

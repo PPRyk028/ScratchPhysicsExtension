@@ -34,7 +34,11 @@ const REQUIRED_OPCODES = [
   'configureKinematicController',
   'configureKinematicControllerAdvanced',
   'setKinematicCapsuleMoveIntent',
+  'setKinematicCapsuleCrouch',
+  'setKinematicCapsuleVerticalVelocity',
   'jumpKinematicCapsule',
+  'dropThroughOneWayPlatforms',
+  'launchKinematicCapsule',
   'moveKinematicCapsule',
   'convexHullPresetVertices',
   'createClothSheet',
@@ -79,7 +83,9 @@ const REQUIRED_OPCODES = [
   'softBodySummary',
   'kinematicCapsuleSummary',
   'kinematicGroundSummary',
+  'kinematicGroundCollider',
   'kinematicCapsuleHitSummary',
+  'kinematicBlockingCollider',
   'isKinematicCapsuleGrounded',
   'queryPointBodies',
   'queryPointColliders',
@@ -322,10 +328,18 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   assert.match(extension.kinematicCapsuleSummary({ ID: 'player' }), /coyote:0.12/);
   assert.match(extension.kinematicCapsuleSummary({ ID: 'player' }), /buffer:0.14/);
   assert.match(extension.kinematicGroundSummary({ ID: 'player' }), /grounded:(yes|no)/);
+  assert.equal(extension.kinematicGroundCollider({ ID: 'player' }), 'floor:collider');
   assert.match(extension.kinematicCapsuleHitSummary({ ID: 'player' }), /last hit:/);
+  assert.equal(extension.kinematicBlockingCollider({ ID: 'player' }), 'none');
   assert.equal(typeof extension.isKinematicCapsuleGrounded({ ID: 'player' }), 'boolean');
   assert.match(extension.queryKinematicCapsuleBodyHitEvents({ ID: 'player', PHASE: 'stay' }), /bodies in stay controller hit events/);
   assert.match(extension.queryKinematicCapsuleColliderHitEvents({ ID: 'player', PHASE: 'stay' }), /colliders in stay controller hit events/);
+  extension.setKinematicCapsuleCrouch({ ID: 'player', HALF_HEIGHT: 8, RADIUS: 4, SPEED: 15 });
+  extension.dropThroughOneWayPlatforms({ ID: 'player', SECONDS: 0.25 });
+  extension.setKinematicCapsuleVerticalVelocity({ ID: 'player', VELOCITY: 5 });
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'player' }), /vertical velocity:5/);
+  extension.launchKinematicCapsule({ ID: 'player', DX: 2, DY: 7, DZ: 0 });
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'player' }), /vertical velocity:5/);
   extension.jumpKinematicCapsule({ ID: 'player' });
   assert.match(extension.colliderSummary({ ID: 'floor:collider' }), /body:static/);
   assert.match(extension.materialSummary({ ID: 'ice' }), /friction:0.05/);
@@ -448,10 +462,18 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   assert.match(extension.kinematicCapsuleSummary({ ID: 'remote-player' }), /air:0.55/);
   assert.match(extension.kinematicCapsuleSummary({ ID: 'remote-player' }), /buffer:0.13/);
   assert.match(extension.kinematicGroundSummary({ ID: 'remote-player' }), /grounded:yes/);
+  assert.equal(extension.kinematicGroundCollider({ ID: 'remote-player' }), 'remote-floor:collider');
   assert.match(extension.kinematicCapsuleHitSummary({ ID: 'remote-player' }), /last hit:/);
+  assert.equal(extension.kinematicBlockingCollider({ ID: 'remote-player' }), 'none');
   assert.equal(extension.isKinematicCapsuleGrounded({ ID: 'remote-player' }), true);
   assert.match(extension.queryKinematicCapsuleBodyHitEvents({ ID: 'remote-player', PHASE: 'stay' }), /bodies in stay controller hit events/);
   assert.match(extension.queryKinematicCapsuleColliderHitEvents({ ID: 'remote-player', PHASE: 'stay' }), /colliders in stay controller hit events/);
+  extension.setKinematicCapsuleCrouch({ ID: 'remote-player', HALF_HEIGHT: 8, RADIUS: 4, SPEED: 15 });
+  extension.dropThroughOneWayPlatforms({ ID: 'remote-player', SECONDS: 0.25 });
+  extension.setKinematicCapsuleVerticalVelocity({ ID: 'remote-player', VELOCITY: 4 });
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'remote-player' }), /vertical velocity:4/);
+  extension.launchKinematicCapsule({ ID: 'remote-player', DX: 2, DY: 6, DZ: 0 });
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'remote-player' }), /vertical velocity:4/);
   extension.jumpKinematicCapsule({ ID: 'remote-player' });
   assert.match(extension.jointSummary({ ID: 'remote-joint' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'remote-hinge' }), /motor mode:servo/);
@@ -553,10 +575,18 @@ test('Gandi extension instance runs shared blocks against the same core contract
   assert.match(extension.kinematicCapsuleSummary({ ID: 'gandi-player' }), /jump:9/);
   assert.match(extension.kinematicCapsuleSummary({ ID: 'gandi-player' }), /air:0.65/);
   assert.match(extension.kinematicGroundSummary({ ID: 'gandi-player' }), /grounded:(yes|no)/);
+  assert.match(extension.kinematicGroundCollider({ ID: 'gandi-player' }), /^(gandi-floor:collider|none)$/);
   assert.match(extension.kinematicCapsuleHitSummary({ ID: 'gandi-player' }), /last hit:/);
+  assert.match(extension.kinematicBlockingCollider({ ID: 'gandi-player' }), /^(gandi-link:collider|none)$/);
   assert.equal(typeof extension.isKinematicCapsuleGrounded({ ID: 'gandi-player' }), 'boolean');
   assert.match(extension.queryKinematicCapsuleBodyHitEvents({ ID: 'gandi-player', PHASE: 'stay' }), /bodies in stay controller hit events/);
   assert.match(extension.queryKinematicCapsuleColliderHitEvents({ ID: 'gandi-player', PHASE: 'stay' }), /colliders in stay controller hit events/);
+  extension.setKinematicCapsuleCrouch({ ID: 'gandi-player', HALF_HEIGHT: 8, RADIUS: 4, SPEED: 15 });
+  extension.dropThroughOneWayPlatforms({ ID: 'gandi-player', SECONDS: 0.25 });
+  extension.setKinematicCapsuleVerticalVelocity({ ID: 'gandi-player', VELOCITY: 4 });
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'gandi-player' }), /vertical velocity:4/);
+  extension.launchKinematicCapsule({ ID: 'gandi-player', DX: 2, DY: 6, DZ: 0 });
+  assert.match(extension.kinematicCapsuleSummary({ ID: 'gandi-player' }), /vertical velocity:4/);
   extension.jumpKinematicCapsule({ ID: 'gandi-player' });
   assert.match(extension.clothSummary({ ID: 'gandi-cloth' }), /particles:20/);
   assert.match(extension.clothSummary({ ID: 'gandi-cloth' }), /self:on/);
