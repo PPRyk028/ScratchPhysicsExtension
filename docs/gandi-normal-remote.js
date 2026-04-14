@@ -1739,7 +1739,7 @@ class Engine3D {
     const body = character.bodyId ? this.world.getBody(character.bodyId) : null;
     const collider = character.colliderId ? this.world.getCollider(character.colliderId) : null;
     const lastHit = this.world.getKinematicCapsuleLastHit(id);
-    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | last hit:${lastHit?.colliderId || 'none'} | last hit body:${lastHit?.bodyId || 'none'} | last hit distance:${formatOptionalNumber(lastHit?.distance)} | last hit algorithm:${lastHit?.algorithm || 'none'} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
+    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | crouch target:${formatOptionalNumber(character.crouchTargetHalfHeight)} / ${formatOptionalNumber(character.crouchTargetRadius)} | crouch blocked:${character.crouchBlocked ? 'yes' : 'no'} | crouch blocker:${character.crouchBlockedColliderId || 'none'} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | last hit:${lastHit?.colliderId || 'none'} | last hit body:${lastHit?.bodyId || 'none'} | last hit distance:${formatOptionalNumber(lastHit?.distance)} | last hit algorithm:${lastHit?.algorithm || 'none'} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
   }
 
   getKinematicGroundSummary(id) {
@@ -10566,6 +10566,70 @@ function createKinematicBottomSphereCenter(character, position) {
   return addVec3(position, createVec3(0, -toPositiveNumber(character?.halfHeight, 0), 0));
 }
 
+function getKinematicFootY(character, position) {
+  return Number(position?.y ?? 0) -
+    toPositiveNumber(character?.halfHeight, 0) -
+    toPositiveNumber(character?.radius, 0);
+}
+
+function createKinematicFeetAnchoredPosition(position, halfHeight, radius, footY = null) {
+  const resolvedFootY = footY ?? (
+    Number(position?.y ?? 0) -
+    Math.max(0, Number(halfHeight ?? 0)) -
+    Math.max(0, Number(radius ?? 0))
+  );
+  return createVec3(
+    Number(position?.x ?? 0),
+    resolvedFootY + Math.max(0, Number(halfHeight ?? 0)) + Math.max(0, Number(radius ?? 0)),
+    Number(position?.z ?? 0)
+  );
+}
+
+function createKinematicResizeProbeShape(radius, halfHeight) {
+  return {
+    id: '__kinematic-resize-probe__',
+    type: 'capsule',
+    geometry: {
+      radius: Math.max(0, Number(radius ?? 0)),
+      halfHeight: Math.max(0, Number(halfHeight ?? 0))
+    },
+    localPose: {
+      position: createVec3(),
+      rotation: createIdentityQuat()
+    },
+    userData: null
+  };
+}
+
+function clearKinematicCrouchBlockedState(character) {
+  if (!character) {
+    return;
+  }
+
+  character.crouchBlocked = false;
+  character.crouchBlockedColliderId = null;
+  character.crouchBlockedBodyId = null;
+  character.crouchBlockedNormal = createVec3();
+  character.crouchBlockedPoint = null;
+}
+
+function updateKinematicCrouchBlockedState(character, hit = null) {
+  if (!character) {
+    return;
+  }
+
+  if (!hit?.colliderId) {
+    clearKinematicCrouchBlockedState(character);
+    return;
+  }
+
+  character.crouchBlocked = true;
+  character.crouchBlockedColliderId = String(hit.colliderId ?? '').trim() || null;
+  character.crouchBlockedBodyId = String(hit.bodyId ?? '').trim() || null;
+  character.crouchBlockedNormal = cloneVec3(hit.normal ?? createVec3());
+  character.crouchBlockedPoint = cloneOptionalVec3(hit.point ?? null);
+}
+
 function createSweptBottomSphereAabb(center, radius, maxDistance) {
   const resolvedRadius = Math.max(0, Number(radius ?? 0));
   const endCenter = addVec3(center, createVec3(0, -Math.max(0, Number(maxDistance ?? 0)), 0));
@@ -11128,6 +11192,7 @@ class PhysicsWorld {
     character.crouchTargetHalfHeight = toNonNegativeNumber(halfHeight, character.halfHeight ?? 0);
     character.crouchTargetRadius = toNonNegativeNumber(radius, character.radius ?? 0);
     character.crouchSpeed = toNonNegativeNumber(speed, character.crouchSpeed ?? 20);
+    clearKinematicCrouchBlockedState(character);
     return this.getKinematicCapsule(character.id);
   }
 
@@ -11872,18 +11937,136 @@ class PhysicsWorld {
       : null;
   }
 
+  queryKinematicCapsuleResizeClearance(character, body, halfHeight, radius, options = {}) {
+    if (!character || !body) {
+      return null;
+    }
+
+    const characterCollider = this.getCollider(character.colliderId);
+    if (!characterCollider) {
+      return null;
+    }
+
+    const broadphaseProxies = Array.isArray(options.broadphaseProxies)
+      ? options.broadphaseProxies
+      : this.ensureCollisionState().broadphaseProxies;
+    const candidateShape = createKinematicResizeProbeShape(radius, halfHeight);
+    const candidateShapeId = candidateShape.id;
+    const candidateColliderId = `${character.id}:resize-probe`;
+    const candidatePose = {
+      position: cloneVec3(options.position ?? body.position),
+      rotation: cloneQuat(options.rotation ?? body.rotation ?? createIdentityQuat())
+    };
+    const candidateAabb = computeShapeWorldAabb(candidateShape, candidatePose);
+    if (!candidateAabb) {
+      return null;
+    }
+
+    const shapeCache = new Map([[candidateShapeId, candidateShape]]);
+    const poseCache = new Map([[candidateColliderId, candidatePose]]);
+    const pairs = [];
+
+    for (const proxy of Array.isArray(broadphaseProxies) ? broadphaseProxies : []) {
+      if (!proxy || proxy.colliderId === character.colliderId || proxy.bodyId === body.id || proxy.isSensor) {
+        continue;
+      }
+
+      if (proxy.isOneWay === true) {
+        continue;
+      }
+
+      if (!shouldCollisionLayersInteract(
+        characterCollider.collisionLayer,
+        characterCollider.collisionMask,
+        proxy.collisionLayer,
+        proxy.collisionMask
+      )) {
+        continue;
+      }
+
+      if (!testAabbOverlap(candidateAabb, proxy.aabb)) {
+        continue;
+      }
+
+      const targetShape = this.getShape(proxy.shapeId);
+      const targetPose = this.getColliderWorldPose(proxy.colliderId);
+      if (!targetShape || !targetPose) {
+        continue;
+      }
+
+      shapeCache.set(proxy.shapeId, targetShape);
+      poseCache.set(proxy.colliderId, targetPose);
+      pairs.push({
+        pairKey: `${character.id}:resize-probe|${proxy.colliderId}`,
+        pairKind: `kinematic-${proxy.motionType ?? 'static'}`,
+        colliderAId: candidateColliderId,
+        colliderBId: proxy.colliderId,
+        bodyAId: body.id,
+        bodyBId: proxy.bodyId,
+        shapeAId: candidateShapeId,
+        shapeBId: proxy.shapeId,
+        shapeAType: candidateShape.type,
+        shapeBType: proxy.shapeType,
+        aabbA: candidateAabb,
+        aabbB: proxy.aabb
+      });
+    }
+
+    if (pairs.length === 0) {
+      return null;
+    }
+
+    const narrowphase = runNarrowphase(pairs, {
+      getShape: (shapeId) => shapeCache.get(shapeId) ?? null,
+      getPose: (colliderId) => poseCache.get(colliderId) ?? null
+    });
+    const minPenetration = Math.max(1e-4, Math.min(0.02, Math.max(1e-4, Number(character.skinWidth ?? 0) * 0.05)));
+    let bestHit = null;
+
+    for (const contactPair of narrowphase.contactPairs) {
+      const bestContact = Array.isArray(contactPair.contacts) && contactPair.contacts.length > 0
+        ? contactPair.contacts.reduce((best, contact) => (
+          Number(contact?.penetration ?? 0) > Number(best?.penetration ?? -1)
+            ? contact
+            : best
+        ), null)
+        : null;
+      const penetration = Math.max(
+        Number(bestContact?.penetration ?? 0),
+        Number(contactPair.penetration ?? 0)
+      );
+      if (penetration < minPenetration) {
+        continue;
+      }
+
+      if (!bestHit || penetration > bestHit.penetration + 1e-8) {
+        bestHit = {
+          colliderId: contactPair.colliderBId,
+          bodyId: contactPair.bodyBId,
+          normal: cloneVec3(bestContact?.normal ?? contactPair.normal ?? createVec3()),
+          point: cloneOptionalVec3(bestContact?.position ?? null),
+          penetration
+        };
+      }
+    }
+
+    return bestHit;
+  }
+
   updateKinematicCapsuleCrouch(character, body, shape, deltaTime) {
     if (!character || !body || !shape || shape.type !== 'capsule') {
       return false;
     }
 
+    const currentHalfHeight = Math.max(0, Number(shape.geometry.halfHeight ?? character.halfHeight ?? 0));
+    const currentRadius = Math.max(0, Number(shape.geometry.radius ?? character.radius ?? 0));
     const targetHalfHeight = toNonNegativeNumber(
       character.crouchTargetHalfHeight ?? character.halfHeight,
-      character.halfHeight ?? shape.geometry.halfHeight
+      character.halfHeight ?? currentHalfHeight
     );
     const targetRadius = toNonNegativeNumber(
       character.crouchTargetRadius ?? character.radius,
-      character.radius ?? shape.geometry.radius
+      character.radius ?? currentRadius
     );
     const speed = toNonNegativeNumber(character.crouchSpeed, 20);
     if (speed <= 0) {
@@ -11891,17 +12074,40 @@ class PhysicsWorld {
     }
 
     const maxDelta = speed * Math.max(0, Number(deltaTime ?? 0));
-    const nextHalfHeight = moveTowardScalar(shape.geometry.halfHeight, targetHalfHeight, maxDelta);
-    const nextRadius = moveTowardScalar(shape.geometry.radius, targetRadius, maxDelta);
-    if (Math.abs(nextHalfHeight - shape.geometry.halfHeight) <= 1e-6 &&
-      Math.abs(nextRadius - shape.geometry.radius) <= 1e-6) {
+    const nextHalfHeight = moveTowardScalar(currentHalfHeight, targetHalfHeight, maxDelta);
+    const nextRadius = moveTowardScalar(currentRadius, targetRadius, maxDelta);
+    if (Math.abs(nextHalfHeight - currentHalfHeight) <= 1e-6 &&
+      Math.abs(nextRadius - currentRadius) <= 1e-6) {
+      if (Math.abs(targetHalfHeight - currentHalfHeight) <= 1e-6 &&
+        Math.abs(targetRadius - currentRadius) <= 1e-6) {
+        clearKinematicCrouchBlockedState(character);
+      }
       return false;
     }
 
+    const footY = getKinematicFootY({
+      halfHeight: currentHalfHeight,
+      radius: currentRadius
+    }, body.position);
+    const nextPosition = createKinematicFeetAnchoredPosition(body.position, nextHalfHeight, nextRadius, footY);
+    const isExpandingTowardTarget = targetHalfHeight > currentHalfHeight + 1e-6 || targetRadius > currentRadius + 1e-6;
+    if (isExpandingTowardTarget) {
+      const targetPosition = createKinematicFeetAnchoredPosition(body.position, targetHalfHeight, targetRadius, footY);
+      const blockingHit = this.queryKinematicCapsuleResizeClearance(character, body, targetHalfHeight, targetRadius, {
+        position: targetPosition
+      });
+      if (blockingHit) {
+        updateKinematicCrouchBlockedState(character, blockingHit);
+        return false;
+      }
+    }
+
+    clearKinematicCrouchBlockedState(character);
     shape.geometry.halfHeight = Math.max(0, nextHalfHeight);
     shape.geometry.radius = Math.max(0, nextRadius);
     character.halfHeight = shape.geometry.halfHeight;
     character.radius = shape.geometry.radius;
+    body.position = cloneVec3(nextPosition);
     this.markCollisionStateDirty();
     return true;
   }
@@ -16398,6 +16604,16 @@ function createDefaultCrouchState() {
     speed: 20
   };
 }
+
+function createDefaultCrouchBlockState() {
+  return {
+    blocked: false,
+    colliderId: null,
+    bodyId: null,
+    normal: createVec3(),
+    point: null
+  };
+}
 class CharacterRegistry extends BaseRegistry {
   constructor() {
     super('character');
@@ -16453,6 +16669,11 @@ class CharacterRegistry extends BaseRegistry {
       crouchTargetRadius: character.crouchTargetRadius ?? createDefaultCrouchState().targetRadius,
       crouchTargetHalfHeight: character.crouchTargetHalfHeight ?? createDefaultCrouchState().targetHalfHeight,
       crouchSpeed: character.crouchSpeed ?? createDefaultCrouchState().speed,
+      crouchBlocked: character.crouchBlocked === true,
+      crouchBlockedColliderId: character.crouchBlockedColliderId ?? createDefaultCrouchBlockState().colliderId,
+      crouchBlockedBodyId: character.crouchBlockedBodyId ?? createDefaultCrouchBlockState().bodyId,
+      crouchBlockedNormal: cloneVec3(character.crouchBlockedNormal ?? createDefaultCrouchBlockState().normal),
+      crouchBlockedPoint: character.crouchBlockedPoint ? cloneVec3(character.crouchBlockedPoint) : createDefaultCrouchBlockState().point,
       oneWayDropTimer: character.oneWayDropTimer ?? 0,
       groundBodyLocalPoint: {
         valid: character.groundBodyLocalPoint?.valid === true,
@@ -16517,6 +16738,11 @@ class CharacterRegistry extends BaseRegistry {
       crouchTargetRadius: options.crouchTargetRadius ?? createDefaultCrouchState().targetRadius,
       crouchTargetHalfHeight: options.crouchTargetHalfHeight ?? createDefaultCrouchState().targetHalfHeight,
       crouchSpeed: toFiniteNumber(options.crouchSpeed, createDefaultCrouchState().speed),
+      crouchBlocked: options.crouchBlocked === true,
+      crouchBlockedColliderId: String(options.crouchBlockedColliderId ?? '').trim() || createDefaultCrouchBlockState().colliderId,
+      crouchBlockedBodyId: String(options.crouchBlockedBodyId ?? '').trim() || createDefaultCrouchBlockState().bodyId,
+      crouchBlockedNormal: cloneVec3(options.crouchBlockedNormal ?? createDefaultCrouchBlockState().normal),
+      crouchBlockedPoint: options.crouchBlockedPoint ? cloneVec3(options.crouchBlockedPoint) : createDefaultCrouchBlockState().point,
       oneWayDropTimer: toFiniteNumber(options.oneWayDropTimer, 0),
       groundFaceCache: options.groundFaceCache ?? createDefaultFaceCache(),
       motionFaceCache: options.motionFaceCache ?? createDefaultFaceCache(),

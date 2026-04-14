@@ -66,6 +66,16 @@ function createDefaultCrouchState() {
   };
 }
 
+function createDefaultCrouchBlockState() {
+  return {
+    blocked: false,
+    colliderId: null,
+    bodyId: null,
+    normal: createVec3(),
+    point: null
+  };
+}
+
 export class CharacterRegistry extends BaseRegistry {
   constructor() {
     super('character');
@@ -121,6 +131,11 @@ export class CharacterRegistry extends BaseRegistry {
       crouchTargetRadius: character.crouchTargetRadius ?? createDefaultCrouchState().targetRadius,
       crouchTargetHalfHeight: character.crouchTargetHalfHeight ?? createDefaultCrouchState().targetHalfHeight,
       crouchSpeed: character.crouchSpeed ?? createDefaultCrouchState().speed,
+      crouchBlocked: character.crouchBlocked === true,
+      crouchBlockedColliderId: character.crouchBlockedColliderId ?? createDefaultCrouchBlockState().colliderId,
+      crouchBlockedBodyId: character.crouchBlockedBodyId ?? createDefaultCrouchBlockState().bodyId,
+      crouchBlockedNormal: cloneVec3(character.crouchBlockedNormal ?? createDefaultCrouchBlockState().normal),
+      crouchBlockedPoint: character.crouchBlockedPoint ? cloneVec3(character.crouchBlockedPoint) : createDefaultCrouchBlockState().point,
       oneWayDropTimer: character.oneWayDropTimer ?? 0,
       groundBodyLocalPoint: {
         valid: character.groundBodyLocalPoint?.valid === true,
@@ -185,6 +200,11 @@ export class CharacterRegistry extends BaseRegistry {
       crouchTargetRadius: options.crouchTargetRadius ?? createDefaultCrouchState().targetRadius,
       crouchTargetHalfHeight: options.crouchTargetHalfHeight ?? createDefaultCrouchState().targetHalfHeight,
       crouchSpeed: toFiniteNumber(options.crouchSpeed, createDefaultCrouchState().speed),
+      crouchBlocked: options.crouchBlocked === true,
+      crouchBlockedColliderId: String(options.crouchBlockedColliderId ?? '').trim() || createDefaultCrouchBlockState().colliderId,
+      crouchBlockedBodyId: String(options.crouchBlockedBodyId ?? '').trim() || createDefaultCrouchBlockState().bodyId,
+      crouchBlockedNormal: cloneVec3(options.crouchBlockedNormal ?? createDefaultCrouchBlockState().normal),
+      crouchBlockedPoint: options.crouchBlockedPoint ? cloneVec3(options.crouchBlockedPoint) : createDefaultCrouchBlockState().point,
       oneWayDropTimer: toFiniteNumber(options.oneWayDropTimer, 0),
       groundFaceCache: options.groundFaceCache ?? createDefaultFaceCache(),
       motionFaceCache: options.motionFaceCache ?? createDefaultFaceCache(),

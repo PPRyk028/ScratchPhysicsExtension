@@ -2066,15 +2066,24 @@ test('PhysicsWorld kinematic controllers can launch with horizontal and vertical
 });
 
 test('PhysicsWorld kinematic controllers smoothly update capsule size when crouching', () => {
-  const world = new PhysicsWorld();
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
   world.createKinematicCapsule({
     id: 'player',
     position: { x: 0, y: 20, z: 0 },
     radius: 5,
     halfHeight: 10
   });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    stepOffset: 0,
+    groundSnapDistance: 0
+  });
 
   const startCharacter = world.getKinematicCapsule('player');
+  const startBody = world.getBody('player');
+  const startFootY = startBody.position.y - startCharacter.halfHeight - startCharacter.radius;
   assert.equal(startCharacter.halfHeight, 10);
   assert.equal(startCharacter.radius, 5);
 
@@ -2082,16 +2091,94 @@ test('PhysicsWorld kinematic controllers smoothly update capsule size when crouc
   world.step(1 / 60);
 
   const midCharacter = world.getKinematicCapsule('player');
+  const midBody = world.getBody('player');
   assert.ok(midCharacter.halfHeight < 10, `expected half height to shrink, got ${midCharacter.halfHeight}`);
   assert.ok(midCharacter.radius < 5, `expected radius to shrink, got ${midCharacter.radius}`);
+  assert.ok(Math.abs((midBody.position.y - midCharacter.halfHeight - midCharacter.radius) - startFootY) <= 1e-4, 'expected crouch to keep feet anchored');
 
   for (let index = 0; index < 20; index += 1) {
     world.step(1 / 60);
   }
 
   const crouchedCharacter = world.getKinematicCapsule('player');
+  const crouchedBody = world.getBody('player');
   assert.ok(Math.abs(crouchedCharacter.halfHeight - 6) <= 0.5, `expected crouch half height near 6, got ${crouchedCharacter.halfHeight}`);
   assert.ok(Math.abs(crouchedCharacter.radius - 3) <= 0.5, `expected crouch radius near 3, got ${crouchedCharacter.radius}`);
+  assert.equal(crouchedCharacter.crouchBlocked, false);
+  assert.ok(Math.abs((crouchedBody.position.y - crouchedCharacter.halfHeight - crouchedCharacter.radius) - startFootY) <= 1e-4, 'expected crouched feet to remain anchored');
+
+  world.setKinematicCapsuleCrouch('player', 10, 5, 20);
+  for (let index = 0; index < 20; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const standingCharacter = world.getKinematicCapsule('player');
+  const standingBody = world.getBody('player');
+  assert.ok(Math.abs(standingCharacter.halfHeight - 10) <= 0.5, `expected standing half height near 10, got ${standingCharacter.halfHeight}`);
+  assert.ok(Math.abs(standingCharacter.radius - 5) <= 0.5, `expected standing radius near 5, got ${standingCharacter.radius}`);
+  assert.equal(standingCharacter.crouchBlocked, false);
+  assert.ok(Math.abs((standingBody.position.y - standingCharacter.halfHeight - standingCharacter.radius) - startFootY) <= 1e-4, 'expected uncrouch to keep feet anchored');
+});
+
+test('PhysicsWorld kinematic controllers keep crouching under low ceilings and auto-uncrouch once clear', () => {
+  const world = new PhysicsWorld();
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -20, z: 0 },
+    size: 40
+  });
+  world.createStaticBoxCollider({
+    id: 'ceiling',
+    position: { x: 0, y: 34, z: 0 },
+    size: 20
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 30, z: 0 },
+    radius: 3,
+    halfHeight: 6
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 1,
+    stepOffset: 6,
+    groundSnapDistance: 2
+  });
+
+  for (let index = 0; index < 90; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const crouchedCharacter = world.getKinematicCapsule('player');
+  const crouchedBody = world.getBody('player');
+  const anchoredFootY = crouchedBody.position.y - crouchedCharacter.halfHeight - crouchedCharacter.radius;
+  world.setKinematicCapsuleCrouch('player', 10, 5, 30);
+
+  for (let index = 0; index < 60; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const blockedCharacter = world.getKinematicCapsule('player');
+  const blockedBody = world.getBody('player');
+  assert.ok(Math.abs(blockedCharacter.halfHeight - 6) <= 0.25, `expected blocked uncrouch to keep crouched half height, got ${blockedCharacter.halfHeight}`);
+  assert.ok(Math.abs(blockedCharacter.radius - 3) <= 0.25, `expected blocked uncrouch to keep crouched radius, got ${blockedCharacter.radius}`);
+  assert.equal(blockedCharacter.crouchBlocked, true);
+  assert.equal(blockedCharacter.crouchBlockedColliderId, 'ceiling:collider');
+  assert.ok(Math.abs((blockedBody.position.y - blockedCharacter.halfHeight - blockedCharacter.radius) - anchoredFootY) <= 1e-6, 'expected blocked uncrouch to keep feet anchored');
+
+  world.configureColliderCollision('ceiling:collider', {
+    enabled: false
+  });
+  for (let index = 0; index < 60; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const standingCharacter = world.getKinematicCapsule('player');
+  const standingBody = world.getBody('player');
+  assert.ok(Math.abs(standingCharacter.halfHeight - 10) <= 0.5, `expected auto-uncrouch half height near 10, got ${standingCharacter.halfHeight}`);
+  assert.ok(Math.abs(standingCharacter.radius - 5) <= 0.5, `expected auto-uncrouch radius near 5, got ${standingCharacter.radius}`);
+  assert.equal(standingCharacter.crouchBlocked, false);
+  assert.equal(standingCharacter.crouchBlockedColliderId, null);
+  assert.ok(Math.abs((standingBody.position.y - standingCharacter.halfHeight - standingCharacter.radius) - anchoredFootY) <= 1e-6, 'expected auto-uncrouch to keep feet anchored');
 });
 
 test('PhysicsWorld kinematic controllers can drop through one-way platforms', () => {
