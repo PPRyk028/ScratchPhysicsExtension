@@ -2689,6 +2689,91 @@ test('PhysicsWorld kinematic controllers can cross a convex pyramid apex without
   assert.equal(character.walkable, true);
 });
 
+test('PhysicsWorld kinematic controllers can cross the preset wedge crest without requiring high move speed', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'wedge',
+    vertices: [
+      { x: -22, y: -18, z: -20 },
+      { x: 22, y: -18, z: -20 },
+      { x: 22, y: -18, z: 20 },
+      { x: -22, y: -18, z: 20 },
+      { x: -22, y: 18, z: -20 },
+      { x: -22, y: 18, z: 20 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 20, y: 40, z: 0 },
+    radius: 6,
+    halfHeight: 12
+  });
+  world.configureKinematicCapsule('player', {
+    skinWidth: 0.5,
+    groundProbeDistance: 6,
+    maxGroundAngleDegrees: 55
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 1,
+    groundSnapDistance: 2,
+    stepOffset: 6
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: -10, y: 0, z: 0 });
+
+  for (let index = 0; index < 4000; index += 1) {
+    world.step(0.001);
+  }
+
+  const body = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok(body.position.x < 0, `expected low-speed traversal to move across the wedge crest, got x=${body.position.x}`);
+  assert.ok(Math.abs(body.position.z) < 0.5, `expected wedge traversal to stay centered, got z=${body.position.z}`);
+  assert.equal(character.grounded, true);
+  assert.equal(character.walkable, true);
+});
+
+test('PhysicsWorld kinematic controllers can cross the preset pyramid apex without requiring extreme move speed', () => {
+  const world = new PhysicsWorld();
+  world.createStaticConvexHullCollider({
+    id: 'pyramid',
+    vertices: [
+      { x: -20, y: -20, z: -20 },
+      { x: 20, y: -20, z: -20 },
+      { x: 20, y: -20, z: 20 },
+      { x: -20, y: -20, z: 20 },
+      { x: 0, y: 22, z: 0 }
+    ]
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 20, y: 40, z: 0 },
+    radius: 6,
+    halfHeight: 12
+  });
+  world.configureKinematicCapsule('player', {
+    skinWidth: 0.5,
+    groundProbeDistance: 6,
+    maxGroundAngleDegrees: 70
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 1,
+    groundSnapDistance: 2,
+    stepOffset: 6
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: -20, y: 0, z: 0 });
+
+  for (let index = 0; index < 4000; index += 1) {
+    world.step(0.001);
+  }
+
+  const body = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok(body.position.x < 0, `expected low-speed traversal to move across the pyramid apex, got x=${body.position.x}`);
+  assert.ok(Math.abs(body.position.z) < 1, `expected pyramid traversal to stay near the intended path, got z=${body.position.z}`);
+  assert.equal(character.grounded, true);
+  assert.equal(character.walkable, true);
+});
+
 test('PhysicsWorld kinematic ground probes use the fast static convex face path on walkable ramps', () => {
   const world = new PhysicsWorld();
   world.createStaticConvexHullCollider({

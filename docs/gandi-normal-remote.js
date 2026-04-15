@@ -10377,11 +10377,13 @@ function evaluateKinematicGroundFaceSupport(character, body, faceContext, maxDis
     : radius;
   const contactPoint = subtractVec3(sphereCenterAtHit, scaleVec3(face.normal, contactOffset));
   const insideFace = isPointInsideWorldFace(contactPoint, face, Math.max(character.skinWidth, 0.15));
+  const edgePoint = getClosestPointOnWorldFaceBoundary(contactPoint, face);
+  const edgeDistance = Math.sqrt(lengthSquaredVec3(subtractVec3(contactPoint, edgePoint)));
   let boundaryPoint = cloneVec3(contactPoint);
   let boundaryDistance = 0;
   if (!insideFace) {
-    boundaryPoint = getClosestPointOnWorldFaceBoundary(contactPoint, face);
-    boundaryDistance = Math.sqrt(lengthSquaredVec3(subtractVec3(contactPoint, boundaryPoint)));
+    boundaryPoint = edgePoint;
+    boundaryDistance = edgeDistance;
     const boundarySupportDistance = Math.max(
       toNonNegativeNumber(options.boundarySupportDistance, 0),
       character.skinWidth + 0.25,
@@ -10422,8 +10424,82 @@ function evaluateKinematicGroundFaceSupport(character, body, faceContext, maxDis
     face,
     insideFace,
     boundaryDistance,
+    edgeDistance,
     signedDistance
   };
+}
+
+function computeKinematicGroundTraversalNormal(character, faces, currentFaceId, groundPoint, moveIntent) {
+  if (!character || !Array.isArray(faces) || faces.length === 0 || !groundPoint || !currentFaceId) {
+    return null;
+  }
+
+  const currentFace = findWorldFaceById(faces, currentFaceId);
+  if (!currentFace) {
+    return null;
+  }
+
+  const featureThreshold = Math.max(character.radius * 0.9, character.skinWidth + 0.75);
+  const featurePoint = getClosestPointOnWorldFaceBoundary(groundPoint, currentFace);
+  const featureDistance = Math.sqrt(lengthSquaredVec3(subtractVec3(groundPoint, featurePoint)));
+  if (featureDistance > featureThreshold + 1e-6) {
+    return null;
+  }
+
+  const planarMove = createVec3(
+    Number(moveIntent?.x ?? 0),
+    0,
+    Number(moveIntent?.z ?? 0)
+  );
+  const planarMoveLengthSquared = lengthSquaredVec3(planarMove);
+  const planarMoveDirection = planarMoveLengthSquared > 1e-8
+    ? scaleVec3(planarMove, 1 / Math.sqrt(planarMoveLengthSquared))
+    : createVec3();
+  const planeTolerance = Math.max(character.skinWidth + 0.05, 0.1);
+  const boundaryTolerance = Math.max(character.skinWidth + 0.25, 0.5);
+  let blendedNormal = createVec3();
+  let contributingFaceCount = 0;
+
+  for (const face of faces) {
+    if (!isWalkableKinematicNormal(face.normal, character.maxGroundAngleDegrees)) {
+      continue;
+    }
+
+    if (Math.abs(dotVec3(featurePoint, face.normal) - face.planeOffset) > planeTolerance) {
+      continue;
+    }
+
+    if (!isPointInsideWorldFace(featurePoint, face, boundaryTolerance)) {
+      continue;
+    }
+
+    const faceHorizontalNormal = createVec3(Number(face.normal?.x ?? 0), 0, Number(face.normal?.z ?? 0));
+    const faceHorizontalLengthSquared = lengthSquaredVec3(faceHorizontalNormal);
+    if (planarMoveLengthSquared > 1e-8 && faceHorizontalLengthSquared > 1e-8) {
+      const faceHorizontalDirection = scaleVec3(faceHorizontalNormal, 1 / Math.sqrt(faceHorizontalLengthSquared));
+      if (Math.abs(dotVec3(faceHorizontalDirection, planarMoveDirection)) < 0.45) {
+        continue;
+      }
+    }
+
+    if (planarMoveLengthSquared > 1e-8) {
+      const projectedMove = projectOntoGroundPlane(planarMove, face.normal);
+      const forwardProgress = dotVec3(projectedMove, planarMoveDirection);
+      if (forwardProgress < -1e-6) {
+        continue;
+      }
+      blendedNormal = addVec3(blendedNormal, scaleVec3(face.normal, Math.max(0.1, forwardProgress)));
+    } else {
+      blendedNormal = addVec3(blendedNormal, face.normal);
+    }
+    contributingFaceCount += 1;
+  }
+
+  if (contributingFaceCount < 2 || lengthSquaredVec3(blendedNormal) <= 1e-8) {
+    return null;
+  }
+
+  return normalizeVec3(blendedNormal, currentFace.normal);
 }
 
 function isBetterKinematicGroundFaceCandidate(candidate, currentBest) {
@@ -10433,6 +10509,31 @@ function isBetterKinematicGroundFaceCandidate(candidate, currentBest) {
 
   if (!currentBest) {
     return true;
+  }
+
+  const nearFeatureThreshold = Math.max(
+    Number(candidate?.handoffThreshold ?? 0),
+    Number(currentBest?.handoffThreshold ?? 0),
+    0
+  );
+  const nearFeatureCompetition = nearFeatureThreshold > 1e-6 && (
+    Number(candidate?.edgeDistance ?? Number.POSITIVE_INFINITY) <= nearFeatureThreshold + 1e-6 ||
+    Number(currentBest?.edgeDistance ?? Number.POSITIVE_INFINITY) <= nearFeatureThreshold + 1e-6
+  );
+  if (nearFeatureCompetition) {
+    if (candidate.forwardProgress > currentBest.forwardProgress + 1e-6) {
+      return true;
+    }
+    if (candidate.forwardProgress < currentBest.forwardProgress - 1e-6) {
+      return false;
+    }
+
+    if (candidate.lateralDrift < currentBest.lateralDrift - 1e-6) {
+      return true;
+    }
+    if (candidate.lateralDrift > currentBest.lateralDrift + 1e-6) {
+      return false;
+    }
   }
 
   if (candidate.insideFace !== currentBest.insideFace) {
@@ -11476,6 +11577,7 @@ class PhysicsWorld {
     character.groundDistance = null;
     character.groundAngleDegrees = null;
     character.groundNormal = createVec3(0, 1, 0);
+    character.groundTraversalNormal = createVec3(0, 1, 0);
     character.groundPoint = createVec3();
     character.groundColliderId = null;
     character.groundBodyId = null;
@@ -13186,6 +13288,15 @@ class PhysicsWorld {
         Math.max(character.skinWidth * 2, character.groundSnapDistance + character.skinWidth + 0.5)
       )
     );
+    const recoveryTravel = createVec3(
+      Number(character?.lastRequestedMove?.x ?? character?.moveIntent?.x ?? 0),
+      0,
+      Number(character?.lastRequestedMove?.z ?? character?.moveIntent?.z ?? 0)
+    );
+    const recoveryTravelLengthSquared = lengthSquaredVec3(recoveryTravel);
+    const recoveryTravelDirection = recoveryTravelLengthSquared > 1e-8
+      ? scaleVec3(recoveryTravel, 1 / Math.sqrt(recoveryTravelLengthSquared))
+      : createVec3();
     let totalRecovery = createVec3();
     let recovered = false;
     let lastRecoveryHit = null;
@@ -13256,6 +13367,20 @@ class PhysicsWorld {
           }, face);
           const supportPoint = cloneVec3(supportFeature.worldPoint);
           const signedDistance = dotVec3(supportPoint, face.normal) - face.planeOffset;
+          const penetrationDepth = -signedDistance;
+          const sameGroundHorizontalNormal = sameGroundWalkableRecovery
+            ? createVec3(Number(face.normal?.x ?? 0), 0, Number(face.normal?.z ?? 0))
+            : createVec3();
+          const sameGroundRecoveryOpposesTravel = sameGroundWalkableRecovery &&
+            recoveryTravelLengthSquared > 1e-8 &&
+            lengthSquaredVec3(sameGroundHorizontalNormal) > 1e-8 &&
+            dotVec3(
+              normalizeVec3(sameGroundHorizontalNormal, createVec3()),
+              recoveryTravelDirection
+            ) < -0.2;
+          if (sameGroundRecoveryOpposesTravel && penetrationDepth > 1e-4) {
+            continue;
+          }
           if (isOneWay && signedDistance < -Math.max(character.skinWidth + recoveryPadding, KINEMATIC_ONE_WAY_RECOVERY_DEPTH)) {
             continue;
           }
@@ -13838,7 +13963,10 @@ class PhysicsWorld {
       const moveIntent = cloneVec3(character.moveIntent ?? createVec3());
       let horizontalMove = scaleVec3(createVec3(moveIntent.x, 0, moveIntent.z), deltaTime);
       if (wasGrounded && character.walkable && !jumpedThisFrame && !launchedThisFrame && lengthSquaredVec3(horizontalMove) > 1e-8) {
-        horizontalMove = projectOntoGroundPlane(horizontalMove, character.groundNormal ?? createVec3(0, 1, 0));
+        horizontalMove = projectOntoGroundPlane(
+          horizontalMove,
+          character.groundTraversalNormal ?? character.groundNormal ?? createVec3(0, 1, 0)
+        );
       } else if ((!wasGrounded || jumpedThisFrame || launchedThisFrame) && lengthSquaredVec3(horizontalMove) > 1e-8) {
         horizontalMove = scaleVec3(horizontalMove, Math.max(0, toNonNegativeNumber(character.airControlFactor, 1)));
       }
@@ -14095,6 +14223,7 @@ class PhysicsWorld {
       }, maxDistance, {
         origin: body.position,
         allowBoundarySupport: true,
+        boundarySupportDistance: Math.max(character.radius + character.skinWidth, character.radius * 1.1),
         algorithm: 'character-ground-face-v2'
       });
       if (!candidate) {
@@ -14115,6 +14244,7 @@ class PhysicsWorld {
       candidate.lateralDrift = lengthSquaredVec3(lateralVector);
       candidate.normalAlignment = dotVec3(candidate.result.normal, previousGroundNormal);
       candidate.isCachedFace = cachedFaceId === face.id;
+      candidate.handoffThreshold = Math.max(character.radius * 0.9, character.skinWidth + 0.75);
 
       if (isBetterKinematicGroundFaceCandidate(candidate, bestCandidate)) {
         bestCandidate = candidate;
@@ -14179,11 +14309,32 @@ class PhysicsWorld {
       nextGroundState.walkable = false;
     }
 
+    let traversalNormal = cloneVec3(nextGroundState.normal);
+    if (nextGroundState.grounded && nextGroundState.colliderId && resolvedHit?.featureId) {
+      const collider = this.getCollider(nextGroundState.colliderId);
+      const groundShape = collider ? this.getShape(collider.shapeId) : null;
+      const groundPose = collider ? this.getColliderWorldPose(collider.id) : null;
+      if (groundShape && groundPose && (groundShape.type === 'box' || groundShape.type === 'convex-hull')) {
+        const groundFaces = getStaticPolygonalWorldFaces(groundShape, groundPose);
+        const blendedTraversalNormal = computeKinematicGroundTraversalNormal(
+          character,
+          groundFaces,
+          resolvedHit.featureId,
+          nextGroundState.point,
+          character.moveIntent
+        );
+        if (blendedTraversalNormal) {
+          traversalNormal = blendedTraversalNormal;
+        }
+      }
+    }
+
     character.grounded = nextGroundState.grounded;
     character.walkable = nextGroundState.walkable;
     character.groundDistance = nextGroundState.distance;
     character.groundAngleDegrees = nextGroundState.angleDegrees;
     character.groundNormal = cloneVec3(nextGroundState.normal);
+    character.groundTraversalNormal = cloneVec3(traversalNormal);
     character.groundPoint = cloneVec3(nextGroundState.point);
     character.groundColliderId = nextGroundState.colliderId;
     character.groundBodyId = nextGroundState.bodyId;
@@ -14231,7 +14382,7 @@ class PhysicsWorld {
       walkable: character.walkable === true,
       distance: character.groundDistance ?? null,
       angleDegrees: character.groundAngleDegrees ?? null,
-      normal: cloneVec3(character.groundNormal ?? createVec3(0, 1, 0)),
+      normal: cloneVec3(character.groundTraversalNormal ?? character.groundNormal ?? createVec3(0, 1, 0)),
       point: cloneVec3(character.groundPoint ?? createVec3()),
       colliderId: character.groundColliderId ?? null,
       bodyId: character.groundBodyId ?? null
