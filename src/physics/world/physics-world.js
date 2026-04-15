@@ -886,6 +886,45 @@ function isWalkableKinematicNormal(normal, maxGroundAngleDegrees) {
   return dotVec3(normalizedNormal, up) >= Math.cos(maxSlopeRadians + 1e-6);
 }
 
+function getKinematicMotionSlideNormal(character, direction, hitNormal) {
+  const resolvedNormal = normalizeVec3(hitNormal ?? createVec3(), createVec3());
+  if (lengthSquaredVec3(resolvedNormal) <= 1e-8) {
+    return resolvedNormal;
+  }
+
+  if (
+    Number(resolvedNormal.y ?? 0) <= 1e-6 ||
+    isWalkableKinematicNormal(resolvedNormal, character?.maxGroundAngleDegrees)
+  ) {
+    return resolvedNormal;
+  }
+
+  const horizontalDirection = createVec3(Number(direction?.x ?? 0), 0, Number(direction?.z ?? 0));
+  const horizontalDirectionLengthSquared = lengthSquaredVec3(horizontalDirection);
+  if (horizontalDirectionLengthSquared <= 1e-8) {
+    return resolvedNormal;
+  }
+
+  if (Number(direction?.y ?? 0) < -0.25) {
+    return resolvedNormal;
+  }
+
+  const wallNormal = normalizeVec3(
+    createVec3(Number(resolvedNormal.x ?? 0), 0, Number(resolvedNormal.z ?? 0)),
+    createVec3()
+  );
+  if (lengthSquaredVec3(wallNormal) <= 1e-8) {
+    return resolvedNormal;
+  }
+
+  const horizontalDirectionUnit = scaleVec3(horizontalDirection, 1 / Math.sqrt(horizontalDirectionLengthSquared));
+  if (dotVec3(horizontalDirectionUnit, wallNormal) >= -1e-4) {
+    return resolvedNormal;
+  }
+
+  return wallNormal;
+}
+
 function projectOntoGroundPlane(move, groundNormal) {
   if (!groundNormal) {
     return cloneVec3(move ?? createVec3());
@@ -1127,7 +1166,7 @@ function evaluateKinematicGroundFaceSupport(character, body, faceContext, maxDis
     return null;
   }
 
-  if (!isWalkableKinematicNormal(face.normal, character.maxGroundAngleDegrees)) {
+  if (options.requireWalkable !== false && !isWalkableKinematicNormal(face.normal, character.maxGroundAngleDegrees)) {
     return null;
   }
 
@@ -3482,6 +3521,7 @@ export class PhysicsWorld {
     const candidate = evaluateKinematicGroundFaceSupport(character, body, faceContext, maxDistance, {
       ...options,
       allowBoundarySupport: false,
+      requireWalkable: true,
       algorithm: 'character-ground-face-v1'
     });
     return candidate?.result ?? null;
@@ -4408,7 +4448,8 @@ export class PhysicsWorld {
       }
 
       const leftoverMove = scaleVec3(direction, leftoverDistance);
-      const slideMove = subtractVec3(leftoverMove, scaleVec3(hit.normal, dotVec3(leftoverMove, hit.normal)));
+      const slideNormal = getKinematicMotionSlideNormal(character, direction, hit.normal);
+      const slideMove = subtractVec3(leftoverMove, scaleVec3(slideNormal, dotVec3(leftoverMove, slideNormal)));
       if (lengthSquaredVec3(slideMove) <= 1e-8) {
         remainingMove = createVec3();
         break;
@@ -5000,6 +5041,7 @@ export class PhysicsWorld {
         origin: body.position,
         allowBoundarySupport: true,
         boundarySupportDistance: Math.max(character.radius + character.skinWidth, character.radius * 1.1),
+        requireWalkable: false,
         algorithm: 'character-ground-face-v2'
       });
       if (!candidate) {
