@@ -56,6 +56,56 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'configureMaterialSurface',
+        blockType: 'command',
+        text: 'configure material [ID] surface traction:[TRACTION] jump:[JUMP_MULTIPLIER] conveyor x:[CONVEYOR_X] y:[CONVEYOR_Y] z:[CONVEYOR_Z]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-1' },
+          TRACTION: { type: 'number', defaultValue: 1 },
+          JUMP_MULTIPLIER: { type: 'number', defaultValue: 1 },
+          CONVEYOR_X: { type: 'number', defaultValue: 0 },
+          CONVEYOR_Y: { type: 'number', defaultValue: 0 },
+          CONVEYOR_Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
+        opcode: 'configureMaterialIcePreset',
+        blockType: 'command',
+        text: 'configure material [ID] ice preset',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-1' }
+        }
+      },
+      {
+        opcode: 'configureMaterialStickyPreset',
+        blockType: 'command',
+        text: 'configure material [ID] sticky preset',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-1' }
+        }
+      },
+      {
+        opcode: 'configureMaterialBouncePadPreset',
+        blockType: 'command',
+        text: 'configure material [ID] bounce pad preset jump:[JUMP_MULTIPLIER]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-1' },
+          JUMP_MULTIPLIER: { type: 'number', defaultValue: 1.85 }
+        }
+      },
+      {
+        opcode: 'configureMaterialConveyorPreset',
+        blockType: 'command',
+        text: 'configure material [ID] conveyor preset traction:[TRACTION] x:[CONVEYOR_X] y:[CONVEYOR_Y] z:[CONVEYOR_Z]',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-1' },
+          TRACTION: { type: 'number', defaultValue: 1 },
+          CONVEYOR_X: { type: 'number', defaultValue: 4 },
+          CONVEYOR_Y: { type: 'number', defaultValue: 0 },
+          CONVEYOR_Z: { type: 'number', defaultValue: 0 }
+        }
+      },
+      {
         opcode: 'setCameraPosition',
         blockType: 'command',
         text: 'set debug camera position x:[X] y:[Y] z:[Z]',
@@ -733,6 +783,86 @@ export function createExtensionInfo() {
         }
       },
       {
+        opcode: 'kinematicGroundBody',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] ground body',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicGroundMaterial',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] ground material',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicGroundAngle',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] ground angle',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicGroundNormal',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] ground normal',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicSupportBody',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] support body',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicSupportMaterial',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] support material',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicSupportVelocity',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] support velocity',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicSupportTraction',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] support traction',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicSupportJumpMultiplier',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] support jump multiplier',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
+        opcode: 'kinematicSupportConveyorVelocity',
+        blockType: 'reporter',
+        text: 'kinematic capsule [ID] support conveyor velocity',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'player-1' }
+        }
+      },
+      {
         opcode: 'kinematicCapsuleHitSummary',
         blockType: 'reporter',
         text: 'kinematic capsule [ID] hit summary',
@@ -768,6 +898,30 @@ export function createExtensionInfo() {
         opcode: 'materialSummary',
         blockType: 'reporter',
         text: 'material [ID] summary',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'materialSurfaceTraction',
+        blockType: 'reporter',
+        text: 'material [ID] surface traction',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'materialSurfaceJumpMultiplier',
+        blockType: 'reporter',
+        text: 'material [ID] surface jump multiplier',
+        arguments: {
+          ID: { type: 'string', defaultValue: 'material-default' }
+        }
+      },
+      {
+        opcode: 'materialConveyorVelocity',
+        blockType: 'reporter',
+        text: 'material [ID] conveyor velocity',
         arguments: {
           ID: { type: 'string', defaultValue: 'material-default' }
         }

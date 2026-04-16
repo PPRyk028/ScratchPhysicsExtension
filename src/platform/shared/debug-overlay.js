@@ -42,6 +42,12 @@ const LAYER_GROUPS = {
     'character-hit-point',
     'character-hit-normal'
   ]),
+  surfaces: new Set([
+    'surface-point',
+    'surface-normal',
+    'surface-support-velocity',
+    'surface-conveyor-velocity'
+  ]),
   sensors: new Set(['sensor-collider', 'sensor-origin']),
   triggers: new Set(['trigger-contact-point', 'trigger-contact-normal']),
   static: new Set(['static-collider', 'collider-origin']),
@@ -102,6 +108,10 @@ const LAYER_ALIASES = {
   characters: 'characters',
   controller: 'characters',
   grounded: 'characters',
+  surface: 'surfaces',
+  surfaces: 'surfaces',
+  gameplay: 'surfaces',
+  conveyor: 'surfaces',
   sensor: 'sensors',
   sensors: 'sensors',
   trigger: 'triggers',
@@ -422,8 +432,10 @@ export function createDebugOverlay(displayName) {
       }
     }
 
-    state.label.textContent = `${displayName} debug overlay | ${visiblePrimitives.length}/${primitives.length} primitives | layers ${formatLayerSummary(state.activeLayers)} | frame ${frame?.frameNumber ?? 0}`;
-    state.lastSummary = `${displayName} overlay visible | ${visiblePrimitives.length}/${primitives.length} primitives | layers ${formatLayerSummary(state.activeLayers)} | frame ${frame?.frameNumber ?? 0}`;
+    const frameSummary = String(frame?.summary ?? `${displayName} frame ${frame?.frameNumber ?? 0}`).trim();
+    const overlaySummary = `${frameSummary} | overlay ${visiblePrimitives.length}/${primitives.length} primitives | layers ${formatLayerSummary(state.activeLayers)}`;
+    state.label.textContent = overlaySummary;
+    state.lastSummary = overlaySummary;
     return true;
   }
 

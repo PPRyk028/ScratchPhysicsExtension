@@ -58,6 +58,61 @@ test('PhysicsWorld supports custom materials and static box colliders', () => {
   assert.equal(pose.position.y, -5);
 });
 
+test('PhysicsWorld materials preserve gameplay surface properties for controller surfaces', () => {
+  const world = new PhysicsWorld();
+  world.createMaterial({
+    id: 'belt',
+    friction: 0.2,
+    restitution: 0.1,
+    density: 1.1,
+    surfaceTraction: 0.35,
+    surfaceJumpMultiplier: 1.4,
+    surfaceConveyorVelocity: { x: 3, y: 0, z: -2 }
+  });
+
+  const material = world.getMaterial('belt');
+  const snapshotMaterial = world.getSnapshot().materials.find((candidate) => candidate.id === 'belt');
+
+  assert.equal(material.surfaceTraction, 0.35);
+  assert.equal(material.surfaceJumpMultiplier, 1.4);
+  assert.deepEqual(material.surfaceConveyorVelocity, { x: 3, y: 0, z: -2 });
+  assert.equal(snapshotMaterial.surfaceTraction, 0.35);
+  assert.equal(snapshotMaterial.surfaceJumpMultiplier, 1.4);
+  assert.deepEqual(snapshotMaterial.surfaceConveyorVelocity, { x: 3, y: 0, z: -2 });
+});
+
+test('PhysicsWorld material surface presets configure gameplay-ready defaults and preserve preset ids', () => {
+  const world = new PhysicsWorld();
+  world.createMaterial({ id: 'ice' });
+  world.createMaterial({ id: 'sticky' });
+  world.createMaterial({ id: 'bounce' });
+  world.createMaterial({ id: 'belt' });
+
+  world.configureMaterialSurfacePreset('ice', 'ice');
+  world.configureMaterialSurfacePreset('sticky', 'sticky');
+  world.configureMaterialSurfacePreset('bounce', 'bounce-pad', {
+    surfaceJumpMultiplier: 2.2
+  });
+  world.configureMaterialSurfacePreset('belt', 'conveyor', {
+    surfaceTraction: 0.75,
+    surfaceConveyorVelocityX: 5,
+    surfaceConveyorVelocityZ: -2
+  });
+
+  assert.equal(world.getMaterial('ice').surfacePresetId, 'ice');
+  assert.equal(world.getMaterial('ice').friction, 0.05);
+  assert.equal(world.getMaterial('sticky').surfacePresetId, 'sticky');
+  assert.equal(world.getMaterial('sticky').surfaceJumpMultiplier, 0.9);
+  assert.equal(world.getMaterial('bounce').surfacePresetId, 'bounce-pad');
+  assert.equal(world.getMaterial('bounce').surfaceJumpMultiplier, 2.2);
+  assert.equal(world.getMaterial('belt').surfacePresetId, 'conveyor');
+  assert.equal(world.getMaterial('belt').surfaceTraction, 0.75);
+  assert.deepEqual(world.getMaterial('belt').surfaceConveyorVelocity, { x: 5, y: 0, z: -2 });
+
+  const snapshotBelt = world.getSnapshot().materials.find((candidate) => candidate.id === 'belt');
+  assert.equal(snapshotBelt.surfacePresetId, 'conveyor');
+});
+
 test('PhysicsWorld fixed-step integration advances dynamic bodies', () => {
   const world = new PhysicsWorld({
     fixedDeltaTime: 0.5,
@@ -1774,6 +1829,188 @@ test('PhysicsWorld creates kinematic capsules and reports grounded state against
   assert.ok((ground.angleDegrees ?? 999) < 1, `expected floor angle near 0, got ${ground.angleDegrees}`);
 });
 
+test('PhysicsWorld kinematic ground/support state exposes material and support motion data', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createMaterial({
+    id: 'belt',
+    friction: 0.2,
+    restitution: 0,
+    density: 1,
+    surfaceTraction: 0.35,
+    surfaceJumpMultiplier: 1.2,
+    surfaceConveyorVelocity: { x: 2, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'platform',
+    motionType: 'dynamic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    mass: 1000,
+    canSleep: false,
+    linearVelocity: { x: 4, y: 0, z: 0 },
+    materialId: 'belt'
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    rideMovingPlatforms: true
+  });
+
+  for (let index = 0; index < 12; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const groundState = world.getKinematicGroundState('player');
+  const supportState = world.getKinematicSupportState('player');
+
+  assert.equal(groundState.grounded, true);
+  assert.equal(groundState.materialId, 'belt');
+  assert.equal(groundState.bodyId, 'platform');
+  assert.equal(groundState.material.surfaceTraction, 0.35);
+  assert.equal(groundState.material.surfaceJumpMultiplier, 1.2);
+  assert.deepEqual(groundState.material.surfaceConveyorVelocity, { x: 2, y: 0, z: 0 });
+  assert.equal(supportState.supported, true);
+  assert.equal(supportState.materialId, 'belt');
+  assert.equal(supportState.bodyId, 'platform');
+  assert.ok((supportState.velocity?.x ?? 0) > 3.5, `expected support velocity from moving platform, got ${supportState.velocity?.x}`);
+  assert.equal(supportState.material.surfaceTraction, 0.35);
+  assert.equal(supportState.material.surfaceJumpMultiplier, 1.2);
+  assert.deepEqual(supportState.material.surfaceConveyorVelocity, { x: 2, y: 0, z: 0 });
+});
+
+test('PhysicsWorld kinematic controllers ride static conveyor surfaces from material parameters', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createMaterial({
+    id: 'belt',
+    friction: 0.2,
+    restitution: 0,
+    density: 1,
+    surfaceTraction: 1,
+    surfaceJumpMultiplier: 1,
+    surfaceConveyorVelocity: { x: 6, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    materialId: 'belt'
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    rideMovingPlatforms: true
+  });
+
+  for (let index = 0; index < 20; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  const supportState = world.getKinematicSupportState('player');
+  assert.ok((playerBody.position.x ?? 0) > 1.5, `expected static conveyor to carry player, got x=${playerBody.position.x}`);
+  assert.equal(supportState.materialId, 'belt');
+  assert.ok((supportState.velocity?.x ?? 0) > 5.5, `expected conveyor velocity in support state, got ${supportState.velocity?.x}`);
+});
+
+test('PhysicsWorld debug frames expose dedicated surface primitives for grounded controllers', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createMaterial({
+    id: 'belt',
+    surfacePresetId: 'conveyor',
+    surfaceTraction: 0.8,
+    surfaceJumpMultiplier: 1,
+    surfaceConveyorVelocity: { x: 4, y: 0, z: 1 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    materialId: 'belt'
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    rideMovingPlatforms: true
+  });
+
+  for (let index = 0; index < 5; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const frame = world.buildDebugFrame();
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'surface-point'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'surface-normal'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'surface-support-velocity'));
+  assert.ok(frame.primitives.some((primitive) => primitive.category === 'surface-conveyor-velocity'));
+  assert.ok(frame.primitives.some((primitive) => primitive.source?.surfacePresetId === 'conveyor'));
+});
+
+test('PhysicsWorld kinematic controller surface traction scales conveyor carry strength', () => {
+  const createConveyorWorld = (materialId, surfaceTraction) => {
+    const world = new PhysicsWorld({
+      gravity: { x: 0, y: 0, z: 0 }
+    });
+    world.createMaterial({
+      id: materialId,
+      friction: 0.2,
+      restitution: 0,
+      density: 1,
+      surfaceTraction,
+      surfaceJumpMultiplier: 1,
+      surfaceConveyorVelocity: { x: 6, y: 0, z: 0 }
+    });
+    world.createStaticBoxCollider({
+      id: 'floor',
+      position: { x: 0, y: -10, z: 0 },
+      size: 20,
+      materialId
+    });
+    world.createKinematicCapsule({
+      id: 'player',
+      position: { x: 0, y: 15, z: 0 },
+      radius: 5,
+      halfHeight: 10
+    });
+    world.configureKinematicController('player', {
+      gravityScale: 0,
+      rideMovingPlatforms: true
+    });
+    for (let index = 0; index < 20; index += 1) {
+      world.step(1 / 60);
+    }
+    return world;
+  };
+
+  const stickyWorld = createConveyorWorld('sticky', 1);
+  const slipperyWorld = createConveyorWorld('slippery', 0.2);
+  const stickyX = stickyWorld.getBody('player').position.x;
+  const slipperyX = slipperyWorld.getBody('player').position.x;
+
+  assert.ok(stickyX > slipperyX + 1, `expected high-traction conveyor to carry farther, got sticky=${stickyX} slippery=${slipperyX}`);
+  assert.ok(slipperyX > 0.2, `expected low-traction conveyor to still move somewhat, got x=${slipperyX}`);
+});
+
 test('PhysicsWorld kinematic capsules stop before walls and keep ground state while moving', () => {
   const world = new PhysicsWorld({
     gravity: { x: 0, y: 0, z: 0 }
@@ -2013,6 +2250,43 @@ test('PhysicsWorld kinematic controllers jump upward and land back on walkable g
   assert.equal(landed.grounded, true);
   assert.ok(Math.abs(world.getBody('player').position.y - startY) <= 0.55, `expected player to land near start height, got ${world.getBody('player').position.y}`);
   assert.equal(Math.abs(landed.verticalVelocity ?? 0) <= 1e-8, true);
+});
+
+test('PhysicsWorld kinematic controller jump multipliers scale grounded jump takeoff', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createMaterial({
+    id: 'spring',
+    friction: 0.5,
+    restitution: 0,
+    density: 1,
+    surfaceTraction: 1,
+    surfaceJumpMultiplier: 1.5,
+    surfaceConveyorVelocity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    materialId: 'spring'
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 8
+  });
+
+  world.jumpKinematicCapsule('player');
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  assert.equal(character.grounded, false);
+  assert.ok((character.verticalVelocity ?? 0) > 11.5, `expected jump multiplier to increase takeoff speed, got ${character.verticalVelocity}`);
 });
 
 test('PhysicsWorld kinematic controllers can set vertical velocity directly', () => {
@@ -2569,6 +2843,862 @@ test('PhysicsWorld kinematic controllers keep platform inertia after walking off
   const playerBody = world.getBody('player');
   assert.ok((character.inheritedVelocity?.x ?? 0) > 80, `expected walk-off inertia to preserve horizontal platform speed, got ${character.inheritedVelocity?.x}`);
   assert.ok(playerBody.position.x > xWhenLeaving + 1, `expected player to keep drifting after walking off, got x=${playerBody.position.x}`);
+});
+
+test('PhysicsWorld kinematic controllers ride dynamic moving platforms via cached ground anchors', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'platform',
+    motionType: 'dynamic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    mass: 1000,
+    canSleep: false,
+    linearVelocity: { x: 4, y: 0, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    rideMovingPlatforms: true
+  });
+
+  for (let index = 0; index < 12; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const platformBody = world.getBody('platform');
+  const playerBody = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.equal(character.groundBodyId, 'platform');
+  assert.equal(character.lastPlatformBodyId, 'platform');
+  assert.ok((character.lastPlatformCarry?.x ?? 0) > 0.05, `expected dynamic platform carry to move the player, got ${character.lastPlatformCarry?.x}`);
+  assert.ok((character.platformVelocity?.x ?? 0) > 3.5, `expected dynamic platform velocity to be recorded, got ${character.platformVelocity?.x}`);
+  assert.ok(Math.abs(playerBody.position.x - platformBody.position.x) <= 0.2, `expected player to stay anchored to moving platform, got player=${playerBody.position.x} platform=${platformBody.position.x}`);
+});
+
+test('PhysicsWorld kinematic controllers inherit horizontal velocity from dynamic moving platforms when jumping', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'platform',
+    motionType: 'dynamic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    mass: 1000,
+    canSleep: false,
+    linearVelocity: { x: 4, y: 0, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 9,
+    rideMovingPlatforms: true
+  });
+
+  for (let index = 0; index < 12; index += 1) {
+    world.step(1 / 60);
+  }
+
+  world.jumpKinematicCapsule('player');
+  world.step(1 / 60);
+
+  const xAfterJump = world.getBody('player').position.x;
+  const afterJumpCharacter = world.getKinematicCapsule('player');
+  assert.equal(afterJumpCharacter.grounded, false);
+  assert.ok((afterJumpCharacter.inheritedVelocity?.x ?? 0) > 3.5, `expected inherited velocity from dynamic platform, got ${afterJumpCharacter.inheritedVelocity?.x}`);
+
+  for (let index = 0; index < 5; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  assert.ok(playerBody.position.x > xAfterJump + 0.25, `expected airborne player to keep moving with inherited dynamic platform velocity, got x=${playerBody.position.x}`);
+});
+
+test('PhysicsWorld kinematic controllers keep full jump height on descending supports', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'lift',
+    motionType: 'dynamic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    mass: 1000,
+    canSleep: false,
+    linearVelocity: { x: 0, y: -4, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 8,
+    rideMovingPlatforms: true
+  });
+
+  for (let index = 0; index < 12; index += 1) {
+    world.step(1 / 60);
+  }
+
+  world.jumpKinematicCapsule('player');
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  assert.equal(character.grounded, false);
+  assert.ok(
+    (character.verticalVelocity ?? 0) > 7.5,
+    `expected descending support not to flatten jump takeoff, got verticalVelocity=${character.verticalVelocity}`
+  );
+});
+
+test('PhysicsWorld kinematic controllers inherit upward lift velocity when jumping from rising supports', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'lift',
+    motionType: 'dynamic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    mass: 1000,
+    canSleep: false,
+    linearVelocity: { x: 0, y: 4, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 8,
+    rideMovingPlatforms: true
+  });
+
+  for (let index = 0; index < 12; index += 1) {
+    world.step(1 / 60);
+  }
+
+  world.jumpKinematicCapsule('player');
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  assert.equal(character.grounded, false);
+  assert.ok(
+    (character.verticalVelocity ?? 0) > 9.5,
+    `expected rising support to add upward takeoff velocity, got verticalVelocity=${character.verticalVelocity}`
+  );
+});
+
+test('PhysicsWorld kinematic controllers push light dynamic rigid bodies while moving horizontally', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'box',
+    motionType: 'dynamic',
+    position: { x: 0, y: 0, z: 0 },
+    size: 12,
+    mass: 1,
+    canSleep: false
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: -24, y: 0, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    groundSnapDistance: 0,
+    maxPushMass: 10,
+    pushSpeedScale: 1
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 24, y: 0, z: 0 });
+
+  for (let index = 0; index < 80; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  const pushedBody = world.getBody('box');
+  assert.ok(pushedBody.position.x > 3, `expected dynamic box to be pushed forward, got x=${pushedBody.position.x}`);
+  assert.ok(playerBody.position.x > -10, `expected player to keep advancing while pushing, got x=${playerBody.position.x}`);
+  assert.ok((pushedBody.linearVelocity?.x ?? 0) > 0.5, `expected pushed box to gain forward velocity, got ${pushedBody.linearVelocity?.x}`);
+});
+
+test('PhysicsWorld kinematic controllers transfer angular impulse during off-center dynamic pushes', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'box',
+    motionType: 'dynamic',
+    position: { x: 0, y: 0, z: 0 },
+    size: 12,
+    mass: 1,
+    canSleep: false
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: -24, y: 6, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    groundSnapDistance: 0,
+    maxPushMass: 10,
+    pushSpeedScale: 1
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 24, y: 0, z: 0 });
+
+  for (let index = 0; index < 80; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const pushedBody = world.getBody('box');
+  const angularSpeed = Math.hypot(
+    Number(pushedBody.angularVelocity?.x ?? 0),
+    Number(pushedBody.angularVelocity?.y ?? 0),
+    Number(pushedBody.angularVelocity?.z ?? 0)
+  );
+  assert.ok((pushedBody.position.x ?? 0) > 3, `expected off-center push to move the box forward, got x=${pushedBody.position.x}`);
+  assert.ok(angularSpeed > 0.5, `expected off-center push to spin the box, got angular speed ${angularSpeed}`);
+  assert.ok(Math.abs(pushedBody.angularVelocity?.z ?? 0) > 0.2, `expected off-center push to add roll spin, got ${pushedBody.angularVelocity?.z}`);
+});
+
+test('PhysicsWorld kinematic controllers treat heavy dynamic rigid bodies as blockers', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'box',
+    motionType: 'dynamic',
+    position: { x: 0, y: 0, z: 0 },
+    size: 12,
+    mass: 100,
+    canSleep: false
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: -24, y: 0, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    groundSnapDistance: 0,
+    maxPushMass: 10,
+    pushSpeedScale: 1
+  });
+  world.setKinematicCapsuleMoveIntent('player', { x: 24, y: 0, z: 0 });
+
+  for (let index = 0; index < 80; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  const blockedBody = world.getBody('box');
+  const character = world.getKinematicCapsule('player');
+  assert.ok(blockedBody.position.x < 0.5, `expected heavy dynamic box to stay near its original position, got x=${blockedBody.position.x}`);
+  assert.ok(playerBody.position.x < -7, `expected player to remain blocked before the heavy box, got x=${playerBody.position.x}`);
+  assert.equal(character.lastHitBodyId, 'box');
+});
+
+test('PhysicsWorld kinematic controllers transfer downward impulse when landing on dynamic rigid bodies', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'box',
+    motionType: 'dynamic',
+    position: { x: 0, y: 0, z: 0 },
+    size: 12,
+    mass: 1,
+    canSleep: false
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 30, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicCapsule('player', {
+    groundProbeDistance: 0
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    groundSnapDistance: 0,
+    maxPushMass: 10
+  });
+
+  world.step(1 / 60);
+  world.setKinematicCapsuleVerticalVelocity('player', -12);
+
+  let minimumBoxVelocityY = 0;
+  for (let index = 0; index < 80; index += 1) {
+    world.step(1 / 60);
+    minimumBoxVelocityY = Math.min(minimumBoxVelocityY, Number(world.getBody('box').linearVelocity?.y ?? 0));
+  }
+
+  const character = world.getKinematicCapsule('player');
+  const boxBody = world.getBody('box');
+  assert.ok(minimumBoxVelocityY < -4, `expected landing impulse to drive the box downward, got min vy=${minimumBoxVelocityY}`);
+  assert.ok((boxBody.position.y ?? 0) < -0.5, `expected landed-on dynamic box to be pushed down, got y=${boxBody.position.y}`);
+  assert.equal(character.groundBodyId, 'box');
+});
+
+test('PhysicsWorld kinematic controllers are pushed sideways by moving dynamic rigid bodies', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createStaticBoxCollider({
+    id: 'floor',
+    position: { x: 0, y: -20, z: 0 },
+    size: 20
+  });
+  world.createBoxBody({
+    id: 'pusher',
+    motionType: 'dynamic',
+    position: { x: -30, y: 0, z: 0 },
+    size: 12,
+    mass: 5,
+    canSleep: false,
+    linearVelocity: { x: 18, y: 0, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 5, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    groundSnapDistance: 0,
+    maxPushMass: 10
+  });
+
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok((playerBody.position.x ?? 0) > 10, `expected moving dynamic body to shove the player sideways, got x=${playerBody.position.x}`);
+  assert.equal(character.lastHitBodyId, 'pusher');
+  assert.equal(character.lastHitAlgorithm, 'dynamic-contact-recovery-v1');
+});
+
+test('PhysicsWorld kinematic controllers are lifted by upward-moving dynamic rigid bodies', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'lift',
+    motionType: 'dynamic',
+    position: { x: 0, y: -30, z: 0 },
+    size: 12,
+    mass: 5,
+    canSleep: false,
+    linearVelocity: { x: 0, y: 18, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 0, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    groundSnapDistance: 0,
+    maxPushMass: 10
+  });
+
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok((playerBody.position.y ?? 0) > 20, `expected rising dynamic body to lift the player, got y=${playerBody.position.y}`);
+  assert.equal(character.groundBodyId, 'lift');
+  assert.equal(character.grounded, true);
+});
+
+test('PhysicsWorld kinematic controllers ride rotating dynamic supports using angular surface velocity', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'spinner',
+    motionType: 'dynamic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    mass: 1000,
+    canSleep: false,
+    angularVelocity: { x: 0, y: 0, z: 0.6 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 8, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    rideMovingPlatforms: true,
+    groundSnapDistance: 2,
+    gravityScale: 1
+  });
+
+  for (let index = 0; index < 20; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.equal(character.grounded, true);
+  assert.equal(character.groundBodyId, 'spinner');
+  assert.ok((playerBody.position.x ?? 0) < 6, `expected rotating support to carry the player around the edge, got x=${playerBody.position.x}`);
+  assert.ok(Math.abs(character.lastPlatformCarry?.x ?? 0) > 0.05, `expected angular platform carry along x, got ${character.lastPlatformCarry?.x}`);
+  assert.ok(Math.abs(character.platformVelocity?.x ?? 0) > 1, `expected angular surface velocity to be captured, got ${character.platformVelocity?.x}`);
+});
+
+test('PhysicsWorld kinematic controllers keep strong tangential traction on flat rotating turntables', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  const vertices = [];
+  const radius = 10;
+  const halfHeight = 4;
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: -halfHeight, z: Math.sin(angle) * radius });
+  }
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: halfHeight, z: Math.sin(angle) * radius });
+  }
+
+  world.createConvexHullBody({
+    id: 'turntable',
+    motionType: 'dynamic',
+    position: { x: 0, y: -4, z: 0 },
+    vertices,
+    mass: 1000,
+    canSleep: false,
+    angularVelocity: { x: 0, y: 2.8, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 7, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicCapsule('player', {
+    groundProbeDistance: 0,
+    skinWidth: 0.05
+  });
+  world.configureKinematicController('player', {
+    rideMovingPlatforms: true,
+    groundSnapDistance: 0,
+    gravityScale: 0
+  });
+
+  for (let index = 0; index < 60; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const character = world.getKinematicCapsule('player');
+  const carryLength = Math.hypot(
+    character.lastPlatformCarry?.x ?? 0,
+    character.lastPlatformCarry?.y ?? 0,
+    character.lastPlatformCarry?.z ?? 0
+  );
+  const expectedNoSlipCarryLength = Math.hypot(
+    character.platformVelocity?.x ?? 0,
+    character.platformVelocity?.y ?? 0,
+    character.platformVelocity?.z ?? 0
+  ) / 60;
+
+  assert.equal(character.grounded, true);
+  assert.ok(
+    carryLength >= expectedNoSlipCarryLength * 0.9,
+    `expected flat rotating support traction near full carry, got carry=${carryLength} expected=${expectedNoSlipCarryLength}`
+  );
+});
+
+test('PhysicsWorld kinematic controllers allow controlled slip on steep rotating rollers', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  const vertices = [];
+  const radius = 10;
+  const halfHeight = 12;
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: -halfHeight, z: Math.sin(angle) * radius });
+  }
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: halfHeight, z: Math.sin(angle) * radius });
+  }
+
+  world.createConvexHullBody({
+    id: 'roller',
+    motionType: 'dynamic',
+    position: { x: 0, y: -12, z: 0 },
+    vertices,
+    mass: 1000,
+    canSleep: false,
+    angularVelocity: { x: 0, y: 0, z: 1.2 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 8 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    rideMovingPlatforms: true,
+    groundSnapDistance: 0,
+    gravityScale: 0
+  });
+
+  for (let index = 0; index < 25; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const character = world.getKinematicCapsule('player');
+  const carryLength = Math.hypot(
+    character.lastPlatformCarry?.x ?? 0,
+    character.lastPlatformCarry?.y ?? 0,
+    character.lastPlatformCarry?.z ?? 0
+  );
+  const expectedNoSlipCarryLength = Math.hypot(
+    character.platformVelocity?.x ?? 0,
+    character.platformVelocity?.y ?? 0,
+    character.platformVelocity?.z ?? 0
+  ) / 60;
+
+  assert.equal(character.grounded, true);
+  assert.ok((character.groundAngleDegrees ?? 0) > 20, `expected steep rotating roller contact, got angle=${character.groundAngleDegrees}`);
+  assert.ok(
+    carryLength < expectedNoSlipCarryLength * 0.9,
+    `expected steep rotating support to slip below no-slip carry, got carry=${carryLength} expected=${expectedNoSlipCarryLength}`
+  );
+  assert.ok(
+    carryLength > expectedNoSlipCarryLength * 0.25,
+    `expected steep rotating support to keep some traction, got carry=${carryLength} expected=${expectedNoSlipCarryLength}`
+  );
+});
+
+test('PhysicsWorld kinematic controllers inherit traction-adjusted takeoff from steep rotating rollers', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: -9.81, z: 0 }
+  });
+  const vertices = [];
+  const radius = 10;
+  const halfHeight = 12;
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: -halfHeight, z: Math.sin(angle) * radius });
+  }
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: halfHeight, z: Math.sin(angle) * radius });
+  }
+
+  world.createConvexHullBody({
+    id: 'roller',
+    motionType: 'dynamic',
+    position: { x: 0, y: -12, z: 0 },
+    vertices,
+    mass: 1000,
+    canSleep: false,
+    angularVelocity: { x: 0, y: 0, z: 1.2 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 0, y: 15, z: 8 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    jumpSpeed: 8,
+    rideMovingPlatforms: true,
+    groundSnapDistance: 0,
+    gravityScale: 0
+  });
+
+  for (let index = 0; index < 25; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const groundedCharacter = world.getKinematicCapsule('player');
+  const expectedCarryVelocity = {
+    x: (groundedCharacter.lastPlatformCarry?.x ?? 0) * 60,
+    z: (groundedCharacter.lastPlatformCarry?.z ?? 0) * 60
+  };
+  const rawSurfaceVelocity = {
+    x: groundedCharacter.platformVelocity?.x ?? 0,
+    z: groundedCharacter.platformVelocity?.z ?? 0
+  };
+
+  world.jumpKinematicCapsule('player');
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  const inheritedSpeed = Math.hypot(
+    character.inheritedVelocity?.x ?? 0,
+    character.inheritedVelocity?.z ?? 0
+  );
+  const carrySpeed = Math.hypot(expectedCarryVelocity.x, expectedCarryVelocity.z);
+  const rawSpeed = Math.hypot(rawSurfaceVelocity.x, rawSurfaceVelocity.z);
+
+  assert.equal(character.grounded, false);
+  assert.ok(
+    inheritedSpeed <= rawSpeed * 0.9,
+    `expected jump takeoff to avoid full no-slip roller velocity, got inherited=${inheritedSpeed} raw=${rawSpeed}`
+  );
+  assert.ok(
+    Math.abs(inheritedSpeed - carrySpeed) <= Math.max(0.35, carrySpeed * 0.35),
+    `expected jump takeoff to track actual carried speed, got inherited=${inheritedSpeed} carry=${carrySpeed}`
+  );
+});
+
+test('PhysicsWorld kinematic controllers can counter-move against rotating turntable carry', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  const vertices = [];
+  const radius = 10;
+  const halfHeight = 4;
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: -halfHeight, z: Math.sin(angle) * radius });
+  }
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: halfHeight, z: Math.sin(angle) * radius });
+  }
+
+  world.createConvexHullBody({
+    id: 'turntable',
+    motionType: 'dynamic',
+    position: { x: 0, y: -4, z: 0 },
+    vertices,
+    mass: 1000,
+    canSleep: false,
+    angularVelocity: { x: 0, y: 2.2, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'idle',
+    position: { x: 7, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.createKinematicCapsule({
+    id: 'counter',
+    position: { x: 7, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('idle', {
+    rideMovingPlatforms: true,
+    groundSnapDistance: 0,
+    gravityScale: 0
+  });
+  world.configureKinematicController('counter', {
+    rideMovingPlatforms: true,
+    groundSnapDistance: 0,
+    gravityScale: 0
+  });
+  world.setKinematicCapsuleMoveIntent('counter', { x: 0, y: 0, z: 5 });
+
+  for (let index = 0; index < 60; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const idleBody = world.getBody('idle');
+  const counterBody = world.getBody('counter');
+  const idleDrift = Math.hypot((idleBody.position.x ?? 0) - 7, idleBody.position.z ?? 0);
+  const counterDrift = Math.hypot((counterBody.position.x ?? 0) - 7, counterBody.position.z ?? 0);
+
+  assert.ok(counterDrift + 1 < idleDrift, `expected counter-input to reduce turntable drift, got idle=${idleDrift} counter=${counterDrift}`);
+  assert.equal(world.getKinematicCapsule('counter').grounded, true);
+});
+
+test('PhysicsWorld kinematic controllers keep rotating dynamic support points anchored to cached convex support points', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  const vertices = [];
+  const radius = 10;
+  const halfHeight = 4;
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: -halfHeight, z: Math.sin(angle) * radius });
+  }
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index * Math.PI * 2) / 8;
+    vertices.push({ x: Math.cos(angle) * radius, y: halfHeight, z: Math.sin(angle) * radius });
+  }
+
+  world.createConvexHullBody({
+    id: 'turntable',
+    motionType: 'dynamic',
+    position: { x: 0, y: -4, z: 0 },
+    vertices,
+    mass: 1000,
+    canSleep: false,
+    angularVelocity: { x: 0, y: 2.8, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 7, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicCapsule('player', {
+    groundProbeDistance: 0,
+    skinWidth: 0.05
+  });
+  world.configureKinematicController('player', {
+    rideMovingPlatforms: true,
+    groundSnapDistance: 0,
+    gravityScale: 0
+  });
+
+  for (let index = 0; index < 120; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const character = world.getKinematicCapsule('player');
+  const turntableBody = world.getBody('turntable');
+  const cachedLocalPoint = character.dynamicGroundSupportCache?.localPoint;
+  const cachedGroundPoint = {
+    x: turntableBody.position.x + rotateVec3ByQuat(turntableBody.rotation, cachedLocalPoint).x,
+    y: turntableBody.position.y + rotateVec3ByQuat(turntableBody.rotation, cachedLocalPoint).y,
+    z: turntableBody.position.z + rotateVec3ByQuat(turntableBody.rotation, cachedLocalPoint).z
+  };
+
+  assert.equal(character.grounded, true);
+  assert.equal(character.groundBodyId, 'turntable');
+  assert.equal(character.dynamicGroundSupportCache?.valid, true);
+  assert.ok(
+    Math.abs((character.groundPoint?.x ?? 0) - cachedGroundPoint.x) <= 1e-6 &&
+    Math.abs((character.groundPoint?.y ?? 0) - cachedGroundPoint.y) <= 1e-6 &&
+    Math.abs((character.groundPoint?.z ?? 0) - cachedGroundPoint.z) <= 1e-6,
+    `expected cached dynamic support point to match the reported ground point, got ground=${JSON.stringify(character.groundPoint)} cached=${JSON.stringify(cachedGroundPoint)}`
+  );
+});
+
+test('PhysicsWorld kinematic controllers reuse cached rotating support after a tiny probe gap', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  world.createBoxBody({
+    id: 'spinner',
+    motionType: 'dynamic',
+    position: { x: 0, y: -10, z: 0 },
+    size: 20,
+    mass: 1000,
+    canSleep: false,
+    angularVelocity: { x: 0, y: 2.4, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 8, y: 15, z: 0 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicCapsule('player', {
+    groundProbeDistance: 0,
+    skinWidth: 0.05
+  });
+  world.configureKinematicController('player', {
+    rideMovingPlatforms: true,
+    groundSnapDistance: 0,
+    gravityScale: 0
+  });
+
+  for (let index = 0; index < 5; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  playerBody.position.y += 0.18;
+  world.markCollisionStateDirty();
+  world.step(1 / 60);
+
+  const character = world.getKinematicCapsule('player');
+  assert.equal(character.grounded, true);
+  assert.equal(character.walkable, true);
+  assert.equal(character.groundBodyId, 'spinner');
+  assert.equal(character.dynamicGroundSupportCache?.valid, true);
+  assert.ok((world.getBody('player').position.x ?? 0) < 7.95, `expected cached rotating support to keep carrying the player, got x=${world.getBody('player').position.x}`);
+});
+
+test('PhysicsWorld kinematic controllers inherit sweep velocity from rotating dynamic rigid bodies', () => {
+  const world = new PhysicsWorld({
+    gravity: { x: 0, y: 0, z: 0 }
+  });
+  const wallVertices = [
+    { x: -20, y: -20, z: -2 },
+    { x: 20, y: -20, z: -2 },
+    { x: 20, y: 20, z: -2 },
+    { x: -20, y: 20, z: -2 },
+    { x: -20, y: -20, z: 2 },
+    { x: 20, y: -20, z: 2 },
+    { x: 20, y: 20, z: 2 },
+    { x: -20, y: 20, z: 2 }
+  ];
+  world.createConvexHullBody({
+    id: 'door',
+    motionType: 'dynamic',
+    position: { x: 0, y: 0, z: 0 },
+    vertices: wallVertices,
+    mass: 20,
+    canSleep: false,
+    angularVelocity: { x: 0, y: 1.2, z: 0 }
+  });
+  world.createKinematicCapsule({
+    id: 'player',
+    position: { x: 18, y: 0, z: 6 },
+    radius: 5,
+    halfHeight: 10
+  });
+  world.configureKinematicController('player', {
+    gravityScale: 0,
+    groundSnapDistance: 0,
+    maxPushMass: 50
+  });
+
+  for (let index = 0; index < 30; index += 1) {
+    world.step(1 / 60);
+  }
+
+  const playerBody = world.getBody('player');
+  const character = world.getKinematicCapsule('player');
+  assert.ok((playerBody.position.z ?? 0) < 4, `expected rotating door sweep to move the player sideways, got z=${playerBody.position.z}`);
+  assert.ok((character.inheritedVelocity?.z ?? 0) < -5, `expected rotating sweep to seed sideways inherited velocity, got ${character.inheritedVelocity?.z}`);
+  assert.equal(character.grounded, false);
 });
 
 test('PhysicsWorld kinematic controllers project movement onto walkable slopes', () => {

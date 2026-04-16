@@ -16,6 +16,11 @@ const REQUIRED_OPCODES = [
   'resetWorld',
   'setGravity',
   'createMaterial',
+  'configureMaterialSurface',
+  'configureMaterialIcePreset',
+  'configureMaterialStickyPreset',
+  'configureMaterialBouncePadPreset',
+  'configureMaterialConveyorPreset',
   'setCameraPosition',
   'setCameraTarget',
   'createBoxRigidBody',
@@ -78,12 +83,25 @@ const REQUIRED_OPCODES = [
   'rigidBodySummary',
   'colliderSummary',
   'materialSummary',
+  'materialSurfaceTraction',
+  'materialSurfaceJumpMultiplier',
+  'materialConveyorVelocity',
   'jointSummary',
   'clothSummary',
   'softBodySummary',
   'kinematicCapsuleSummary',
   'kinematicGroundSummary',
   'kinematicGroundCollider',
+  'kinematicGroundBody',
+  'kinematicGroundMaterial',
+  'kinematicGroundAngle',
+  'kinematicGroundNormal',
+  'kinematicSupportBody',
+  'kinematicSupportMaterial',
+  'kinematicSupportVelocity',
+  'kinematicSupportTraction',
+  'kinematicSupportJumpMultiplier',
+  'kinematicSupportConveyorVelocity',
   'kinematicCapsuleHitSummary',
   'kinematicBlockingCollider',
   'isKinematicCapsuleGrounded',
@@ -236,6 +254,15 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
 
   extension.resetWorld();
   extension.createMaterial({ ID: 'ice', FRICTION: 0.05, RESTITUTION: 0.2, DENSITY: 0.9 });
+  extension.configureMaterialSurface({ ID: 'ice', TRACTION: 0.2, JUMP_MULTIPLIER: 1.4, CONVEYOR_X: 3, CONVEYOR_Y: 0, CONVEYOR_Z: -1 });
+  extension.createMaterial({ ID: 'preset-ice', FRICTION: 0.5, RESTITUTION: 0.1, DENSITY: 1 });
+  extension.configureMaterialIcePreset({ ID: 'preset-ice' });
+  extension.createMaterial({ ID: 'sticky', FRICTION: 0.5, RESTITUTION: 0.1, DENSITY: 1 });
+  extension.configureMaterialStickyPreset({ ID: 'sticky' });
+  extension.createMaterial({ ID: 'bounce', FRICTION: 0.5, RESTITUTION: 0, DENSITY: 1 });
+  extension.configureMaterialBouncePadPreset({ ID: 'bounce', JUMP_MULTIPLIER: 2.25 });
+  extension.createMaterial({ ID: 'belt', FRICTION: 0.5, RESTITUTION: 0, DENSITY: 1 });
+  extension.configureMaterialConveyorPreset({ ID: 'belt', TRACTION: 0.75, CONVEYOR_X: 5, CONVEYOR_Y: 0, CONVEYOR_Z: 1 });
   extension.setGravity({ X: 0, Y: -10, Z: 0 });
   extension.setCameraPosition({ X: 10, Y: 20, Z: 300 });
   extension.setCameraTarget({ X: 10, Y: 0, Z: 0 });
@@ -283,7 +310,7 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   const exportedScene = extension.sceneJson();
   assert.match(exportedScene, /physics-scene@1/);
   extension.loadSceneJson({ SCENE_JSON: exportedScene });
-  extension.setDebugOverlayLayers({ LAYERS: 'contacts joints' });
+  extension.setDebugOverlayLayers({ LAYERS: 'surfaces queries' });
   extension.sphereCast({ X: 0, Y: 120, Z: 0, RADIUS: 10, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
   extension.capsuleCast({ X: 0, Y: 120, Z: 0, RADIUS: 8, HALF_HEIGHT: 20, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
   extension.raycast({ X: 0, Y: 120, Z: 0, DX: 0, DY: -1, DZ: 0, LENGTH: 300 });
@@ -300,6 +327,7 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.moveKinematicCapsule({ ID: 'player', DX: 6, DY: 0, DZ: 0 });
   extension.stepWorld({ SECONDS: 1 / 60 });
   extension.renderDebugFrame();
+  const turboWarpOverlaySummary = extension.debugOverlaySummary();
   extension.hideDebugOverlay();
   extension.resetDebugOverlayLayers();
 
@@ -343,11 +371,29 @@ test('TurboWarp bundle registers an extension in unsandboxed mode', () => {
   extension.jumpKinematicCapsule({ ID: 'player' });
   assert.match(extension.colliderSummary({ ID: 'floor:collider' }), /body:static/);
   assert.match(extension.materialSummary({ ID: 'ice' }), /friction:0.05/);
+  assert.match(extension.materialSummary({ ID: 'ice' }), /surface preset:custom/);
+  assert.match(extension.materialSummary({ ID: 'ice' }), /surface traction:0.2/);
+  assert.match(extension.materialSummary({ ID: 'ice' }), /surface jump:1.4/);
+  assert.match(extension.materialSummary({ ID: 'ice' }), /conveyor 3, 0, -1/);
+  assert.equal(extension.materialSurfaceTraction({ ID: 'ice' }), 0.2);
+  assert.equal(extension.materialSurfaceJumpMultiplier({ ID: 'ice' }), 1.4);
+  assert.equal(extension.materialConveyorVelocity({ ID: 'ice' }), '3, 0, -1');
+  assert.match(extension.materialSummary({ ID: 'preset-ice' }), /surface preset:ice/);
+  assert.match(extension.materialSummary({ ID: 'sticky' }), /surface preset:sticky/);
+  assert.match(extension.materialSummary({ ID: 'bounce' }), /surface preset:bounce-pad/);
+  assert.match(extension.materialSummary({ ID: 'bounce' }), /surface jump:2.25/);
+  assert.match(extension.materialSummary({ ID: 'belt' }), /surface preset:conveyor/);
+  assert.match(extension.materialSummary({ ID: 'belt' }), /surface traction:0.75/);
+  assert.match(extension.materialSummary({ ID: 'belt' }), /conveyor 5, 0, 1/);
   assert.match(extension.raycastSummary(), /Ray hit/);
   assert.match(extension.shapeCastSummary(), /cast hit/);
   assert.match(extension.ccdSummary(), /(No CCD events|CCD events)/);
   assert.match(extension.debugFrameSummary(), /TurboWarp frame 1/);
-  assert.match(extension.debugOverlaySummary(), /overlay/);
+  assert.match(extension.debugFrameSummary(), /preset:custom/);
+  assert.match(extension.debugFrameSummary(), /player support:ice/);
+  assert.match(extension.debugFrameSummary(), /traction:0.2/);
+  assert.match(turboWarpOverlaySummary, /overlay/);
+  assert.match(turboWarpOverlaySummary, /layers surfaces, queries/);
   assert.match(extension.sceneIoSummary(), /Scene loaded/);
   assert.match(extension.contactEventsSummary(), /contact events/);
   assert.match(extension.triggerEventsSummary(), /trigger events/);
@@ -462,7 +508,14 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   assert.match(extension.kinematicCapsuleSummary({ ID: 'remote-player' }), /air:0.55/);
   assert.match(extension.kinematicCapsuleSummary({ ID: 'remote-player' }), /buffer:0.13/);
   assert.match(extension.kinematicGroundSummary({ ID: 'remote-player' }), /grounded:yes/);
+  assert.match(extension.kinematicGroundSummary({ ID: 'remote-player' }), /support traction:/);
   assert.equal(extension.kinematicGroundCollider({ ID: 'remote-player' }), 'remote-floor:collider');
+  assert.equal(extension.kinematicSupportBody({ ID: 'remote-player' }), 'static');
+  assert.equal(extension.kinematicSupportMaterial({ ID: 'remote-player' }), 'material-default');
+  assert.match(extension.kinematicSupportVelocity({ ID: 'remote-player' }), /^-?\d+(\.\d+)?, -?\d+(\.\d+)?, -?\d+(\.\d+)?$/);
+  assert.equal(extension.kinematicSupportTraction({ ID: 'remote-player' }), 1);
+  assert.equal(extension.kinematicSupportJumpMultiplier({ ID: 'remote-player' }), 1);
+  assert.equal(extension.kinematicSupportConveyorVelocity({ ID: 'remote-player' }), '0, 0, 0');
   assert.match(extension.kinematicCapsuleHitSummary({ ID: 'remote-player' }), /last hit:/);
   assert.equal(extension.kinematicBlockingCollider({ ID: 'remote-player' }), 'none');
   assert.equal(extension.isKinematicCapsuleGrounded({ ID: 'remote-player' }), true);
@@ -488,6 +541,7 @@ test('Gandi normal remote bundle registers in custom-extension flow', () => {
   assert.match(extension.raycastSummary(), /Ray hit/);
   assert.match(extension.shapeCastSummary(), /cast hit/);
   assert.match(extension.debugFrameSummary(), /Gandi Remote frame 1/);
+  assert.match(extension.debugFrameSummary(), /remote-player support:material-default/);
   assert.match(extension.debugOverlaySummary(), /overlay/);
   assert.match(extension.contactEventsSummary(), /contact events/);
   assert.match(extension.triggerEventsSummary(), /trigger events/);
@@ -510,6 +564,7 @@ test('Gandi extension instance runs shared blocks against the same core contract
 
   extension.resetWorld();
   extension.createMaterial({ ID: 'rubber', FRICTION: 1, RESTITUTION: 0.8, DENSITY: 1.2 });
+  extension.configureMaterialSurface({ ID: 'rubber', TRACTION: 0.6, JUMP_MULTIPLIER: 1.25, CONVEYOR_X: 2, CONVEYOR_Y: 0, CONVEYOR_Z: 0 });
   extension.setGravity({ X: 0, Y: -12, Z: 0 });
   extension.setCameraPosition({ X: -12, Y: 0, Z: 512 });
   extension.setCameraTarget({ X: 0, Y: 20, Z: 0 });
@@ -576,8 +631,18 @@ test('Gandi extension instance runs shared blocks against the same core contract
   assert.match(extension.kinematicCapsuleSummary({ ID: 'gandi-player' }), /air:0.65/);
   assert.match(extension.kinematicGroundSummary({ ID: 'gandi-player' }), /grounded:(yes|no)/);
   assert.match(extension.kinematicGroundCollider({ ID: 'gandi-player' }), /^(gandi-floor:collider|none)$/);
+  assert.match(extension.kinematicGroundBody({ ID: 'gandi-player' }), /^(static|none)$/);
+  assert.match(extension.kinematicGroundMaterial({ ID: 'gandi-player' }), /^(rubber|none)$/);
+  assert.match(`${extension.kinematicGroundAngle({ ID: 'gandi-player' })}`, /^(none|-?\d+(\.\d+)?)$/);
+  assert.match(extension.kinematicGroundNormal({ ID: 'gandi-player' }), /^(none|-?\d+(\.\d+)?, -?\d+(\.\d+)?, -?\d+(\.\d+)?)$/);
+  assert.match(extension.kinematicSupportBody({ ID: 'gandi-player' }), /^(static|none)$/);
+  assert.match(extension.kinematicSupportMaterial({ ID: 'gandi-player' }), /^(rubber|none)$/);
+  assert.match(extension.kinematicSupportVelocity({ ID: 'gandi-player' }), /^-?\d+(\.\d+)?, -?\d+(\.\d+)?, -?\d+(\.\d+)?$/);
+  assert.match(`${extension.kinematicSupportTraction({ ID: 'gandi-player' })}`, /^(none|-?\d+(\.\d+)?)$/);
+  assert.match(`${extension.kinematicSupportJumpMultiplier({ ID: 'gandi-player' })}`, /^(none|-?\d+(\.\d+)?)$/);
+  assert.match(extension.kinematicSupportConveyorVelocity({ ID: 'gandi-player' }), /^-?\d+(\.\d+)?, -?\d+(\.\d+)?, -?\d+(\.\d+)?$/);
   assert.match(extension.kinematicCapsuleHitSummary({ ID: 'gandi-player' }), /last hit:/);
-  assert.match(extension.kinematicBlockingCollider({ ID: 'gandi-player' }), /^(gandi-link:collider|none)$/);
+  assert.match(extension.kinematicBlockingCollider({ ID: 'gandi-player' }), /^(gandi-probe:collider|gandi-link:collider|none)$/);
   assert.equal(typeof extension.isKinematicCapsuleGrounded({ ID: 'gandi-player' }), 'boolean');
   assert.match(extension.queryKinematicCapsuleBodyHitEvents({ ID: 'gandi-player', PHASE: 'stay' }), /bodies in stay controller hit events/);
   assert.match(extension.queryKinematicCapsuleColliderHitEvents({ ID: 'gandi-player', PHASE: 'stay' }), /colliders in stay controller hit events/);
@@ -597,6 +662,12 @@ test('Gandi extension instance runs shared blocks against the same core contract
   assert.match(extension.softBodySummary({ ID: 'gandi-soft' }), /volume:0.0003/);
   assert.match(extension.softBodySummary({ ID: 'gandi-soft' }), /dynamic contacts:/);
   assert.match(extension.materialSummary({ ID: 'rubber' }), /restitution:0.8/);
+  assert.match(extension.materialSummary({ ID: 'rubber' }), /surface traction:0.6/);
+  assert.match(extension.materialSummary({ ID: 'rubber' }), /surface jump:1.25/);
+  assert.match(extension.materialSummary({ ID: 'rubber' }), /conveyor 2, 0, 0/);
+  assert.equal(extension.materialSurfaceTraction({ ID: 'rubber' }), 0.6);
+  assert.equal(extension.materialSurfaceJumpMultiplier({ ID: 'rubber' }), 1.25);
+  assert.equal(extension.materialConveyorVelocity({ ID: 'rubber' }), '2, 0, 0');
   assert.match(extension.jointSummary({ ID: 'gandi-joint' }), /distance-joint/);
   assert.match(extension.jointSummary({ ID: 'gandi-hinge' }), /motor mode:servo/);
   assert.match(extension.jointSummary({ ID: 'gandi-fixed' }), /break force:/);
@@ -609,6 +680,7 @@ test('Gandi extension instance runs shared blocks against the same core contract
   assert.match(extension.raycastSummary(), /Ray hit/);
   assert.match(extension.shapeCastSummary(), /cast hit/);
   assert.match(extension.debugFrameSummary(), /Gandi Approved frame 1/);
+  assert.match(extension.debugFrameSummary(), /gandi-player/);
   assert.match(extension.debugOverlaySummary(), /overlay/);
   assert.match(extension.sceneIoSummary(), /Scene loaded/);
   assert.match(extension.contactEventsSummary(), /contact events/);

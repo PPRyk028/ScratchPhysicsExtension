@@ -87,6 +87,54 @@ export class Base3DExtension {
     );
   }
 
+  configureMaterialSurface(args) {
+    this.engine.configureMaterialSurface(
+      toString(args.ID, 'material-1'),
+      toNumber(args.TRACTION, 1),
+      toNumber(args.JUMP_MULTIPLIER, 1),
+      toNumber(args.CONVEYOR_X, 0),
+      toNumber(args.CONVEYOR_Y, 0),
+      toNumber(args.CONVEYOR_Z, 0)
+    );
+  }
+
+  configureMaterialIcePreset(args) {
+    this.engine.configureMaterialSurfacePreset(
+      toString(args.ID, 'material-1'),
+      'ice'
+    );
+  }
+
+  configureMaterialStickyPreset(args) {
+    this.engine.configureMaterialSurfacePreset(
+      toString(args.ID, 'material-1'),
+      'sticky'
+    );
+  }
+
+  configureMaterialBouncePadPreset(args) {
+    this.engine.configureMaterialSurfacePreset(
+      toString(args.ID, 'material-1'),
+      'bounce-pad',
+      {
+        surfaceJumpMultiplier: toNumber(args.JUMP_MULTIPLIER, 1.85)
+      }
+    );
+  }
+
+  configureMaterialConveyorPreset(args) {
+    this.engine.configureMaterialSurfacePreset(
+      toString(args.ID, 'material-1'),
+      'conveyor',
+      {
+        surfaceTraction: toNumber(args.TRACTION, 1),
+        surfaceConveyorVelocityX: toNumber(args.CONVEYOR_X, 4),
+        surfaceConveyorVelocityY: toNumber(args.CONVEYOR_Y, 0),
+        surfaceConveyorVelocityZ: toNumber(args.CONVEYOR_Z, 0)
+      }
+    );
+  }
+
   addCube(args) {
     this.engine.addCube(
       toString(args.ID, 'cube'),
@@ -644,6 +692,66 @@ export class Base3DExtension {
     );
   }
 
+  kinematicGroundBody(args) {
+    return this.engine.getKinematicGroundBody(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicGroundMaterial(args) {
+    return this.engine.getKinematicGroundMaterial(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicGroundAngle(args) {
+    return this.engine.getKinematicGroundAngle(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicGroundNormal(args) {
+    return this.engine.getKinematicGroundNormal(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicSupportBody(args) {
+    return this.engine.getKinematicSupportBody(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicSupportMaterial(args) {
+    return this.engine.getKinematicSupportMaterial(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicSupportVelocity(args) {
+    return this.engine.getKinematicSupportVelocity(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicSupportTraction(args) {
+    return this.engine.getKinematicSupportTraction(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicSupportJumpMultiplier(args) {
+    return this.engine.getKinematicSupportJumpMultiplier(
+      toString(args.ID, 'character')
+    );
+  }
+
+  kinematicSupportConveyorVelocity(args) {
+    return this.engine.getKinematicSupportConveyorVelocity(
+      toString(args.ID, 'character')
+    );
+  }
+
   kinematicCapsuleHitSummary(args) {
     return this.engine.getKinematicCapsuleHitSummary(
       toString(args.ID, 'character')
@@ -670,6 +778,24 @@ export class Base3DExtension {
 
   materialSummary(args) {
     return this.engine.getMaterialSummary(
+      toString(args.ID, 'material-1')
+    );
+  }
+
+  materialSurfaceTraction(args) {
+    return this.engine.getMaterialSurfaceTraction(
+      toString(args.ID, 'material-1')
+    );
+  }
+
+  materialSurfaceJumpMultiplier(args) {
+    return this.engine.getMaterialSurfaceJumpMultiplier(
+      toString(args.ID, 'material-1')
+    );
+  }
+
+  materialConveyorVelocity(args) {
+    return this.engine.getMaterialConveyorVelocity(
       toString(args.ID, 'material-1')
     );
   }

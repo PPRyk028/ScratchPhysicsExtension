@@ -54,8 +54,27 @@ function createDefaultGroundBodyLocalPoint() {
   };
 }
 
+function createDefaultDynamicGroundSupportCache() {
+  return {
+    valid: false,
+    bodyId: null,
+    colliderId: null,
+    localPoint: createVec3(),
+    localNormal: createVec3(0, 1, 0),
+    stableFrames: 0
+  };
+}
+
 function createDefaultLaunchVelocity() {
   return createVec3();
+}
+
+function createDefaultPushState() {
+  return {
+    enabled: true,
+    maxPushMass: 10,
+    speedScale: 1
+  };
 }
 
 function createDefaultCrouchState() {
@@ -101,6 +120,9 @@ export class CharacterRegistry extends BaseRegistry {
       coyoteTimeSeconds: character.coyoteTimeSeconds,
       jumpBufferSeconds: character.jumpBufferSeconds,
       rideMovingPlatforms: character.rideMovingPlatforms !== false,
+      pushDynamicBodies: character.pushDynamicBodies !== false,
+      maxPushMass: character.maxPushMass ?? createDefaultPushState().maxPushMass,
+      pushSpeedScale: character.pushSpeedScale ?? createDefaultPushState().speedScale,
       enabled: character.enabled !== false,
       jumpRequested: character.jumpRequested === true,
       launchRequested: character.launchRequested === true,
@@ -141,6 +163,14 @@ export class CharacterRegistry extends BaseRegistry {
         valid: character.groundBodyLocalPoint?.valid === true,
         point: cloneVec3(character.groundBodyLocalPoint?.point ?? createVec3())
       },
+      dynamicGroundSupportCache: {
+        valid: character.dynamicGroundSupportCache?.valid === true,
+        bodyId: character.dynamicGroundSupportCache?.bodyId ?? createDefaultDynamicGroundSupportCache().bodyId,
+        colliderId: character.dynamicGroundSupportCache?.colliderId ?? createDefaultDynamicGroundSupportCache().colliderId,
+        localPoint: cloneVec3(character.dynamicGroundSupportCache?.localPoint ?? createDefaultDynamicGroundSupportCache().localPoint),
+        localNormal: cloneVec3(character.dynamicGroundSupportCache?.localNormal ?? createDefaultDynamicGroundSupportCache().localNormal),
+        stableFrames: Math.max(0, toFiniteNumber(character.dynamicGroundSupportCache?.stableFrames, 0))
+      },
       platformVelocity: cloneVec3(character.platformVelocity ?? createVec3()),
       inheritedVelocity: cloneVec3(character.inheritedVelocity ?? createVec3()),
       lastPlatformCarry: cloneVec3(character.lastPlatformCarry ?? createVec3()),
@@ -170,6 +200,9 @@ export class CharacterRegistry extends BaseRegistry {
       coyoteTimeSeconds: Math.max(0, toFiniteNumber(options.coyoteTimeSeconds, 0.1)),
       jumpBufferSeconds: Math.max(0, toFiniteNumber(options.jumpBufferSeconds, 0.1)),
       rideMovingPlatforms: options.rideMovingPlatforms !== false,
+      pushDynamicBodies: options.pushDynamicBodies !== false,
+      maxPushMass: Math.max(0, toFiniteNumber(options.maxPushMass, createDefaultPushState().maxPushMass)),
+      pushSpeedScale: Math.max(0, toFiniteNumber(options.pushSpeedScale, createDefaultPushState().speedScale)),
       enabled: options.enabled !== false,
       jumpRequested: options.jumpRequested === true,
       launchRequested: options.launchRequested === true,
@@ -211,6 +244,7 @@ export class CharacterRegistry extends BaseRegistry {
       groundCandidateCache: options.groundCandidateCache ?? createDefaultCandidateCache(),
       motionCandidateCache: options.motionCandidateCache ?? createDefaultCandidateCache(),
       groundBodyLocalPoint: options.groundBodyLocalPoint ?? createDefaultGroundBodyLocalPoint(),
+      dynamicGroundSupportCache: options.dynamicGroundSupportCache ?? createDefaultDynamicGroundSupportCache(),
       platformVelocity: cloneVec3(options.platformVelocity ?? createVec3()),
       inheritedVelocity: cloneVec3(options.inheritedVelocity ?? createVec3()),
       lastPlatformCarry: cloneVec3(options.lastPlatformCarry ?? createVec3()),

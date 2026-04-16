@@ -36,6 +36,16 @@ function radiansToDegrees(value) {
   return Number(value) * (180 / Math.PI);
 }
 
+function clampUnitInterval(value) {
+  return Math.max(-1, Math.min(1, Number(value ?? 0)));
+}
+
+function isWalkableKinematicNormal(normal, maxGroundAngleDegrees = 55) {
+  const y = Number(normal?.y ?? 0);
+  const angleDegrees = radiansToDegrees(Math.acos(clampUnitInterval(y)));
+  return angleDegrees <= Number(maxGroundAngleDegrees ?? 55) + 1e-6;
+}
+
 function createDefaultConvexHullVertices() {
   return [
     createVec3(-50, -50, -50),
@@ -108,6 +118,46 @@ function summarizeDeformableContacts(snapshot, deformableId) {
   };
 }
 
+function formatSurfaceSummary(material) {
+  return `preset:${material?.surfacePresetId || 'custom'} | traction:${formatOptionalNumber(material?.surfaceTraction)} | jump:${formatOptionalNumber(material?.surfaceJumpMultiplier)} | conveyor ${formatVector(material?.surfaceConveyorVelocity ?? createVec3())}`;
+}
+
+function summarizeCharacterSurfaceState(world, characterId) {
+  const supportState = world.getKinematicSupportState(characterId);
+  if (!supportState) {
+    return null;
+  }
+
+  if (supportState.supported) {
+    return `${characterId} support:${supportState.materialId || 'none'} | ${formatSurfaceSummary(supportState.material)} | velocity ${formatVector(supportState.velocity ?? createVec3())}`;
+  }
+
+  const groundState = world.getKinematicGroundState(characterId);
+  if (groundState?.grounded) {
+    return `${characterId} ground:${groundState.materialId || 'none'} | ${formatSurfaceSummary(groundState.material)}`;
+  }
+
+  return `${characterId} airborne`;
+}
+
+function summarizeFrameSurfaceState(world) {
+  const characters = world.listKinematicCapsules().slice(0, 2);
+  if (!characters.length) {
+    return '';
+  }
+
+  const surfaceSummaries = characters
+    .map((character) => summarizeCharacterSurfaceState(world, character.id))
+    .filter(Boolean);
+
+  if (!surfaceSummaries.length) {
+    return '';
+  }
+
+  const extraCount = Math.max(0, world.listKinematicCapsules().length - surfaceSummaries.length);
+  return `${surfaceSummaries.join(' | ')}${extraCount > 0 ? ` | +${extraCount} more characters` : ''}`;
+}
+
 export class Engine3D {
   constructor(hostBridge) {
     this.hostBridge = hostBridge;
@@ -154,6 +204,35 @@ export class Engine3D {
     });
 
     this.hostBridge.log(`Material ${material.id} registered`);
+    return material;
+  }
+
+  configureMaterialSurface(id, traction, jumpMultiplier, conveyorX, conveyorY, conveyorZ) {
+    const material = this.world.configureMaterialSurface(id, {
+      surfaceTraction: traction,
+      surfaceJumpMultiplier: jumpMultiplier,
+      surfaceConveyorVelocityX: conveyorX,
+      surfaceConveyorVelocityY: conveyorY,
+      surfaceConveyorVelocityZ: conveyorZ
+    });
+
+    if (!material) {
+      this.hostBridge.log(`Material ${id} surface settings could not be configured`);
+      return null;
+    }
+
+    this.hostBridge.log(`Material ${material.id} surface configured`);
+    return material;
+  }
+
+  configureMaterialSurfacePreset(id, presetId, options = {}) {
+    const material = this.world.configureMaterialSurfacePreset(id, presetId, options);
+    if (!material) {
+      this.hostBridge.log(`Material ${id} could not be configured with preset ${presetId}`);
+      return null;
+    }
+
+    this.hostBridge.log(`Material ${material.id} configured with preset ${presetId}`);
     return material;
   }
 
@@ -789,13 +868,14 @@ export class Engine3D {
   renderDebugFrame() {
     const debugFrame = this.world.buildDebugFrame();
     const snapshot = this.world.getSnapshot();
+    const surfaceSummary = summarizeFrameSurfaceState(this.world);
 
     this.lastFrame = {
       frameNumber: debugFrame.frameNumber,
       debugFrame,
       plannedDrawCalls: debugFrame.primitives,
       snapshot,
-      summary: `${this.hostBridge.getDisplayName()} frame ${debugFrame.frameNumber} | ${debugFrame.primitives.length} debug primitives | ${debugFrame.stats.broadphasePairCount} pairs | ${debugFrame.stats.contactPairCount} contacts`
+      summary: `${this.hostBridge.getDisplayName()} frame ${debugFrame.frameNumber} | ${debugFrame.primitives.length} debug primitives | ${debugFrame.stats.broadphasePairCount} pairs | ${debugFrame.stats.contactPairCount} contacts${surfaceSummary ? ` | ${surfaceSummary}` : ''}`
     };
 
     this.hostBridge.emitFrame(this.lastFrame);
@@ -882,7 +962,7 @@ export class Engine3D {
     const body = character.bodyId ? this.world.getBody(character.bodyId) : null;
     const collider = character.colliderId ? this.world.getCollider(character.colliderId) : null;
     const lastHit = this.world.getKinematicCapsuleLastHit(id);
-    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | crouch target:${formatOptionalNumber(character.crouchTargetHalfHeight)} / ${formatOptionalNumber(character.crouchTargetRadius)} | crouch blocked:${character.crouchBlocked ? 'yes' : 'no'} | crouch blocker:${character.crouchBlockedColliderId || 'none'} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | last hit:${lastHit?.colliderId || 'none'} | last hit body:${lastHit?.bodyId || 'none'} | last hit distance:${formatOptionalNumber(lastHit?.distance)} | last hit algorithm:${lastHit?.algorithm || 'none'} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
+    return `${character.id} | body:${character.bodyId} | collider:${character.colliderId} | radius:${character.radius} | half height:${character.halfHeight} | crouch target:${formatOptionalNumber(character.crouchTargetHalfHeight)} / ${formatOptionalNumber(character.crouchTargetRadius)} | crouch blocked:${character.crouchBlocked ? 'yes' : 'no'} | crouch blocker:${character.crouchBlockedColliderId || 'none'} | skin:${character.skinWidth} | probe:${character.groundProbeDistance} | max slope:${character.maxGroundAngleDegrees} | jump:${character.jumpSpeed} | gravity scale:${character.gravityScale} | step offset:${character.stepOffset} | snap:${character.groundSnapDistance} | air:${formatOptionalNumber(character.airControlFactor)} | coyote:${formatOptionalNumber(character.coyoteTimeSeconds)} | buffer:${formatOptionalNumber(character.jumpBufferSeconds)} | platforms:${character.rideMovingPlatforms === false ? 'off' : 'on'} | push:${character.pushDynamicBodies === false ? 'off' : 'on'} | push mass:${formatOptionalNumber(character.maxPushMass)} | push scale:${formatOptionalNumber(character.pushSpeedScale)} | grounded:${character.grounded ? 'yes' : 'no'} | walkable:${character.walkable ? 'yes' : 'no'} | coyote timer:${formatOptionalNumber(character.coyoteTimer)} | jump buffer:${formatOptionalNumber(character.jumpBufferTimer)} | vertical velocity:${formatOptionalNumber(character.verticalVelocity)} | move intent ${formatVector(character.moveIntent ?? createVec3())} | inherited velocity ${formatVector(character.inheritedVelocity ?? createVec3())} | platform velocity ${formatVector(character.platformVelocity ?? createVec3())} | platform carry ${formatVector(character.lastPlatformCarry ?? createVec3())} | last hit:${lastHit?.colliderId || 'none'} | last hit body:${lastHit?.bodyId || 'none'} | last hit distance:${formatOptionalNumber(lastHit?.distance)} | last hit algorithm:${lastHit?.algorithm || 'none'} | position ${formatVector(body?.position ?? createVec3())}${collider ? ` | layer:${collider.collisionLayer} | mask:${collider.collisionMask}` : ''}`;
   }
 
   getKinematicGroundSummary(id) {
@@ -891,7 +971,8 @@ export class Engine3D {
       return `Kinematic capsule ${id} not found`;
     }
 
-    return `${id} ground | grounded:${groundState.grounded ? 'yes' : 'no'} | walkable:${groundState.walkable ? 'yes' : 'no'} | distance:${formatOptionalNumber(groundState.distance)} | angle:${formatOptionalNumber(groundState.angleDegrees)}deg | collider:${groundState.colliderId || 'none'} | body:${groundState.bodyId || 'static'} | point ${formatVector(groundState.point)} | normal ${formatVector(groundState.normal)}`;
+    const supportState = this.world.getKinematicSupportState(id);
+    return `${id} ground | grounded:${groundState.grounded ? 'yes' : 'no'} | walkable:${groundState.walkable ? 'yes' : 'no'} | distance:${formatOptionalNumber(groundState.distance)} | angle:${formatOptionalNumber(groundState.angleDegrees)}deg | collider:${groundState.colliderId || 'none'} | body:${groundState.bodyId || 'static'} | material:${groundState.materialId || 'none'} | support body:${supportState?.bodyId || (supportState?.supported ? 'static' : 'none')} | support material:${supportState?.materialId || 'none'} | support preset:${supportState?.supported ? (supportState?.material?.surfacePresetId || 'custom') : 'none'} | support traction:${formatOptionalNumber(supportState?.material?.surfaceTraction)} | support jump:${formatOptionalNumber(supportState?.material?.surfaceJumpMultiplier)} | support conveyor ${formatVector(supportState?.material?.surfaceConveyorVelocity ?? createVec3())} | support velocity ${formatVector(supportState?.velocity ?? createVec3())} | point ${formatVector(groundState.point)} | normal ${formatVector(groundState.normal)}`;
   }
 
   getKinematicGroundCollider(id) {
@@ -901,6 +982,124 @@ export class Engine3D {
     }
 
     return groundState.colliderId || 'none';
+  }
+
+  getKinematicGroundBody(id) {
+    const groundState = this.world.getKinematicGroundState(id);
+    if (!groundState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    if (!groundState.grounded) {
+      return 'none';
+    }
+
+    return groundState.bodyId || 'static';
+  }
+
+  getKinematicGroundMaterial(id) {
+    const groundState = this.world.getKinematicGroundState(id);
+    if (!groundState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    return groundState.materialId || 'none';
+  }
+
+  getKinematicGroundAngle(id) {
+    const groundState = this.world.getKinematicGroundState(id);
+    if (!groundState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    return groundState.angleDegrees ?? 'none';
+  }
+
+  getKinematicGroundNormal(id) {
+    const groundState = this.world.getKinematicGroundState(id);
+    if (!groundState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    if (!groundState.grounded) {
+      return 'none';
+    }
+
+    return formatVector(groundState.normal ?? createVec3(0, 1, 0));
+  }
+
+  getKinematicSupportBody(id) {
+    const supportState = this.world.getKinematicSupportState(id);
+    if (!supportState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    if (!supportState.supported) {
+      return 'none';
+    }
+
+    return supportState.bodyId || 'static';
+  }
+
+  getKinematicSupportMaterial(id) {
+    const supportState = this.world.getKinematicSupportState(id);
+    if (!supportState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    return supportState.materialId || 'none';
+  }
+
+  getKinematicSupportVelocity(id) {
+    const supportState = this.world.getKinematicSupportState(id);
+    if (!supportState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    if (!supportState.supported) {
+      return formatVector(createVec3());
+    }
+
+    return formatVector(supportState.velocity ?? createVec3());
+  }
+
+  getKinematicSupportTraction(id) {
+    const supportState = this.world.getKinematicSupportState(id);
+    if (!supportState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    if (!supportState.supported) {
+      return 'none';
+    }
+
+    return supportState.material?.surfaceTraction ?? 1;
+  }
+
+  getKinematicSupportJumpMultiplier(id) {
+    const supportState = this.world.getKinematicSupportState(id);
+    if (!supportState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    if (!supportState.supported) {
+      return 'none';
+    }
+
+    return supportState.material?.surfaceJumpMultiplier ?? 1;
+  }
+
+  getKinematicSupportConveyorVelocity(id) {
+    const supportState = this.world.getKinematicSupportState(id);
+    if (!supportState) {
+      return `Kinematic capsule ${id} not found`;
+    }
+
+    if (!supportState.supported) {
+      return formatVector(createVec3());
+    }
+
+    return formatVector(supportState.material?.surfaceConveyorVelocity ?? createVec3());
   }
 
   isKinematicCapsuleGrounded(id) {
@@ -926,7 +1125,14 @@ export class Engine3D {
       return `Kinematic capsule ${id} not found`;
     }
 
-    return this.world.getKinematicCapsuleLastHit(id)?.colliderId || 'none';
+    const lastHit = this.world.getKinematicCapsuleLastHit(id);
+    if (!lastHit) {
+      return 'none';
+    }
+
+    return isWalkableKinematicNormal(lastHit.normal, character.maxGroundAngleDegrees)
+      ? 'none'
+      : (lastHit.colliderId || 'none');
   }
 
   getColliderSummary(id) {
@@ -945,7 +1151,34 @@ export class Engine3D {
       return `Material ${id} not found`;
     }
 
-    return `${material.id} | friction:${material.friction} | restitution:${material.restitution} | density:${material.density}`;
+    return `${material.id} | friction:${material.friction} | restitution:${material.restitution} | density:${material.density} | surface preset:${material.surfacePresetId || 'custom'} | surface traction:${material.surfaceTraction} | surface jump:${material.surfaceJumpMultiplier} | conveyor ${formatVector(material.surfaceConveyorVelocity ?? createVec3())}`;
+  }
+
+  getMaterialSurfaceTraction(id) {
+    const material = this.world.getMaterial(id);
+    if (!material) {
+      return `Material ${id} not found`;
+    }
+
+    return material.surfaceTraction ?? 1;
+  }
+
+  getMaterialSurfaceJumpMultiplier(id) {
+    const material = this.world.getMaterial(id);
+    if (!material) {
+      return `Material ${id} not found`;
+    }
+
+    return material.surfaceJumpMultiplier ?? 1;
+  }
+
+  getMaterialConveyorVelocity(id) {
+    const material = this.world.getMaterial(id);
+    if (!material) {
+      return `Material ${id} not found`;
+    }
+
+    return formatVector(material.surfaceConveyorVelocity ?? createVec3());
   }
 
   getJointSummary(id) {
